@@ -38,6 +38,18 @@ export function el<K extends keyof HTMLElementTagNameMap>(
 	return element;
 }
 
+export function replaceNodes(parent: HTMLElement, ...nodes: (Node | string)[]): void {
+	if (typeof parent.replaceChildren === "function") {
+		parent.replaceChildren(...nodes);
+		return;
+	}
+
+	parent.textContent = "";
+	for (const node of nodes) {
+		parent.appendChild(typeof node === "string" ? document.createTextNode(node) : node);
+	}
+}
+
 /**
  * Super lightweight DOM diffing specifically for our sanitized HTML.
  * Mutates `target` to match `source` without destroying untouched nodes.

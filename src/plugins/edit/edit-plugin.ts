@@ -1,7 +1,7 @@
 import "./edit.css";
 import { extractPlainText } from "../../core/msg-utils";
 import type { ChatPlugin, Message } from "../../core/types";
-import { el } from "../../utils/dom";
+import { el, replaceNodes } from "../../utils/dom";
 
 export interface EditConfig {
 	onSave: (messageId: string, newText: string) => void;
@@ -41,7 +41,7 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 		const saveBtn = el("button", "llm-save-edit-btn save-edit-btn", { textContent: "Save" });
 		const controls = el("div", "edit-controls", null, [cancelBtn, saveBtn]);
 
-		state.editContainer.replaceChildren(textarea, controls);
+		replaceNodes(state.editContainer, textarea, controls);
 
 		textarea.style.height = targetHeight;
 		textarea.style.minWidth = targetMinWidth;

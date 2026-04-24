@@ -13,7 +13,7 @@
 		"build:lib": "npm run clean && tsc && npm run copy:css",
 		"copy:css": "node scripts/copy-css.js",
 		"test": "node --import tsx --test src/**/*.test.ts",
-		"build:example": "esbuild example/app.ts --bundle --outfile=example/index.js --minify --target=es2017"
+		"build:example": "esbuild example/app.ts --bundle --outfile=example/index.js --minify --target=es2018"
 	},
 	"exports": {
 		".": {

@@ -1,5 +1,5 @@
 import type { ChatSessionMeta } from "../core/types";
-import { el, queryOrThrow } from "../utils/dom";
+import { el, queryOrThrow, replaceNodes } from "../utils/dom";
 
 export interface SidebarProps {
 	container: HTMLElement;
@@ -76,10 +76,10 @@ export class Sidebar {
 
 		if (hasMore) {
 			fragment.appendChild(this.loadMoreTrigger);
-			this.content.replaceChildren(fragment);
+			replaceNodes(this.content, fragment);
 			this.observer.observe(this.loadMoreTrigger);
 		} else {
-			this.content.replaceChildren(fragment);
+			replaceNodes(this.content, fragment);
 			this.observer.unobserve(this.loadMoreTrigger);
 		}
 	}

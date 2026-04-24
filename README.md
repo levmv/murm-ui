@@ -26,7 +26,7 @@ import {
     AttachmentPlugin,
     ThinkingPlugin,
     EditPlugin
-} from "minimal-llm-chat";
+} from "murm-ui";
 
 const ui = new ChatUI({
     container: "#app", // The DOM element to mount into
@@ -116,8 +116,16 @@ If a developer wants to build a backend for this UI, they only need to implement
 
 ### Browser Support
 
-This library is designed with a strict **ES2017 baseline**, meaning it works flawlessly on browsers dating back to roughly ~2017 (Chrome 55+, Safari 10.1+, Firefox 52+). 
+This library emits conservative **ES2018** JavaScript, but its real browser baseline is determined by the Web APIs required for streaming chat.
 
-We prioritize graceful degradation:
-* Modern CSS features like `field-sizing: content` are feature-detected; older browsers gracefully fall back to JavaScript-driven auto-resizing.
-* UI enhancements like `ResizeObserver` are conditionally applied without breaking core chat functionality on legacy devices.
+Supported runtime baseline:
+* Chrome 66+
+* Firefox 65+
+* Safari 12.1+
+
+Required browser APIs include `fetch`, streaming `Response.body`, `ReadableStream.getReader`, `TextDecoder`, `AbortController`, `crypto.getRandomValues`, and either IndexedDB or a custom storage adapter.
+
+We prioritize graceful degradation for optional enhancements:
+* Clipboard API support enables copy buttons when available.
+* `ResizeObserver` improves sticky scrolling when available.
+* CSS features like `:has` and `field-sizing: content` are progressive enhancements; older browsers keep the core chat experience.
