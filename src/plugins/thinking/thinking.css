@@ -1,0 +1,51 @@
+.think-wrapper {
+	margin-bottom: 0.75rem;
+}
+
+.think-toggle {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	background: none;
+	border: none;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+	font-weight: 500;
+	cursor: pointer;
+	padding: 0.25rem 0.5rem;
+	margin-left: -0.5rem;
+	border-radius: 0.25rem;
+	transition:
+		background-color 0.2s,
+		color 0.2s;
+}
+
+.think-toggle:hover {
+	background-color: var(--hover-bg);
+	color: var(--text);
+}
+
+.think-content {
+	margin-top: 0.25rem;
+	padding: 0.5rem 0.75rem;
+	border-left: 2px solid var(--border);
+	color: var(--text-muted);
+	font-size: 0.9rem;
+	line-height: 1.5;
+	background-color: var(--surface);
+	border-radius: 0 0.25rem 0.25rem 0;
+	white-space: pre-wrap;
+	animation: slideDown 0.2s ease-out forwards;
+}
+
+@keyframes slideDown {
+	from {
+		opacity: 0;
+		transform: translateY(-5px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}

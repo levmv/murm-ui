@@ -1,0 +1,177 @@
+:root {
+	--bg: #ffffff;
+	--surface: #f9fafb;
+	--surface-user: #f3f4f6;
+	--hover-bg: rgba(0, 0, 0, 0.05);
+
+	--text: #111827;
+	--text-secondary: #374151;
+	--text-muted: #6b7280;
+
+	--border: #e5e7eb;
+	--primary: #000000;
+	--danger: #ef4444;
+
+	--font: system-ui, -apple-system, sans-serif;
+}
+
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	font-family: var(--font);
+	background-color: var(--bg);
+	color: var(--text);
+	height: 100vh;
+
+	overflow: hidden;
+}
+
+.llm-app {
+	display: flex;
+	height: 100vh;
+	width: 100vw;
+	position: relative;
+}
+
+@supports (height: 100dvh) {
+	body {
+		height: 100dvh;
+	}
+
+	.llm-app {
+		height: 100dvh;
+		width: 100dvw;
+	}
+}
+
+.llm-main-area {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	position: relative;
+}
+
+.llm-main-header {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 60px;
+	display: flex;
+	align-items: center;
+	padding: 0 1rem;
+	z-index: 10;
+	background: transparent;
+	pointer-events: none;
+}
+
+.llm-main-header > button {
+	pointer-events: auto;
+	background-color: rgba(255, 255, 255, 0.8);
+	backdrop-filter: blur(4px);
+}
+
+.llm-main-header > button:hover {
+	background-color: var(--hover-bg);
+}
+
+.llm-header-title {
+	background-color: rgba(255, 255, 255, 0.5);
+	border-radius: 5px;
+	padding: 5px 5px 5px 0;
+}
+
+.llm-open-sidebar-btn {
+	background: none;
+	border: none;
+	cursor: pointer;
+	color: var(--text);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 0.25rem;
+	padding: 0.25rem;
+}
+
+.llm-open-sidebar-btn:hover {
+	background: var(--hover-bg);
+}
+
+.llm-app:not(.sidebar-closed) .llm-open-sidebar-btn {
+	display: none;
+}
+
+.llm-chat-layout-wrapper {
+	flex: 1;
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.llm-chat-scroll-area {
+	flex: 1;
+	min-height: 0;
+	width: 100%;
+	overflow-y: auto;
+	scrollbar-gutter: stable;
+}
+
+.llm-chat-history {
+	width: 100%;
+	max-width: 768px;
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: 1.5rem;
+	padding: 4rem 1rem 11rem 1rem;
+}
+
+.llm-chat-form-container {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	border-bottom: 1.5rem solid var(--bg);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 0 1rem;
+	pointer-events: none;
+	transition:
+		bottom 0.4s cubic-bezier(0.1, 0.7, 0.1, 1),
+		transform 0.4s ease;
+}
+
+@media (max-width: 768px) {
+	.llm-main-header {
+		position: relative;
+		background-color: var(--bg);
+		border-bottom: 1px solid var(--border);
+		pointer-events: auto;
+	}
+
+	.llm-main-header > button {
+		background-color: transparent;
+		backdrop-filter: none;
+	}
+
+	.llm-header-title {
+		display: block;
+		font-size: 1.1rem;
+		flex: 1;
+		text-align: center;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.llm-chat-history {
+		padding-top: 1rem;
+	}
+}

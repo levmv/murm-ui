@@ -1,0 +1,60 @@
+.edit-container {
+	order: 2;
+	display: none;
+	width: 100%;
+}
+
+.edit-textarea {
+	width: 100%;
+	font-family: inherit;
+	font-size: 1rem;
+	line-height: 1.6;
+	padding: 0;
+	border: none;
+	outline: none;
+	resize: none;
+	background: transparent;
+	color: inherit;
+	overflow: hidden;
+}
+
+.edit-controls {
+	display: flex;
+	gap: 8px;
+	margin-top: 8px;
+	justify-content: flex-end;
+}
+
+.cancel-edit-btn {
+	background: transparent;
+	border: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	font-size: 0.9rem;
+	padding: 4px 8px;
+	border-radius: 4px;
+	transition:
+		background-color 0.2s,
+		color 0.2s;
+}
+
+.cancel-edit-btn:hover {
+	background-color: var(--hover-bg);
+	color: var(--text);
+}
+
+.save-edit-btn {
+	padding: 6px 14px;
+	font-size: 0.9rem;
+	background-color: var(--primary);
+	color: var(--bg);
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	font-weight: 500;
+	transition: opacity 0.2s;
+}
+
+.save-edit-btn:hover {
+	opacity: 0.8;
+}

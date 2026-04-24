@@ -1,0 +1,118 @@
+.settings-overlay {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgba(0, 0, 0, 0.4);
+	backdrop-filter: blur(2px);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+}
+
+.settings-modal {
+	background: var(--bg);
+	color: var(--text);
+	width: 90%;
+	max-width: 450px;
+	border-radius: 12px;
+	box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border);
+	overflow: hidden;
+	animation: modal-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modal-pop {
+	0% {
+		transform: scale(0.95);
+		opacity: 0;
+	}
+
+	100% {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
+.settings-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 16px 20px;
+	border-bottom: 1px solid var(--border);
+	background: var(--surface);
+}
+
+.settings-header h3 {
+	margin: 0;
+	font-size: 1.1rem;
+	font-weight: 600;
+}
+
+.settings-close-btn {
+	background: none;
+	border: none;
+	font-size: 1.5rem;
+	cursor: pointer;
+	color: var(--text-muted);
+	line-height: 1;
+}
+
+.settings-close-btn:hover {
+	color: var(--text);
+}
+
+.settings-body {
+	padding: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.settings-group {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.settings-group label {
+	font-size: 0.85rem;
+	font-weight: 600;
+	color: var(--text);
+}
+
+.settings-group input,
+.settings-group textarea {
+	width: 100%;
+	padding: 10px 12px;
+	border-radius: 6px;
+	font-family: inherit;
+	font-size: 0.9rem;
+	border: 1px solid var(--border);
+	background: var(--bg);
+	color: var(--text);
+}
+
+.settings-group input:focus,
+.settings-group textarea:focus {
+	outline: none;
+	border-color: var(--primary);
+	box-shadow: 0 0 0 2px var(--border);
+}
+
+.settings-hint {
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+.settings-footer {
+	padding: 16px 20px;
+	border-top: 1px solid var(--border);
+	background: var(--surface);
+	display: flex;
+	justify-content: flex-end;
+}
