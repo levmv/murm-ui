@@ -1,0 +1,24 @@
+{
+	"name": "Murm UI Chat",
+	"image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"editor.defaultFormatter": "biomejs.biome",
+				"editor.formatOnSave": true,
+				"editor.codeActionsOnSave": {
+					"source.organizeImports.biome": "explicit"
+				},
+				"[typescript]": {
+					"editor.defaultFormatter": "biomejs.biome"
+				}
+			},
+			"extensions": ["biomejs.biome"]
+		}
+	},
+
+	"postCreateCommand": "npm ci",
+
+	"forwardPorts": [8000]
+}

@@ -1,27 +1,53 @@
 {
-	"name": "minimal-llm-chat",
+	"name": "murm-ui",
 	"version": "0.1.0",
+	"description": "A zero-framework, vanilla TypeScript chat interface for LLMs.",
 	"type": "module",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js",
-			"default": "./dist/index.js"
-		},
-		"./style.css": "./dist/index.css"
-	},
-	"types": "./dist/index.d.ts",
 	"scripts": {
 		"lint": "biome check .",
 		"format": "biome format --write .",
 		"check": "biome check . && tsc --noEmit",
 		"dev": "esbuild example/app.ts --bundle --outfile=example/bundle.js --servedir=example",
 		"clean": "rm -rf dist",
+		"build": "npm run build:lib",
 		"build:lib": "npm run clean && tsc && npm run copy:css",
 		"copy:css": "node scripts/copy-css.js",
 		"test": "node --import tsx --test src/**/*.test.ts",
 		"build:example": "esbuild example/app.ts --bundle --outfile=example/index.js --minify --target=es2017"
 	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./styles/*.css": "./dist/styles/*.css",
+		"./plugins/*.css": "./dist/plugins/*.css"
+	},
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist"
+	],
+	"sideEffects": [
+		"**/*.css"
+	],
+	"keywords": [
+		"chat",
+		"chat-ui",
+		"llm",
+		"typescript",
+		"vanilla-js"
+	],
+	"author": "Lev Morozov",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/levmv/murm-ui.git"
+	},
+	"bugs": {
+		"url": "https://github.com/levmv/murm-ui/issues"
+	},
+	"homepage": "https://github.com/levmv/murm-ui#readme",
 	"devDependencies": {
 		"@biomejs/biome": "2.4.11",
 		"@types/jsdom": "^28.0.1",
