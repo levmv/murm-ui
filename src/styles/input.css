@@ -1,4 +1,4 @@
-.llm-chat-form {
+.mur-chat-form {
 	width: 100%;
 	max-width: 768px;
 	pointer-events: auto;
@@ -17,17 +17,17 @@
 }
 
 /* :has is newer than our browser baseline, but this layout enhancement can degrade safely. */
-.llm-chat-layout-wrapper:has(.llm-chat-history:empty) .llm-chat-form-container {
+.mur-chat-layout-wrapper:has(.mur-chat-history:empty) .mur-chat-form-container {
 	bottom: 50%;
 	transform: translateY(50%);
 }
 
-.llm-chat-form:focus-within {
+.mur-chat-form:focus-within {
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 	border-color: var(--text-muted);
 }
 
-.llm-chat-input {
+.mur-chat-input {
 	flex: 1;
 	border: none;
 	outline: none;
@@ -45,19 +45,19 @@
 }
 
 @supports (field-sizing: content) {
-	.llm-chat-input {
+	.mur-chat-input {
 		field-sizing: content;
 		min-height: 36px;
 		height: auto;
 	}
 }
 
-.llm-chat-input:disabled {
+.mur-chat-input:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
 }
 
-.form-icon-btn {
+.mur-form-icon-btn {
 	background: transparent;
 	border: none;
 	color: var(--text-muted);
@@ -74,28 +74,28 @@
 	flex-shrink: 0;
 }
 
-.form-icon-btn:hover:not(:disabled) {
+.mur-form-icon-btn:hover:not(:disabled) {
 	background-color: var(--hover-bg);
 	color: var(--text);
 }
 
-.action-btn {
+.mur-action-btn {
 	background-color: var(--primary);
 	color: var(--bg);
 }
 
-/*.action-btn:hover:not(:disabled) {
+/*.mur-action-btn:hover:not(:disabled) {
 	opacity: 0.8;
 }*/
 
-.action-btn .stop-icon {
+.mur-action-btn .mur-stop-icon {
 	display: none;
 }
 
-.action-btn.generating .send-icon {
+.mur-action-btn.mur-generating .mur-send-icon {
 	display: none;
 }
 
-.action-btn.generating .stop-icon {
+.mur-action-btn.mur-generating .mur-stop-icon {
 	display: block;
 }

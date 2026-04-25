@@ -25,9 +25,9 @@ export class Input {
 		private props: InputProps,
 		private plugins: ChatPlugin[] = [],
 	) {
-		this.form = queryOrThrow<HTMLFormElement>(this.props.container, ".llm-chat-form");
-		this.input = queryOrThrow<HTMLTextAreaElement>(this.props.container, ".llm-chat-input");
-		this.sendBtn = queryOrThrow<HTMLButtonElement>(this.props.container, ".llm-send-btn");
+		this.form = queryOrThrow<HTMLFormElement>(this.props.container, ".mur-chat-form");
+		this.input = queryOrThrow<HTMLTextAreaElement>(this.props.container, ".mur-chat-input");
+		this.sendBtn = queryOrThrow<HTMLButtonElement>(this.props.container, ".mur-send-btn");
 
 		for (const plugin of plugins) {
 			if (plugin.onInputMount) {
@@ -57,7 +57,7 @@ export class Input {
 		this.isGenerating = isGenerating;
 		this.input.disabled = disabled;
 		this.sendBtn.disabled = isLoadingSession;
-		this.sendBtn.classList.toggle("generating", isGenerating);
+		this.sendBtn.classList.toggle("mur-generating", isGenerating);
 
 		if (endedGeneration && !disabled && this.shouldRestoreFocus) {
 			this.focus();

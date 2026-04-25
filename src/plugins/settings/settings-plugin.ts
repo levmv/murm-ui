@@ -30,7 +30,7 @@ export interface SettingsPluginConfig {
 }
 
 export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
-	const STORAGE_KEY = "llm_chat_settings";
+	const STORAGE_KEY = "mur_chat_settings";
 
 	// Default fallback values
 	const defaults = {
@@ -74,62 +74,62 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 	}
 
 	function createModal(ctx: PluginContext) {
-		const overlay = el("div", "settings-overlay");
+		const overlay = el("div", "mur-settings-overlay");
 
-		const modal = el("div", "settings-modal", {
+		const modal = el("div", "mur-settings-modal", {
 			innerHTML: `
-				<div class="settings-header">
+				<div class="mur-settings-header">
 					<h3>Chat Settings</h3>
-					<button class="settings-close-btn">&times;</button>
+					<button class="mur-settings-close-btn">&times;</button>
 				</div>
-				<div class="settings-body">
-					<div class="settings-group">
+				<div class="mur-settings-body">
+					<div class="mur-settings-group">
 						<label>API Endpoint</label>
-						<input type="text" class="llm-set-endpoint" placeholder="https://api.openai.com/v1/chat/completions" />
-						<div class="settings-hint">Compatible with OpenAI, OpenRouter, LMStudio, Ollama, etc.</div>
+						<input type="text" class="mur-set-endpoint" placeholder="https://api.openai.com/v1/chat/completions" />
+						<div class="mur-settings-hint">Compatible with OpenAI, OpenRouter, LMStudio, Ollama, etc.</div>
 					</div>
-					<div class="settings-group">
+					<div class="mur-settings-group">
 						<label>API Key</label>
-						<input type="password" class="llm-set-apikey" placeholder="sk-..." />
+						<input type="password" class="mur-set-apikey" placeholder="sk-..." />
 					</div>
-					<div class="settings-group">
+					<div class="mur-settings-group">
 						<label>Model Name</label>
-						<input type="text" class="llm-set-model" placeholder="gpt-4o-mini" />
+						<input type="text" class="mur-set-model" placeholder="gpt-4o-mini" />
 					</div>
-					<div class="settings-group">
+					<div class="mur-settings-group">
 						<label>System Prompt</label>
-						<textarea class="llm-set-sysprompt" rows="3" placeholder="You are a helpful assistant..."></textarea>
+						<textarea class="mur-set-sysprompt" rows="3" placeholder="You are a helpful assistant..."></textarea>
 					</div>
 				</div>
-				<div class="settings-footer">
-					<button class="llm-set-save-btn btn-primary">Save & Apply</button>
+				<div class="mur-settings-footer">
+					<button class="mur-set-save-btn mur-btn-primary">Save & Apply</button>
 				</div>
 			`,
 		});
 
 		overlay.appendChild(modal);
 
-		(modal.querySelector(".llm-set-endpoint") as HTMLInputElement).value = currentSettings.endpoint;
-		(modal.querySelector(".llm-set-apikey") as HTMLInputElement).value = currentSettings.apiKey;
-		(modal.querySelector(".llm-set-model") as HTMLInputElement).value = currentSettings.model;
-		(modal.querySelector(".llm-set-sysprompt") as HTMLTextAreaElement).value = currentSettings.systemPrompt;
+		(modal.querySelector(".mur-set-endpoint") as HTMLInputElement).value = currentSettings.endpoint;
+		(modal.querySelector(".mur-set-apikey") as HTMLInputElement).value = currentSettings.apiKey;
+		(modal.querySelector(".mur-set-model") as HTMLInputElement).value = currentSettings.model;
+		(modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value = currentSettings.systemPrompt;
 
 		const close = () => {
 			overlay.remove();
 			modalOverlay = null;
 		};
 
-		modal.querySelector(".settings-close-btn")!.addEventListener("click", close);
+		modal.querySelector(".mur-settings-close-btn")!.addEventListener("click", close);
 		overlay.addEventListener("click", (e) => {
 			if (e.target === overlay) close();
 		});
 
-		modal.querySelector(".llm-set-save-btn")!.addEventListener("click", () => {
+		modal.querySelector(".mur-set-save-btn")!.addEventListener("click", () => {
 			const newSettings = {
-				endpoint: (modal.querySelector(".llm-set-endpoint") as HTMLInputElement).value.trim(),
-				apiKey: (modal.querySelector(".llm-set-apikey") as HTMLInputElement).value.trim(),
-				model: (modal.querySelector(".llm-set-model") as HTMLInputElement).value.trim(),
-				systemPrompt: (modal.querySelector(".llm-set-sysprompt") as HTMLTextAreaElement).value.trim(),
+				endpoint: (modal.querySelector(".mur-set-endpoint") as HTMLInputElement).value.trim(),
+				apiKey: (modal.querySelector(".mur-set-apikey") as HTMLInputElement).value.trim(),
+				model: (modal.querySelector(".mur-set-model") as HTMLInputElement).value.trim(),
+				systemPrompt: (modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value.trim(),
 			};
 			applySettings(ctx, newSettings);
 			close();
@@ -163,9 +163,9 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 				return;
 			}
 
-			const footer = ctx.container.querySelector(".sidebar-footer");
+			const footer = ctx.container.querySelector(".mur-sidebar-footer");
 			if (footer) {
-				const btn = el("button", "settings-btn", {
+				const btn = el("button", "mur-settings-btn", {
 					title: "Settings",
 					innerHTML: ICON_SETTINGS + ` Settings`,
 				});

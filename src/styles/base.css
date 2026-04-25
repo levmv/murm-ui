@@ -30,7 +30,7 @@ body {
 	overflow: hidden;
 }
 
-.llm-app {
+.mur-app {
 	display: flex;
 	height: 100vh;
 	width: 100vw;
@@ -42,13 +42,13 @@ body {
 		height: 100dvh;
 	}
 
-	.llm-app {
+	.mur-app {
 		height: 100dvh;
 		width: 100dvw;
 	}
 }
 
-.llm-main-area {
+.mur-main-area {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
@@ -56,7 +56,7 @@ body {
 	position: relative;
 }
 
-.llm-main-header {
+.mur-main-header {
 	position: absolute;
 	top: 0;
 	left: 0;
@@ -70,23 +70,23 @@ body {
 	pointer-events: none;
 }
 
-.llm-main-header > button {
+.mur-main-header > button {
 	pointer-events: auto;
 	background-color: rgba(255, 255, 255, 0.8);
 	backdrop-filter: blur(4px);
 }
 
-.llm-main-header > button:hover {
+.mur-main-header > button:hover {
 	background-color: var(--hover-bg);
 }
 
-.llm-header-title {
+.mur-header-title {
 	background-color: rgba(255, 255, 255, 0.5);
 	border-radius: 5px;
 	padding: 5px 5px 5px 0;
 }
 
-.llm-open-sidebar-btn {
+.mur-open-sidebar-btn {
 	background: none;
 	border: none;
 	cursor: pointer;
@@ -98,15 +98,15 @@ body {
 	padding: 0.25rem;
 }
 
-.llm-open-sidebar-btn:hover {
+.mur-open-sidebar-btn:hover {
 	background: var(--hover-bg);
 }
 
-.llm-app:not(.sidebar-closed) .llm-open-sidebar-btn {
+.mur-app:not(.mur-sidebar-closed) .mur-open-sidebar-btn {
 	display: none;
 }
 
-.llm-chat-layout-wrapper {
+.mur-chat-layout-wrapper {
 	flex: 1;
 	position: relative;
 	display: flex;
@@ -114,7 +114,7 @@ body {
 	overflow: hidden;
 }
 
-.llm-chat-scroll-area {
+.mur-chat-scroll-area {
 	flex: 1;
 	min-height: 0;
 	width: 100%;
@@ -122,7 +122,7 @@ body {
 	scrollbar-gutter: stable;
 }
 
-.llm-chat-history {
+.mur-chat-history {
 	width: 100%;
 	max-width: 768px;
 	margin: 0 auto;
@@ -132,7 +132,7 @@ body {
 	padding: 4rem 1rem 11rem 1rem;
 }
 
-.llm-chat-form-container {
+.mur-chat-form-container {
 	position: absolute;
 	left: 0;
 	right: 0;
@@ -149,19 +149,19 @@ body {
 }
 
 @media (max-width: 768px) {
-	.llm-main-header {
+	.mur-main-header {
 		position: relative;
 		background-color: var(--bg);
 		border-bottom: 1px solid var(--border);
 		pointer-events: auto;
 	}
 
-	.llm-main-header > button {
+	.mur-main-header > button {
 		background-color: transparent;
 		backdrop-filter: none;
 	}
 
-	.llm-header-title {
+	.mur-header-title {
 		display: block;
 		font-size: 1.1rem;
 		flex: 1;
@@ -171,7 +171,7 @@ body {
 		text-overflow: ellipsis;
 	}
 
-	.llm-chat-history {
+	.mur-chat-history {
 		padding-top: 1rem;
 	}
 }

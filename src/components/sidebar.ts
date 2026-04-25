@@ -27,10 +27,10 @@ export class Sidebar {
 	};
 
 	constructor(private props: SidebarProps) {
-		this.sidebar = queryOrThrow<HTMLElement>(props.container, ".llm-sidebar");
-		this.content = queryOrThrow<HTMLElement>(this.sidebar, ".sidebar-content");
-		this.newChatBtn = this.sidebar.querySelector(".llm-new-chat-btn");
-		this.closeBtn = this.sidebar.querySelector(".llm-close-sidebar-btn");
+		this.sidebar = queryOrThrow<HTMLElement>(props.container, ".mur-sidebar");
+		this.content = queryOrThrow<HTMLElement>(this.sidebar, ".mur-sidebar-content");
+		this.newChatBtn = this.sidebar.querySelector(".mur-new-chat-btn");
+		this.closeBtn = this.sidebar.querySelector(".mur-close-sidebar-btn");
 
 		this.loadMoreTrigger = document.createElement("div");
 		this.loadMoreTrigger.style.height = "1px";
@@ -85,10 +85,10 @@ export class Sidebar {
 	}
 
 	private createSessionNode(session: ChatSessionMeta, isActive: boolean): HTMLElement {
-		const item = el("div", `sidebar-item ${isActive ? "active" : ""}`);
+		const item = el("div", `mur-sidebar-item ${isActive ? "mur-active" : ""}`);
 		item.setAttribute("data-session-id", session.id);
 
-		const link = el("a", "sidebar-item-link", {
+		const link = el("a", "mur-sidebar-item-link", {
 			href: this.props.getSessionHref(session.id),
 			textContent: session.title,
 			title: session.title,
@@ -102,7 +102,7 @@ export class Sidebar {
 			link.setAttribute("aria-current", "page");
 		}
 
-		const deleteBtn = el("button", "delete-btn", {
+		const deleteBtn = el("button", "mur-delete-btn", {
 			type: "button",
 			innerHTML: "×",
 			title: `Delete "${session.title}"`,
@@ -119,21 +119,21 @@ export class Sidebar {
 	}
 
 	public setActiveSession(id: string) {
-		const current = this.content.querySelector<HTMLElement>(".sidebar-item.active");
+		const current = this.content.querySelector<HTMLElement>(".mur-sidebar-item.mur-active");
 		if (current?.getAttribute("data-session-id") === id) {
 			return;
 		}
 
 		if (current) {
-			current.classList.remove("active");
-			current.querySelector(".sidebar-item-link")?.removeAttribute("aria-current");
+			current.classList.remove("mur-active");
+			current.querySelector(".mur-sidebar-item-link")?.removeAttribute("aria-current");
 		}
 
 		const next = this.content.querySelector<HTMLElement>(`[data-session-id="${id}"]`);
 
 		if (next) {
-			next.classList.add("active");
-			next.querySelector(".sidebar-item-link")?.setAttribute("aria-current", "page");
+			next.classList.add("mur-active");
+			next.querySelector(".mur-sidebar-item-link")?.setAttribute("aria-current", "page");
 		}
 	}
 

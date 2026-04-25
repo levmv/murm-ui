@@ -21,8 +21,8 @@ export class Feed {
 		container: HTMLElement,
 		private config: RenderConfig,
 	) {
-		this.scrollArea = queryOrThrow<HTMLElement>(container, ".llm-chat-scroll-area");
-		this.historyContainer = queryOrThrow<HTMLElement>(container, ".llm-chat-history");
+		this.scrollArea = queryOrThrow<HTMLElement>(container, ".mur-chat-scroll-area");
+		this.historyContainer = queryOrThrow<HTMLElement>(container, ".mur-chat-history");
 
 		this.scrollArea.addEventListener("scroll", this.onScroll, { passive: true });
 
@@ -34,8 +34,8 @@ export class Feed {
 			this.resizeObserver.observe(this.scrollArea);
 		}
 
-		this.spinnerEl = el("div", "feed-spinner", {
-			innerHTML: `<div class="message-loading"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>`,
+		this.spinnerEl = el("div", "mur-feed-spinner", {
+			innerHTML: `<div class="mur-message-loading"><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span></div>`,
 		});
 		this.spinnerEl.style.display = "none";
 		this.scrollArea.appendChild(this.spinnerEl);

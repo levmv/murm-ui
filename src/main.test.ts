@@ -90,35 +90,35 @@ function installDom(): HTMLElement {
 	setGlobal("cancelAnimationFrame", dom.window.clearTimeout.bind(dom.window));
 	setGlobal("CSS", { supports: () => false });
 
-	return dom.window.document.querySelector(".llm-app") as HTMLElement;
+	return dom.window.document.querySelector(".mur-app") as HTMLElement;
 }
 
 function renderShell(): string {
 	return `
-		<div class="llm-app">
-			<aside class="llm-sidebar">
-				<div class="sidebar-header">
-					<button type="button" class="llm-close-sidebar-btn">Close</button>
+		<div class="mur-app">
+			<aside class="mur-sidebar">
+				<div class="mur-sidebar-header">
+					<button type="button" class="mur-close-sidebar-btn">Close</button>
 				</div>
-				<div class="sidebar-actions">
-					<button type="button" class="llm-new-chat-btn">New Chat</button>
+				<div class="mur-sidebar-actions">
+					<button type="button" class="mur-new-chat-btn">New Chat</button>
 				</div>
-				<div class="sidebar-content"></div>
-				<div class="sidebar-footer"></div>
+				<div class="mur-sidebar-content"></div>
+				<div class="mur-sidebar-footer"></div>
 			</aside>
-			<main class="llm-main-area">
-				<header class="llm-main-header">
-					<button type="button" class="llm-open-sidebar-btn">Open</button>
-					<h2 class="llm-header-title">New Chat</h2>
+			<main class="mur-main-area">
+				<header class="mur-main-header">
+					<button type="button" class="mur-open-sidebar-btn">Open</button>
+					<h2 class="mur-header-title">New Chat</h2>
 				</header>
-				<div class="llm-chat-layout-wrapper">
-					<div class="llm-chat-scroll-area">
-						<div class="llm-chat-history" role="log" aria-live="polite" aria-atomic="false"></div>
+				<div class="mur-chat-layout-wrapper">
+					<div class="mur-chat-scroll-area">
+						<div class="mur-chat-history" role="log" aria-live="polite" aria-atomic="false"></div>
 					</div>
-					<div class="llm-chat-form-container">
-						<form class="llm-chat-form">
-							<textarea class="llm-chat-input" rows="1"></textarea>
-							<button type="submit" class="llm-send-btn">Send</button>
+					<div class="mur-chat-form-container">
+						<form class="mur-chat-form">
+							<textarea class="mur-chat-input" rows="1"></textarea>
+							<button type="submit" class="mur-send-btn">Send</button>
 						</form>
 					</div>
 				</div>
@@ -197,20 +197,20 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	await waitFor(() => !ui.engine.store.get().isLoadingSession, "initial load");
 	assert.deepEqual(lifecycle, ["mount", "input"]);
 
-	const input = container.querySelector(".llm-chat-input") as HTMLTextAreaElement;
-	const form = container.querySelector(".llm-chat-form") as HTMLFormElement;
+	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
+	const form = container.querySelector(".mur-chat-form") as HTMLFormElement;
 
 	input.value = "hello";
 	submit(form);
 	await waitFor(() => providerCalls === 1 && ui.engine.store.get().generatingMessageId === null, "first reply");
 
 	assert.equal(providerMessages[0][0].meta?.fromPlugin, true);
-	assert.match(container.querySelector(".llm-chat-history")?.textContent ?? "", /hello back/);
+	assert.match(container.querySelector(".mur-chat-history")?.textContent ?? "", /hello back/);
 
 	input.value = "second";
 	submit(form);
 	await waitFor(() => providerCalls === 2 && ui.engine.store.get().generatingMessageId !== null, "second stream");
-	assert.equal(container.querySelector(".llm-send-btn")?.classList.contains("generating"), true);
+	assert.equal(container.querySelector(".mur-send-btn")?.classList.contains("mur-generating"), true);
 
 	submit(form);
 	await waitFor(() => latestSignal?.aborted === true && ui.engine.store.get().generatingMessageId === null, "stop");
@@ -250,23 +250,23 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	});
 
 	await waitFor(() => !ui.engine.store.get().isLoadingSession, "stored session load");
-	assert.equal(container.querySelector(".llm-header-title")?.textContent, "Stored Chat");
-	assert.equal(container.querySelector(".sidebar-item-link")?.textContent, "Stored Chat");
+	assert.equal(container.querySelector(".mur-header-title")?.textContent, "Stored Chat");
+	assert.equal(container.querySelector(".mur-sidebar-item-link")?.textContent, "Stored Chat");
 
-	const sidebar = container.querySelector(".llm-sidebar") as HTMLElement;
-	const closeBtn = container.querySelector(".llm-close-sidebar-btn") as HTMLButtonElement;
-	const openBtn = container.querySelector(".llm-open-sidebar-btn") as HTMLButtonElement;
+	const sidebar = container.querySelector(".mur-sidebar") as HTMLElement;
+	const closeBtn = container.querySelector(".mur-close-sidebar-btn") as HTMLButtonElement;
+	const openBtn = container.querySelector(".mur-open-sidebar-btn") as HTMLButtonElement;
 	const previousSessionId = ui.engine.store.get().currentSessionId;
 
 	closeBtn.click();
-	assert.equal(sidebar.classList.contains("hidden-desktop"), true);
-	assert.equal(container.classList.contains("sidebar-closed"), true);
+	assert.equal(sidebar.classList.contains("mur-hidden-desktop"), true);
+	assert.equal(container.classList.contains("mur-sidebar-closed"), true);
 
 	openBtn.click();
-	assert.equal(sidebar.classList.contains("hidden-desktop"), false);
-	assert.equal(container.classList.contains("sidebar-closed"), false);
+	assert.equal(sidebar.classList.contains("mur-hidden-desktop"), false);
+	assert.equal(container.classList.contains("mur-sidebar-closed"), false);
 
-	(container.querySelector(".llm-new-chat-btn") as HTMLButtonElement).click();
+	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.store.get().currentSessionId, previousSessionId);
 
 	await ui.destroy();

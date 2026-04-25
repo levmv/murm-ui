@@ -39,15 +39,15 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 		previewContainer.style.display = pendingBlocks.length ? "flex" : "none";
 
 		pendingBlocks.forEach((block) => {
-			const item = el("div", "attachment-preview-item");
+			const item = el("div", "mur-attachment-preview-item");
 
 			if (block.mimeType.startsWith("image/")) {
 				item.appendChild(el("img", "", { src: block.data, alt: block.name }));
 			} else {
-				item.appendChild(el("div", "file-preview", { textContent: `📄 ${block.name}` }));
+				item.appendChild(el("div", "mur-file-preview", { textContent: `📄 ${block.name}` }));
 			}
 
-			const removeBtn = el("button", "attachment-remove-btn", {
+			const removeBtn = el("button", "mur-attachment-remove-btn", {
 				innerHTML: "×",
 				type: "button",
 				onclick: () => {
@@ -65,12 +65,12 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 		name: "attachments",
 
 		onInputMount: (ctx: PluginInputContext) => {
-			previewContainer = el("div", "attachment-previews");
+			previewContainer = el("div", "mur-attachment-previews");
 			previewContainer.style.display = "none";
 
 			fileInput = el("input", "", { type: "file", hidden: true, multiple: true });
 
-			attachBtn = el("button", "form-icon-btn", {
+			attachBtn = el("button", "mur-form-icon-btn", {
 				type: "button",
 				innerHTML: ICON_PAPERCLIP,
 				onclick: () => fileInput.click(),

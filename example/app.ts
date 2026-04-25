@@ -27,7 +27,7 @@ import "prismjs/components/prism-docker";
 import "prismjs/components/prism-ruby";
 
 new ChatUI({
-	container: ".llm-app",
+	container: ".mur-app",
 	provider: new OpenAIAdapter("", "", ""), //'https://api.deepseek.com/chat/completions', 'deepseek-reasoner'),
 	storage: new IndexedDBAdapter(),
 	plugins: (chatApi) => [

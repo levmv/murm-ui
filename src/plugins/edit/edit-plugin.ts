@@ -25,7 +25,7 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 		state.actionBar.style.display = "none";
 		state.editContainer.style.display = "block";
 
-		const blocksWrapper = parentEl.querySelector(".message-blocks-wrapper") as HTMLElement | null;
+		const blocksWrapper = parentEl.querySelector(".mur-message-blocks-wrapper") as HTMLElement | null;
 
 		let targetHeight = "auto";
 		let targetMinWidth = "100%";
@@ -36,10 +36,10 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 			blocksWrapper.style.display = "none";
 		}
 
-		const textarea = el("textarea", "edit-textarea", { spellcheck: false }) as HTMLTextAreaElement;
-		const cancelBtn = el("button", "llm-cancel-edit-btn cancel-edit-btn", { textContent: "Cancel" });
-		const saveBtn = el("button", "llm-save-edit-btn save-edit-btn", { textContent: "Save" });
-		const controls = el("div", "edit-controls", null, [cancelBtn, saveBtn]);
+		const textarea = el("textarea", "mur-edit-textarea", { spellcheck: false }) as HTMLTextAreaElement;
+		const cancelBtn = el("button", "mur-cancel-edit-btn", { textContent: "Cancel" });
+		const saveBtn = el("button", "mur-save-edit-btn", { textContent: "Save" });
+		const controls = el("div", "mur-edit-controls", null, [cancelBtn, saveBtn]);
 
 		replaceNodes(state.editContainer, textarea, controls);
 
@@ -93,7 +93,7 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 			let state = stateMap.get(parentEl);
 
 			if (!state) {
-				const editBtn = el("button", "action-icon-btn", {
+				const editBtn = el("button", "mur-action-icon-btn", {
 					title: "Edit message",
 					innerHTML: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M12 20h9"></path>
@@ -101,8 +101,8 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
                     </svg>`,
 				});
 
-				const actionBar = el("div", "message-actions", null, [editBtn]);
-				const editContainer = el("div", "edit-container");
+				const actionBar = el("div", "mur-message-actions", null, [editBtn]);
+				const editContainer = el("div", "mur-edit-container");
 
 				parentEl.appendChild(actionBar);
 				parentEl.appendChild(editContainer);

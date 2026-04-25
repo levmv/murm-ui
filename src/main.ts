@@ -102,11 +102,11 @@ export class ChatUI {
 		this.plugins = this.config.plugins ? this.config.plugins(this.engine) : [];
 		this.engine.registerPlugins(this.plugins);
 
-		const mainHeader = queryOrThrow<HTMLElement>(this.container, ".llm-main-header");
+		const mainHeader = queryOrThrow<HTMLElement>(this.container, ".mur-main-header");
 
 		this.elements = {} as typeof this.elements;
-		this.elements.mainArea = queryOrThrow<HTMLElement>(this.container, ".llm-main-area");
-		this.elements.headerTitle = queryOrThrow<HTMLElement>(mainHeader, ".llm-header-title");
+		this.elements.mainArea = queryOrThrow<HTMLElement>(this.container, ".mur-main-area");
+		this.elements.headerTitle = queryOrThrow<HTMLElement>(mainHeader, ".mur-header-title");
 
 		const pluginCtx = {
 			engine: this.engine,
@@ -132,8 +132,8 @@ export class ChatUI {
 		});
 
 		if (this.config.enableSidebar) {
-			this.elements.sidebarEl = queryOrThrow<HTMLElement>(this.container, ".llm-sidebar");
-			this.elements.openSidebarBtn = queryOrThrow<HTMLButtonElement>(mainHeader, ".llm-open-sidebar-btn");
+			this.elements.sidebarEl = queryOrThrow<HTMLElement>(this.container, ".mur-sidebar");
+			this.elements.openSidebarBtn = queryOrThrow<HTMLButtonElement>(mainHeader, ".mur-open-sidebar-btn");
 
 			this.sidebarComponent = new Sidebar({
 				container: this.container,
@@ -161,11 +161,11 @@ export class ChatUI {
 
 	private applyConfig() {
 		if (this.config.enableSidebar) {
-			const isDesktopClosed = lsGetItem("llm_sidebar_closed") === "true";
+			const isDesktopClosed = lsGetItem("mur_sidebar_closed") === "true";
 
 			if (isDesktopClosed && window.innerWidth > 768) {
-				this.elements.sidebarEl.classList.add("hidden-desktop");
-				this.container.classList.add("sidebar-closed");
+				this.elements.sidebarEl.classList.add("mur-hidden-desktop");
+				this.container.classList.add("mur-sidebar-closed");
 			}
 		}
 	}
@@ -273,11 +273,11 @@ export class ChatUI {
 		const isMobile = window.innerWidth <= 768;
 
 		if (isMobile) {
-			this.elements.sidebarEl.classList.add("mobile-open");
+			this.elements.sidebarEl.classList.add("mur-mobile-open");
 		} else {
-			this.elements.sidebarEl.classList.remove("hidden-desktop");
-			this.container.classList.remove("sidebar-closed");
-			lsSetItem("llm_sidebar_closed", "false");
+			this.elements.sidebarEl.classList.remove("mur-hidden-desktop");
+			this.container.classList.remove("mur-sidebar-closed");
+			lsSetItem("mur_sidebar_closed", "false");
 		}
 	}
 
@@ -285,13 +285,13 @@ export class ChatUI {
 		const isMobile = window.innerWidth <= 768;
 
 		if (isMobile) {
-			this.elements.sidebarEl.classList.remove("mobile-open");
+			this.elements.sidebarEl.classList.remove("mur-mobile-open");
 		} else {
 			if (isNavigation) return;
 
-			this.elements.sidebarEl.classList.add("hidden-desktop");
-			this.container.classList.add("sidebar-closed");
-			lsSetItem("llm_sidebar_closed", "true");
+			this.elements.sidebarEl.classList.add("mur-hidden-desktop");
+			this.container.classList.add("mur-sidebar-closed");
+			lsSetItem("mur_sidebar_closed", "true");
 		}
 	}
 }

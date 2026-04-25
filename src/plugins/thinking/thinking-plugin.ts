@@ -24,16 +24,16 @@ export function ThinkingPlugin(): ChatPlugin {
 			let state = stateMap.get(containerEl);
 
 			if (!state) {
-				const btn = el("button", "think-toggle", {
+				const btn = el("button", "mur-think-toggle", {
 					innerHTML: ICON_CHEVRON + "<span>Thought Process</span>",
 				});
 
 				const btnSpan = btn.querySelector("span") as HTMLElement;
 				const svgIcon = btn.querySelector("svg") as SVGElement;
 
-				const contentEl = el("div", "think-content");
+				const contentEl = el("div", "mur-think-content");
 				contentEl.style.display = "none";
-				const wrapper = el("div", "think-wrapper", {}, [btn, contentEl]);
+				const wrapper = el("div", "mur-think-wrapper", {}, [btn, contentEl]);
 
 				containerEl.innerHTML = "";
 				containerEl.appendChild(wrapper);

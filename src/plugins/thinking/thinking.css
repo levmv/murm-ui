@@ -1,8 +1,8 @@
-.think-wrapper {
+.mur-think-wrapper {
 	margin-bottom: 0.75rem;
 }
 
-.think-toggle {
+.mur-think-toggle {
 	display: flex;
 	align-items: center;
 	gap: 0.35rem;
@@ -20,12 +20,12 @@
 		color 0.2s;
 }
 
-.think-toggle:hover {
+.mur-think-toggle:hover {
 	background-color: var(--hover-bg);
 	color: var(--text);
 }
 
-.think-content {
+.mur-think-content {
 	margin-top: 0.25rem;
 	padding: 0.5rem 0.75rem;
 	border-left: 2px solid var(--border);
@@ -35,10 +35,10 @@
 	background-color: var(--surface);
 	border-radius: 0 0.25rem 0.25rem 0;
 	white-space: pre-wrap;
-	animation: slideDown 0.2s ease-out forwards;
+	animation: mur-slide-down 0.2s ease-out forwards;
 }
 
-@keyframes slideDown {
+@keyframes mur-slide-down {
 	from {
 		opacity: 0;
 		transform: translateY(-5px);

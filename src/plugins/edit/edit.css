@@ -1,10 +1,10 @@
-.edit-container {
+.mur-edit-container {
 	order: 2;
 	display: none;
 	width: 100%;
 }
 
-.edit-textarea {
+.mur-edit-textarea {
 	width: 100%;
 	font-family: inherit;
 	font-size: 1rem;
@@ -18,14 +18,14 @@
 	overflow: hidden;
 }
 
-.edit-controls {
+.mur-edit-controls {
 	display: flex;
 	gap: 8px;
 	margin-top: 8px;
 	justify-content: flex-end;
 }
 
-.cancel-edit-btn {
+.mur-cancel-edit-btn {
 	background: transparent;
 	border: none;
 	color: var(--text-muted);
@@ -38,12 +38,12 @@
 		color 0.2s;
 }
 
-.cancel-edit-btn:hover {
+.mur-cancel-edit-btn:hover {
 	background-color: var(--hover-bg);
 	color: var(--text);
 }
 
-.save-edit-btn {
+.mur-save-edit-btn {
 	padding: 6px 14px;
 	font-size: 0.9rem;
 	background-color: var(--primary);
@@ -55,6 +55,6 @@
 	transition: opacity 0.2s;
 }
 
-.save-edit-btn:hover {
+.mur-save-edit-btn:hover {
 	opacity: 0.8;
 }

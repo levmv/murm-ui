@@ -1,4 +1,4 @@
-.settings-overlay {
+.mur-settings-overlay {
 	position: absolute;
 	top: 0;
 	left: 0;
@@ -12,7 +12,7 @@
 	z-index: 1000;
 }
 
-.settings-modal {
+.mur-settings-modal {
 	background: var(--bg);
 	color: var(--text);
 	width: 90%;
@@ -23,10 +23,10 @@
 	flex-direction: column;
 	border: 1px solid var(--border);
 	overflow: hidden;
-	animation: modal-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+	animation: mur-modal-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes modal-pop {
+@keyframes mur-modal-pop {
 	0% {
 		transform: scale(0.95);
 		opacity: 0;
@@ -38,7 +38,7 @@
 	}
 }
 
-.settings-header {
+.mur-settings-header {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
@@ -47,13 +47,13 @@
 	background: var(--surface);
 }
 
-.settings-header h3 {
+.mur-settings-header h3 {
 	margin: 0;
 	font-size: 1.1rem;
 	font-weight: 600;
 }
 
-.settings-close-btn {
+.mur-settings-close-btn {
 	background: none;
 	border: none;
 	font-size: 1.5rem;
@@ -62,31 +62,31 @@
 	line-height: 1;
 }
 
-.settings-close-btn:hover {
+.mur-settings-close-btn:hover {
 	color: var(--text);
 }
 
-.settings-body {
+.mur-settings-body {
 	padding: 20px;
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
 }
 
-.settings-group {
+.mur-settings-group {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
 }
 
-.settings-group label {
+.mur-settings-group label {
 	font-size: 0.85rem;
 	font-weight: 600;
 	color: var(--text);
 }
 
-.settings-group input,
-.settings-group textarea {
+.mur-settings-group input,
+.mur-settings-group textarea {
 	width: 100%;
 	padding: 10px 12px;
 	border-radius: 6px;
@@ -97,19 +97,19 @@
 	color: var(--text);
 }
 
-.settings-group input:focus,
-.settings-group textarea:focus {
+.mur-settings-group input:focus,
+.mur-settings-group textarea:focus {
 	outline: none;
 	border-color: var(--primary);
 	box-shadow: 0 0 0 2px var(--border);
 }
 
-.settings-hint {
+.mur-settings-hint {
 	font-size: 0.75rem;
 	color: var(--text-muted);
 }
 
-.settings-footer {
+.mur-settings-footer {
 	padding: 16px 20px;
 	border-top: 1px solid var(--border);
 	background: var(--surface);

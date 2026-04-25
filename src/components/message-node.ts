@@ -30,19 +30,19 @@ export class MessageNode {
 		private config: RenderConfig,
 	) {
 		this.el = document.createElement("div");
-		this.el.className = `message ${msg.role}`;
+		this.el.className = `mur-message mur-message-${msg.role}`;
 		if (msg.role === "assistant") {
 			this.el.setAttribute("role", "article");
 			this.el.setAttribute("aria-label", "AI response");
 		}
 
-		this.blocksContainer = el("div", "message-blocks-wrapper");
+		this.blocksContainer = el("div", "mur-message-blocks-wrapper");
 		this.el.appendChild(this.blocksContainer);
 	}
 
 	public update(msg: Message, isGenerating: boolean, error: string | null) {
 		if (this.cacheIsGenerating !== isGenerating) {
-			this.el.classList.toggle("generating", isGenerating);
+			this.el.classList.toggle("mur-generating", isGenerating);
 			this.cacheIsGenerating = isGenerating;
 		}
 
@@ -72,8 +72,8 @@ export class MessageNode {
 
 		if (isLoading) {
 			if (!this.loadingEl) {
-				this.loadingEl = el("div", "message-loading", {
-					innerHTML: `<span class="dot"></span><span class="dot"></span><span class="dot"></span>`,
+				this.loadingEl = el("div", "mur-message-loading", {
+					innerHTML: `<span class="mur-loading-dot"></span><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span>`,
 				});
 				this.el.appendChild(this.loadingEl);
 			}
@@ -95,7 +95,7 @@ export class MessageNode {
 			let isNew = false;
 
 			if (!container) {
-				container = el("div", `content-block block-${block.type}`);
+				container = el("div", `mur-content-block mur-block-${block.type}`);
 				container.dataset.blockId = block.id;
 				isNew = true;
 			}
@@ -119,7 +119,7 @@ export class MessageNode {
 					this.renderFileBlock(block, container);
 				} else if (block.type === "tool_call") {
 					container.textContent = `🛠 Tool Call: ${block.name} (${block.status})`;
-					container.className = `content-block block-tool tool-${block.status}`;
+					container.className = `mur-content-block mur-block-tool mur-tool-${block.status}`;
 				}
 			}
 
@@ -189,9 +189,9 @@ export class MessageNode {
 		if (container.hasChildNodes()) return; // Already rendered
 
 		if (block.mimeType.startsWith("image/")) {
-			container.appendChild(el("img", "attachment-image", { src: block.data }));
+			container.appendChild(el("img", "mur-attachment-image", { src: block.data }));
 		} else {
-			container.appendChild(el("div", "attachment-file-pill", { textContent: `📄 ${block.name || "File"}` }));
+			container.appendChild(el("div", "mur-attachment-file-pill", { textContent: `📄 ${block.name || "File"}` }));
 		}
 	}
 
@@ -199,14 +199,14 @@ export class MessageNode {
 		const html = await marked.parse(content);
 		if (this.isDestroyed || seq !== this.blockRenderSeqs.get(blockId)) return;
 
-		let contentEl = container.querySelector(".message-content");
+		let contentEl = container.querySelector(".mur-message-content");
 
 		if (!contentEl) {
-			contentEl = el("div", "message-content");
+			contentEl = el("div", "mur-message-content");
 			renderSafeHTML(contentEl as HTMLElement, html, this.config.highlighter);
 			container.appendChild(contentEl);
 		} else {
-			const tempDiv = el("div", "message-content");
+			const tempDiv = el("div", "mur-message-content");
 			renderSafeHTML(tempDiv, html, this.config.highlighter);
 			syncDOM(contentEl, tempDiv);
 		}
@@ -222,7 +222,7 @@ export class MessageNode {
 		}
 
 		if (!this.errorEl) {
-			this.errorEl = el("div", "message-error");
+			this.errorEl = el("div", "mur-message-error");
 			this.el.appendChild(this.errorEl);
 		}
 
@@ -243,7 +243,7 @@ export class MessageNode {
 			const actionButtons: HTMLElement[] = [];
 
 			if (typeof navigator !== "undefined" && navigator.clipboard) {
-				const copyBtn = el("button", "action-icon-btn", {
+				const copyBtn = el("button", "mur-action-icon-btn", {
 					title: "Copy message",
 					innerHTML: ICON_COPY,
 				});
@@ -261,7 +261,7 @@ export class MessageNode {
 				actionButtons.push(copyBtn);
 			}
 
-			this.actionsEl = el("div", "message-actions", null, actionButtons);
+			this.actionsEl = el("div", "mur-message-actions", null, actionButtons);
 			this.el.appendChild(this.actionsEl);
 		}
 	}

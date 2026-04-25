@@ -1,4 +1,4 @@
-.attachment-previews {
+.mur-attachment-previews {
 	display: none;
 	gap: 8px;
 	padding: 4px 8px 12px 8px;
@@ -8,19 +8,19 @@
 	pointer-events: auto;
 }
 
-.attachment-preview-item {
+.mur-attachment-preview-item {
 	position: relative;
 	display: inline-block;
 	flex-shrink: 0;
 }
 
-.attachment-preview-item img {
+.mur-attachment-preview-item img {
 	height: 48px;
 	border-radius: 6px;
 	object-fit: cover;
 }
 
-.file-preview {
+.mur-file-preview {
 	height: 48px;
 	padding: 0 12px;
 	background: var(--surface);
@@ -32,7 +32,7 @@
 	border: 1px solid var(--border);
 }
 
-.attachment-remove-btn {
+.mur-attachment-remove-btn {
 	position: absolute;
 	top: -6px;
 	right: -6px;
@@ -52,19 +52,19 @@
 	opacity: 0.8;
 }
 
-.attachment-remove-btn:hover {
+.mur-attachment-remove-btn:hover {
 	background: var(--danger);
 	opacity: 1;
 }
 
-.message-attachments {
+.mur-message-attachments {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.5rem;
 	margin-bottom: 0.5rem;
 }
 
-.attachment-image {
+.mur-attachment-image {
 	max-width: 100%;
 	max-height: 300px;
 	border-radius: 0.5rem;
@@ -72,7 +72,7 @@
 	background-color: var(--surface);
 }
 
-.attachment-file-pill {
+.mur-attachment-file-pill {
 	display: inline-flex;
 	align-items: center;
 	padding: 0.5rem 0.75rem;
