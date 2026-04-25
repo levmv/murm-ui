@@ -215,9 +215,9 @@ export class ChatUI {
 
 		let prevIsGenerating = false;
 
-		// We subscribe globally without a selector because stream chunks are applied
-		// via in-place mutation (for performance), which bypasses selector equality checks.
-		store.subscribeGlobal((state) => {
+		// Feed subscribes to the hot lane because stream chunks are applied via
+		// in-place mutation and should not run every normal selector per token.
+		store.subscribeHot((state) => {
 			const isGenerating = state.generatingMessageId !== null;
 			const generationStarted = !prevIsGenerating && isGenerating;
 

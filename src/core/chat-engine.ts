@@ -389,7 +389,7 @@ export class ChatEngine {
 	 * @param pendingId The ID we generated locally to track the active response.
 	 */
 	private applyStreamEvent(pendingId: string, event: StreamEvent) {
-		this.store.mutate((state) => {
+		this.store.mutateHot((state) => {
 			const msg = state.messages.find((m) => m.id === pendingId);
 			if (!msg) return; // Only happens if user rapidly deleted the chat during stream
 

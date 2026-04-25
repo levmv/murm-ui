@@ -1,6 +1,7 @@
 export class Store<T extends object> {
 	private state: T;
-	private listeners: Set<(state: T) => void> = new Set();
+	private selectorListeners: Set<(state: T) => void> = new Set();
+	private hotListeners: Set<(state: T) => void> = new Set();
 
 	constructor(initialState: T) {
 		this.state = initialState;
@@ -17,17 +18,19 @@ export class Store<T extends object> {
 	 */
 	set(partialState: Partial<T>) {
 		this.state = { ...this.state, ...partialState };
-		this.notify();
+		this.notifySelectorListeners();
+		this.notifyHotListeners();
 	}
+
 	/**
 	 * HIGH-PERFORMANCE HOT PATH ONLY.
 	 * Mutates state in-place to prevent GC thrashing during LLM streaming.
-	 * NOTE: Because references do not change, selector-based subscribers
-	 * will NOT fire. Only global subscribers will catch this update.
+	 * NOTE: This intentionally bypasses selector subscribers so hot updates
+	 * do not run every selector on every token. Only hot subscribers are notified.
 	 */
-	mutate(recipe: (state: T) => void) {
+	mutateHot(recipe: (state: T) => void) {
 		recipe(this.state);
-		this.notify();
+		this.notifyHotListeners();
 	}
 
 	/**
@@ -46,25 +49,32 @@ export class Store<T extends object> {
 			}
 		};
 
-		this.listeners.add(wrappedListener);
-		return () => this.listeners.delete(wrappedListener);
+		this.selectorListeners.add(wrappedListener);
+		return () => this.selectorListeners.delete(wrappedListener);
 	}
 
 	/**
-	 * Subscribes to ALL store updates, including in-place mutations.
-	 * Use sparingly (e.g., for high-performance streaming updates).
+	 * Subscribes to normal set() updates and hot in-place mutations.
+	 * Use sparingly for render paths that must observe high-frequency mutable state.
 	 */
-	subscribeGlobal(listener: (state: T) => void): () => void {
-		this.listeners.add(listener);
-		return () => this.listeners.delete(listener);
+	subscribeHot(listener: (state: T) => void): () => void {
+		this.hotListeners.add(listener);
+		return () => this.hotListeners.delete(listener);
 	}
 
 	public clearAllListeners(): void {
-		this.listeners.clear();
+		this.selectorListeners.clear();
+		this.hotListeners.clear();
 	}
 
-	private notify() {
-		for (const listener of this.listeners) {
+	private notifySelectorListeners() {
+		for (const listener of this.selectorListeners) {
+			listener(this.state);
+		}
+	}
+
+	private notifyHotListeners() {
+		for (const listener of this.hotListeners) {
 			listener(this.state);
 		}
 	}
