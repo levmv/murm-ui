@@ -202,8 +202,15 @@ export class ChatUI {
 				if (this.config.enableSidebar && this.sidebarComponent) {
 					this.sidebarComponent.setActiveSession(currentSessionId);
 				}
+				this.syncRouterToState();
 				this.updateHeaderTitle();
 			},
+		);
+
+		store.subscribe(
+			(state) =>
+				(state.isLoadingSession ? 1 : 0) | (state.error !== null ? 2 : 0) | (state.messages.length > 0 ? 4 : 0),
+			() => this.syncRouterToState(),
 		);
 
 		let prevIsGenerating = false;
@@ -211,16 +218,6 @@ export class ChatUI {
 		// We subscribe globally without a selector because stream chunks are applied
 		// via in-place mutation (for performance), which bypasses selector equality checks.
 		store.subscribeGlobal((state) => {
-			const shouldHaveUrlId = state.messages.length > 0 || state.isLoadingSession;
-			const targetId = shouldHaveUrlId ? state.currentSessionId : null;
-
-			if (this.router.getId() !== targetId) {
-				// If we fell back to an empty chat due to a loading error (e.g., broken link),
-				// use replace so we don't trap the user's Back button.
-				const isErrorFallback = !shouldHaveUrlId && state.error !== null;
-				this.router.setUrl(targetId, isErrorFallback);
-			}
-
 			const isGenerating = state.generatingMessageId !== null;
 			const generationStarted = !prevIsGenerating && isGenerating;
 
@@ -257,6 +254,19 @@ export class ChatUI {
 		const state = this.engine.store.get();
 		const activeSession = state.sessions.find((s) => s.id === state.currentSessionId);
 		this.elements.headerTitle.textContent = activeSession ? activeSession.title : "New Chat";
+	}
+
+	private syncRouterToState() {
+		const state = this.engine.store.get();
+		const shouldHaveUrlId = state.messages.length > 0 || state.isLoadingSession;
+		const targetId = shouldHaveUrlId ? state.currentSessionId : null;
+
+		if (this.router.getId() === targetId) return;
+
+		// If we fell back to an empty chat due to a loading error (e.g., broken link),
+		// use replace so we don't trap the user's Back button.
+		const isErrorFallback = !shouldHaveUrlId && state.error !== null;
+		this.router.setUrl(targetId, isErrorFallback);
 	}
 
 	private openSidebar() {
