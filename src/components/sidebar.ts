@@ -76,10 +76,13 @@ export class Sidebar {
 
 		if (hasMore) {
 			fragment.appendChild(this.loadMoreTrigger);
-			replaceNodes(this.content, fragment);
+		}
+
+		replaceNodes(this.content, fragment);
+
+		if (hasMore) {
 			this.observer.observe(this.loadMoreTrigger);
 		} else {
-			replaceNodes(this.content, fragment);
 			this.observer.unobserve(this.loadMoreTrigger);
 		}
 	}

@@ -23,10 +23,10 @@ export interface SettingsPluginConfig {
 	 */
 	triggerSelector?: string;
 	/**
-	 * A factory function that returns the correct ProviderAdapter based on the settings.
-	 * Defaults to returning an OpenAIAdapter.
+	 * A factory function that returns the correct provider based on the settings.
+	 * Defaults to returning an OpenAIProvider.
 	 */
-	createAdapter?: (settings: SettingsState) => ChatProvider;
+	createProvider?: (settings: SettingsState) => ChatProvider;
 }
 
 export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
@@ -56,7 +56,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 	let mountedTriggerEl: Element | null = null;
 	let mountedTriggerHandler: (() => void) | null = null;
 
-	const buildAdapter = config?.createAdapter ?? ((s) => new OpenAIProvider(s.apiKey, s.endpoint, s.model));
+	const buildProvider = config?.createProvider ?? ((s) => new OpenAIProvider(s.apiKey, s.endpoint, s.model));
 
 	function applySettings(ctx: PluginContext, settings: typeof currentSettings) {
 		currentSettings = settings;
@@ -66,7 +66,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 			console.warn("SettingsPlugin: Could not save settings to localStorage.", error);
 		}
 
-		ctx.engine.setProvider(buildAdapter(settings));
+		ctx.engine.setProvider(buildProvider(settings));
 
 		ctx.engine.setRequestDefaults({
 			systemPrompt: settings.systemPrompt || undefined,

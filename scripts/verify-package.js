@@ -23,9 +23,9 @@ const publicExports = [
 	"AttachmentPlugin",
 	"ChatUI",
 	"EditPlugin",
-	"IndexedDBAdapter",
-	"OpenAIAdapter",
-	"RemoteStorageAdapter",
+	"IndexedDBStorage",
+	"OpenAIProvider",
+	"RemoteStorage",
 	"SettingsPlugin",
 	"ThinkingPlugin",
 ];

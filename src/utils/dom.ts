@@ -23,10 +23,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
 	}
 
 	if (props) {
-		for (const key in props) {
-			// @ts-expect-error
-			element[key] = props[key];
-		}
+		Object.assign(element, props);
 	}
 
 	if (children) {

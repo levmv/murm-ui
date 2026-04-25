@@ -92,7 +92,7 @@ export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlig
 		if (highlightedHTML) {
 			// Note: We inject the highlighted HTML directly without a second sanitization
 			// pass for performance reasons during rapid LLM streaming.
-			// We operate on the assumption that the provided `highlighter`is
+			// We operate on the assumption that the provided `highlighter` is
 			// trusted and does not inject malicious tags.
 			el.innerHTML = highlightedHTML;
 		}

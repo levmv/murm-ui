@@ -3,8 +3,8 @@ import {
 	AttachmentPlugin,
 	ChatUI,
 	EditPlugin,
-	IndexedDBAdapter,
-	OpenAIAdapter,
+	IndexedDBStorage,
+	OpenAIProvider,
 	SettingsPlugin,
 	ThinkingPlugin,
 } from "../src/index";
@@ -28,8 +28,8 @@ import "prismjs/components/prism-ruby";
 
 new ChatUI({
 	container: ".mur-app",
-	provider: new OpenAIAdapter("", "", ""), //'https://api.deepseek.com/chat/completions', 'deepseek-reasoner'),
-	storage: new IndexedDBAdapter(),
+	provider: new OpenAIProvider("", "", ""), //'https://api.deepseek.com/chat/completions', 'deepseek-reasoner'),
+	storage: new IndexedDBStorage(),
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
 		ThinkingPlugin(),

@@ -26,13 +26,13 @@ export interface ChatUIConfig {
 }
 
 export class ChatUI {
-	public declare readonly engine: ChatEngine;
-	private declare container: HTMLElement;
-	private declare config: ChatUIConfig;
-	private declare router: AppRouter;
+	public readonly engine: ChatEngine;
+	private container: HTMLElement;
+	private config: ChatUIConfig;
+	private router: AppRouter;
 
-	private declare inputComponent: Input;
-	private declare feedComponent: Feed;
+	private inputComponent!: Input;
+	private feedComponent!: Feed;
 	private sidebarComponent?: Sidebar;
 	private plugins: ChatPlugin[] = [];
 
@@ -120,7 +120,9 @@ export class ChatUI {
 		this.inputComponent = new Input(
 			{
 				container: this.container,
-				onSubmit: async (text) => await this.engine.sendMessage(text),
+				onSubmit: (text) => {
+					void this.engine.sendMessage(text);
+				},
 				onStop: () => this.engine.stopGeneration(),
 			},
 			this.plugins,
@@ -286,13 +288,14 @@ export class ChatUI {
 
 		if (isMobile) {
 			this.elements.sidebarEl.classList.remove("mur-mobile-open");
-		} else {
-			if (isNavigation) return;
-
-			this.elements.sidebarEl.classList.add("mur-hidden-desktop");
-			this.container.classList.add("mur-sidebar-closed");
-			lsSetItem("mur_sidebar_closed", "true");
+			return;
 		}
+
+		if (isNavigation) return;
+
+		this.elements.sidebarEl.classList.add("mur-hidden-desktop");
+		this.container.classList.add("mur-sidebar-closed");
+		lsSetItem("mur_sidebar_closed", "true");
 	}
 }
 

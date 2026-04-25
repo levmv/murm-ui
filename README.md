@@ -23,15 +23,15 @@ import {
 	AttachmentPlugin,
 	ChatUI,
 	EditPlugin,
-	IndexedDBAdapter,
-	OpenAIAdapter,
+	IndexedDBStorage,
+	OpenAIProvider,
 	ThinkingPlugin,
 } from "murm-ui";
 
 const ui = new ChatUI({
 	container: "#app",
-	provider: new OpenAIAdapter("YOUR_API_KEY", "https://api.openai.com/v1/chat/completions", "gpt-4o-mini"),
-	storage: new IndexedDBAdapter(),
+	provider: new OpenAIProvider("YOUR_API_KEY", "https://api.openai.com/v1/chat/completions", "gpt-4o-mini"),
+	storage: new IndexedDBStorage(),
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
 		ThinkingPlugin(),
@@ -60,7 +60,7 @@ You provide the HTML skeleton. See `example/index.html` for the standard class n
 
 ### Remote Storage API
 
-`RemoteStorageAdapter` expects these endpoints. It sends `Authorization: Bearer <token>` when the token callback returns a value.
+`RemoteStorage` expects these endpoints. It sends `Authorization: Bearer <token>` when the token callback returns a value.
 
 **1. List Chats - Cursor Paginated**
 * **GET** `/api/chats?limit=20&cursor=1710629000000&cursorId=chat-5`
@@ -125,7 +125,7 @@ Supported runtime baseline:
 * Firefox 65+
 * Safari 12.1+
 
-Required browser APIs include `fetch`, streaming `Response.body`, `ReadableStream.getReader`, `TextDecoder`, `AbortController`, `crypto.getRandomValues`, and either IndexedDB or a custom storage adapter.
+Required browser APIs include `fetch`, streaming `Response.body`, `ReadableStream.getReader`, `TextDecoder`, `AbortController`, `crypto.getRandomValues`, and either IndexedDB or a custom storage implementation.
 
 We prioritize graceful degradation for optional enhancements:
 * Clipboard API support enables copy buttons when available.
