@@ -10,21 +10,21 @@ g.NodeFilter = dom.window.NodeFilter;
 
 import { renderSafeHTML } from "./html";
 
-test("Sanitizer: Keeps safe markdown HTML intact", () => {
+test("keeps safe markdown HTML intact", () => {
 	const input = '<p>Hello <strong>World</strong>!</p><pre><code class="language-js">let x = 1;</code></pre>';
 	const output = document.createElement("div");
 	renderSafeHTML(output, input);
 	assert.equal(output.innerHTML, input);
 });
 
-test("Sanitizer: Strips unsafe attributes (XSS events, styles, ids)", () => {
+test("strips unsafe attributes (XSS events, styles, ids)", () => {
 	const input = '<p id="hack" style="color:red" onclick="alert(1)" class="test">Text</p>';
 	const output = document.createElement("div");
 	renderSafeHTML(output, input);
 	assert.equal(output.innerHTML, "<p>Text</p>");
 });
 
-test("Sanitizer: Protects against malicious links (javascript:)", () => {
+test("protects against malicious links (javascript:)", () => {
 	const input1 = '<a href="https://google.com">Safe</a>';
 	const output1 = document.createElement("div");
 	renderSafeHTML(output1, input1);
@@ -36,7 +36,39 @@ test("Sanitizer: Protects against malicious links (javascript:)", () => {
 	assert.equal(output2.innerHTML, "<a>Hacked</a>");
 });
 
-test("Sanitizer: Escapes dangerous tags to text instead of deleting them (UX)", () => {
+test("allows safe link protocols", () => {
+	const input = '<a href="http://example.com">HTTP</a><a href="mailto:test@example.com">Mail</a>';
+	const output = document.createElement("div");
+	renderSafeHTML(output, input);
+	assert.equal(output.innerHTML, input);
+});
+
+test("allows only safe image sources", () => {
+	const input =
+		'<img src="https://example.com/a.png" alt="remote"><img src="data:image/png;base64,abc" alt="data"><img src="javascript:alert(1)" alt="bad">';
+	const output = document.createElement("div");
+	renderSafeHTML(output, input);
+	assert.equal(
+		output.innerHTML,
+		'<img src="https://example.com/a.png" alt="remote"><img src="data:image/png;base64,abc" alt="data"><img alt="bad">',
+	);
+});
+
+test("escapes unsafe nested tags", () => {
+	const input = '<p>Before <span onclick="alert(1)">bad</span> after</p>';
+	const output = document.createElement("div");
+	renderSafeHTML(output, input);
+	assert.equal(output.innerHTML, '<p>Before &lt;span onclick="alert(1)"&gt;bad&lt;/span&gt; after</p>');
+});
+
+test("treats highlighter output as trusted for code blocks", () => {
+	const input = '<pre><code class="language-ts">const x = 1;</code></pre>';
+	const output = document.createElement("div");
+	renderSafeHTML(output, input, (code, lang) => `<span class="${lang}">${code}</span>`);
+	assert.equal(output.innerHTML, '<pre><code class="language-ts"><span class="ts">const x = 1;</span></code></pre>');
+});
+
+test("escapes dangerous tags to text instead of deleting them (UX)", () => {
 	const input = 'Try this: <script>console.log("hack")</script>';
 	const output = document.createElement("div");
 	renderSafeHTML(output, input);
