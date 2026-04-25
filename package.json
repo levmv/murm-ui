@@ -12,7 +12,9 @@
 		"build": "npm run build:lib",
 		"build:lib": "npm run clean && tsc && npm run copy:css",
 		"copy:css": "node scripts/copy-css.js",
-		"test": "node --import tsx --test \"src/**/*.test.ts\"",
+		"test": "node --import ./scripts/register-test-loaders.js --import tsx --test \"src/**/*.test.ts\"",
+		"pack:dry": "node scripts/pack-dry-run.js",
+		"verify": "npm run check && npm test && npm run build && node scripts/verify-package.js && npm run pack:dry",
 		"build:example": "esbuild example/app.ts --bundle --outfile=example/index.js --minify --target=es2018"
 	},
 	"exports": {

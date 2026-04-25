@@ -20,64 +20,64 @@ Here is a complete example:
 
 ```typescript
 import {
-    ChatUI,
-    OpenAIAdapter,
-    IndexedDBAdapter,
-    AttachmentPlugin,
-    ThinkingPlugin,
-    EditPlugin
+	AttachmentPlugin,
+	ChatUI,
+	EditPlugin,
+	IndexedDBAdapter,
+	OpenAIAdapter,
+	ThinkingPlugin,
 } from "murm-ui";
 
 const ui = new ChatUI({
-    container: "#app", // The DOM element to mount into
-    
-    // 1. The Provider (Handles the AI stream)
-    // You can use the built-in OpenAI adapter, or write your own for a custom backend.
-    provider: new OpenAIAdapter(
-        "YOUR_API_KEY", 
-        "https://api.openai.com/v1/chat/completions", 
-        "gpt-4o-mini"
-    ),
-    
-    // 2. Storage (Handles chat history)
-    // IndexedDBAdapter for local-only, or RemoteStorageAdapter for cloud saving.
-    storage: new IndexedDBAdapter(),
-    
-    // 3. Plugins (Opt-in UI features)
-    plugins: (chatApi) => [
-        AttachmentPlugin(), // Adds file/image upload UI
-        ThinkingPlugin(),   // Adds `<think>` accordion blocks (e.g., DeepSeek Reasoner)
-        EditPlugin({ 
-            onSave: (id, text) => chatApi.editAndResubmit(id, text) 
-        }),
-    ],
-    
-    // Optional: Syntax highlighting
-    highlighter: (code, lang) => Prism.highlight(code, Prism.languages[lang], lang),
+	container: "#app",
+	provider: new OpenAIAdapter("YOUR_API_KEY", "https://api.openai.com/v1/chat/completions", "gpt-4o-mini"),
+	storage: new IndexedDBAdapter(),
+	plugins: (chatApi) => [
+		AttachmentPlugin(),
+		ThinkingPlugin(),
+		EditPlugin({
+			onSave: (id, text) => chatApi.editAndResubmit(id, text),
+		}),
+	],
+	highlighter: (code, lang) => Prism.highlight(code, Prism.languages[lang], lang),
 });
 ```
-Note: You must provide your own HTML/CSS layout skeleton. See example/index.html for the standard layout template.
 
-### 1. The Backend API Specification 
-If a developer wants to build a backend for this UI, they only need to implement these endpoints. We will assume standard JWT/Token-based authentication (`Authorization: Bearer <token>`) or session cookies.
+The package entry imports the library CSS for bundlers that support CSS imports. The CSS assets are also exported for explicit use:
 
-**1. Verify Auth / Get User**
-*   **GET** `/api/auth/me`
-*   **Response (200 OK):** `{ "id": "123", "name": "User" }`
+```typescript
+import "murm-ui/styles/base.css";
+import "murm-ui/styles/sidebar.css";
+import "murm-ui/styles/input.css";
+import "murm-ui/styles/feed.css";
+import "murm-ui/plugins/attachment/attachment.css";
+import "murm-ui/plugins/edit/edit.css";
+import "murm-ui/plugins/settings/settings.css";
+import "murm-ui/plugins/thinking/thinking.css";
+```
 
-**2. List All Chats (Metadata) - Cursor Paginated**
+You provide the HTML skeleton. See `example/index.html` for the standard class names expected by `ChatUI`.
+
+### Remote Storage API
+
+`RemoteStorageAdapter` expects these endpoints. It sends `Authorization: Bearer <token>` when the token callback returns a value.
+
+**1. List Chats - Cursor Paginated**
 * **GET** `/api/chats?limit=20&cursor=1710629000000&cursorId=chat-5`
 * `cursor` (timestamp) and `cursorId` (string ID) are optional. When present, they should point to the `updatedAt` and `id` of the last item from the previous page.
 *  Chats are sorted by `updatedAt` descending.
 *   **Response (200 OK):** 
     ```json
-    [
-      { "id": "chat-1", "title": "React vs Vue", "updatedAt": 1710629000000 },
-      { "id": "chat-2", "title": "Explain Quantum Computing", "updatedAt": 1710628000000 }
-    ]
+    {
+      "items": [
+        { "id": "chat-1", "title": "React vs Vue", "updatedAt": 1710629000000 },
+        { "id": "chat-2", "title": "Explain Quantum Computing", "updatedAt": 1710628000000 }
+      ],
+      "hasMore": false
+    }
     ```
 
-**3. Get a Specific Chat (Full Messages)**
+**2. Get A Chat**
 *   **GET** `/api/chats/:id`
 *   **Response (200 OK):**
     ```json
@@ -86,33 +86,35 @@ If a developer wants to build a backend for this UI, they only need to implement
       "title": "React vs Vue",
       "updatedAt": 1710629000000,
       "messages": [
-        { "id": "msg-1", "role": "user", "content": "Hello" },
-        { "id": "msg-2", "role": "assistant", "content": "Hi there!" }
+        {
+          "id": "msg-1",
+          "role": "user",
+          "blocks": [{ "id": "text-1", "type": "text", "text": "Hello" }]
+        },
+        {
+          "id": "msg-2",
+          "role": "assistant",
+          "blocks": [{ "id": "text-2", "type": "text", "text": "Hi there!" }]
+        }
       ]
     }
     ```
 
-**4. Save / Update a Chat**
+**3. Save A Chat**
 *   **PUT** `/api/chats/:id`
-*   **Body:** Same JSON as the Get Specific Chat response.
+*   **Body:** Same JSON shape as the Get A Chat response.
 *   **Response (200 OK):** `{ "success": true }`
 
 
-**5. Delete a Chat**
+**4. Delete A Chat**
 *   **DELETE** `/api/chats/:id`
 *   **Response (200 OK):** `{ "success": true }`
 
-**6. Update Chat Metadata (Optional)**
+**5. Update Chat Metadata**
 *   **POST** `/api/chats/:id/meta`
 *   **Description:** The UI calls this to update background data, such as when the LLM auto-generates a smart title.
 *   **Body:** `{ "title": "A Smart Summary" }`
 *   **Response (200 OK):** `{ "success": true }`
-
-**7. Generate Smart Title (Optional)**
-*   **POST** `/api/chats/:id/title`
-*   **Description:** The UI calls this after the first message exchange. The backend prompts the LLM to summarize the chat and returns the title.
-*   **Response (200 OK):** `{ "title": "A Smart Summary" }`
-
 
 ### Browser Support
 
