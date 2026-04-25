@@ -157,11 +157,10 @@ export class IndexedDBStorage implements ChatStorage {
 		if (this.db) {
 			this.db.close();
 			this.db = null;
-			if (this.dbPromise) {
-				// If the DB is currently opening, close it the moment it finishes resolving
-				this.dbPromise.then((db) => db.close()).catch(() => {});
-				this.dbPromise = null;
-			}
+		}
+		if (this.dbPromise) {
+			this.dbPromise.then((db) => db.close()).catch(() => {});
+			this.dbPromise = null;
 		}
 	}
 
