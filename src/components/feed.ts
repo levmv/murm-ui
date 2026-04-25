@@ -15,6 +15,8 @@ export class Feed {
 	private lastScrollTop = 0;
 	private isDestroyed = false;
 
+	private pendingScrollFrame: number | null = null;
+	private pendingScrollBehavior: ScrollBehavior | null = null;
 	private resizeObserver?: ResizeObserver;
 
 	constructor(
@@ -28,7 +30,7 @@ export class Feed {
 
 		if (typeof ResizeObserver !== "undefined") {
 			this.resizeObserver = new ResizeObserver(() => {
-				if (this.isStickyToBottom) this.scrollToBottom("auto");
+				this.requestBottomScroll("auto");
 			});
 			this.resizeObserver.observe(this.historyContainer);
 			this.resizeObserver.observe(this.scrollArea);
@@ -58,7 +60,6 @@ export class Feed {
 
 		if (generationStarted) {
 			this.isStickyToBottom = true;
-			requestAnimationFrame(() => this.scrollToBottom("smooth"));
 		}
 
 		// Skip heavy DOM syncs if the array reference hasn't changed (e.g. during streaming)
@@ -99,16 +100,19 @@ export class Feed {
 			}
 		}
 
-		requestAnimationFrame(() => {
-			if (this.isStickyToBottom && !this.isDestroyed) {
-				this.scrollToBottom(generatingMessageId !== null ? "auto" : "smooth");
-			}
-		});
+		const isActivelyStreaming = generatingMessageId !== null && !generationStarted;
+		this.requestBottomScroll(isActivelyStreaming ? "auto" : "smooth");
 	}
 
 	public destroy() {
 		if (this.isDestroyed) return;
 		this.isDestroyed = true;
+
+		if (this.pendingScrollFrame !== null) {
+			cancelAnimationFrame(this.pendingScrollFrame);
+			this.pendingScrollFrame = null;
+		}
+		this.pendingScrollBehavior = null;
 
 		this.resizeObserver?.disconnect();
 		this.scrollArea.removeEventListener("scroll", this.onScroll);
@@ -124,12 +128,36 @@ export class Feed {
 		this.historyContainer.innerHTML = "";
 	}
 
-	private scrollToBottom(behavior: ScrollBehavior = "auto") {
+	private requestBottomScroll(behavior: ScrollBehavior, force = false) {
 		if (this.isDestroyed) return;
 
-		this.scrollArea.scrollTo({
-			top: this.scrollArea.scrollHeight,
-			behavior,
+		if (force) {
+			this.isStickyToBottom = true;
+		} else if (!this.isStickyToBottom) {
+			return;
+		}
+
+		if (this.pendingScrollBehavior !== "smooth") {
+			this.pendingScrollBehavior = behavior;
+		}
+		this.ensureBottomScrollFrame();
+	}
+
+	private ensureBottomScrollFrame() {
+		if (this.pendingScrollFrame !== null) return;
+
+		this.pendingScrollFrame = requestAnimationFrame(() => {
+			const behavior = this.pendingScrollBehavior ?? "auto";
+
+			this.pendingScrollFrame = null;
+			this.pendingScrollBehavior = null;
+
+			if (this.isDestroyed || !this.isStickyToBottom) return;
+
+			this.scrollArea.scrollTo({
+				top: this.scrollArea.scrollHeight,
+				behavior,
+			});
 		});
 	}
 
