@@ -40,17 +40,18 @@ type OpenAIContentPart = { type: "text"; text: string } | { type: "image_url"; i
 const REASONING_FIELDS = ["reasoning_content", "reasoning", "reasoning_text"] as const;
 
 export class OpenAIProvider implements ChatProvider {
-	private abortController: AbortController | null = null;
-
 	constructor(
 		private apiKey: string,
 		private endpoint: string,
 		private model: string,
 	) {}
 
-	async streamChat(messages: Message[], options: RequestOptions, onEvent: (event: StreamEvent) => void): Promise<void> {
-		this.abortController = new AbortController();
-
+	async streamChat(
+		messages: Message[],
+		options: RequestOptions,
+		signal: AbortSignal,
+		onEvent: (event: StreamEvent) => void,
+	): Promise<void> {
 		try {
 			const { model = this.model, systemPrompt, ...restOptions } = options;
 
@@ -70,7 +71,7 @@ export class OpenAIProvider implements ChatProvider {
 						...((restOptions.stream_options as object) || {}),
 					},
 				}),
-				signal: this.abortController.signal,
+				signal,
 			});
 
 			if (!response.ok) {
@@ -211,15 +212,13 @@ export class OpenAIProvider implements ChatProvider {
 			}
 		} catch (err: unknown) {
 			const isAbort = err instanceof Error && err.name === "AbortError";
-			if (isAbort || this.abortController?.signal.aborted) {
+			if (isAbort || signal.aborted) {
 				onEvent({ type: "finish", reason: "aborted" });
 			} else {
 				// Safer fallback stringification for unknown thrown objects
 				const errorMessage = err instanceof Error ? err.message : JSON.stringify(err);
 				onEvent({ type: "error", message: errorMessage });
 			}
-		} finally {
-			this.abortController = null;
 		}
 	}
 
@@ -233,13 +232,7 @@ export class OpenAIProvider implements ChatProvider {
 		}
 	}
 
-	abort(): void {
-		if (this.abortController) {
-			this.abortController.abort();
-		}
-	}
-
-	async generateTitle(messages: Message[], options?: RequestOptions): Promise<string> {
+	async generateTitle(messages: Message[], options?: RequestOptions, signal?: AbortSignal): Promise<string> {
 		try {
 			let endIndex = messages.findIndex((m) => m.role === "assistant" && m.blocks.length > 0);
 			if (endIndex === -1) endIndex = Math.min(messages.length - 1, 3);
@@ -264,6 +257,7 @@ export class OpenAIProvider implements ChatProvider {
 					],
 					stream: false,
 				}),
+				signal,
 			});
 
 			if (!response.ok) return "";

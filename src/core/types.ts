@@ -171,14 +171,18 @@ export interface RequestOptions {
 export interface ChatRequestParams {
 	messages: Message[];
 	options: RequestOptions;
+	signal: AbortSignal;
 }
 
 export interface ChatProvider {
-	streamChat(messages: Message[], options: RequestOptions, onEvent: (event: StreamEvent) => void): Promise<void>;
+	streamChat(
+		messages: Message[],
+		options: RequestOptions,
+		signal: AbortSignal,
+		onEvent: (event: StreamEvent) => void,
+	): Promise<void>;
 
-	abort(): void;
-
-	generateTitle?(messages: Message[], options?: RequestOptions): Promise<string>;
+	generateTitle?(messages: Message[], options?: RequestOptions, signal?: AbortSignal): Promise<string>;
 }
 
 export interface RenderConfig {
@@ -197,6 +201,7 @@ export type DeepReadonly<T> = T extends AnyFn
 export interface ReadonlyChatRequestParams {
 	readonly messages: readonly DeepReadonly<Message>[];
 	readonly options: DeepReadonly<RequestOptions>;
+	readonly signal: AbortSignal;
 }
 
 export interface ChatRequestPatch {

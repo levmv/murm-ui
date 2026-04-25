@@ -29,6 +29,7 @@ export class ChatEngine {
 	private storage: ChatStorage;
 	private plugins: ChatPlugin[] = [];
 	private requestDefaults: Partial<RequestOptions> = {};
+	private activeGeneration: { id: string; controller: AbortController } | null = null;
 
 	private isFetchingSessions = false;
 
@@ -62,7 +63,7 @@ export class ChatEngine {
 	}
 
 	private get isBusy() {
-		return this.store.get().generatingMessageId !== null;
+		return this.activeGeneration !== null;
 	}
 
 	public async setProvider(newProvider: ChatProvider) {
@@ -151,9 +152,12 @@ export class ChatEngine {
 
 	public async deleteSession(id: string) {
 		try {
-			await this.storage.delete(id);
-
 			const isCurrent = this.state.currentSessionId === id;
+			if (isCurrent && this.isBusy) {
+				await this.stopGeneration();
+			}
+
+			await this.storage.delete(id);
 
 			this.store.set({
 				sessions: this.state.sessions.filter((s) => s.id !== id),
@@ -234,8 +238,13 @@ export class ChatEngine {
 
 	public async stopGeneration() {
 		if (!this.isBusy) return;
-		this.provider.abort();
-		await this.finalizeGeneration(true);
+
+		const generation = this.activeGeneration;
+		if (!generation) return;
+
+		generation.controller.abort();
+		this.applyStreamEvent(generation.id, { type: "finish", reason: "aborted" });
+		await this.finalizeGeneration(generation.id, true);
 	}
 
 	public async destroy() {
@@ -299,6 +308,9 @@ export class ChatEngine {
 
 	private async startGeneration(contextMessages: Message[]) {
 		const pendingId = uuidv7();
+		const controller = new AbortController();
+		const signal = controller.signal;
+		this.activeGeneration = { id: pendingId, controller };
 
 		// Instantly create an empty assistant message so the UI shows a loading state
 		const assistantMsg: Message = {
@@ -324,7 +336,11 @@ export class ChatEngine {
 
 		let wasAborted = false;
 		try {
-			const payloadParams = await this.prepareRequestParams(validContext);
+			const payloadParams = await this.prepareRequestParams(validContext, signal);
+			if (signal.aborted) {
+				wasAborted = true;
+				return;
+			}
 
 			if (payloadParams.options.systemPrompt) {
 				payloadParams.messages = [
@@ -337,13 +353,24 @@ export class ChatEngine {
 				];
 			}
 
-			await this.provider.streamChat(payloadParams.messages, payloadParams.options, (event) => {
+			if (signal.aborted) {
+				wasAborted = true;
+				return;
+			}
+
+			await this.provider.streamChat(payloadParams.messages, payloadParams.options, signal, (event) => {
+				if (signal.aborted) return;
 				if (event.type === "finish" && event.reason === "aborted") {
 					wasAborted = true;
 				}
 				this.applyStreamEvent(pendingId, event);
 			});
 		} catch (err: unknown) {
+			if (signal.aborted) {
+				wasAborted = true;
+				return;
+			}
+
 			const errorMessage =
 				err instanceof Error
 					? err.message
@@ -353,7 +380,7 @@ export class ChatEngine {
 
 			this.store.set({ error: { message: errorMessage, id: pendingId } });
 		} finally {
-			await this.finalizeGeneration(wasAborted);
+			await this.finalizeGeneration(pendingId, wasAborted || signal.aborted);
 		}
 	}
 
@@ -428,16 +455,24 @@ export class ChatEngine {
 		});
 	}
 
-	private async prepareRequestParams(messages: Message[]): Promise<ChatRequestParams> {
+	private async prepareRequestParams(messages: Message[], signal: AbortSignal): Promise<ChatRequestParams> {
 		const payloadParams: ChatRequestParams = {
 			messages: [...messages],
 			options: { ...this.requestDefaults },
+			signal,
 		};
 
 		for (const plugin of this.plugins) {
+			if (signal.aborted) return payloadParams;
+
 			if (plugin.beforeSubmit) {
-				const frozenParams = devFreeze({ ...payloadParams }) as ReadonlyChatRequestParams;
+				const frozenParams = {
+					messages: devFreeze([...payloadParams.messages]),
+					options: devFreeze({ ...payloadParams.options }),
+					signal,
+				} as ReadonlyChatRequestParams;
 				const patch = await plugin.beforeSubmit(frozenParams);
+				if (signal.aborted) return payloadParams;
 
 				if (patch) {
 					if (patch.messages) payloadParams.messages = patch.messages;
@@ -449,11 +484,17 @@ export class ChatEngine {
 		return payloadParams;
 	}
 
-	private async finalizeGeneration(wasAborted: boolean = false) {
-		const pendingId = this.state.generatingMessageId;
-		if (!pendingId) return;
+	private async finalizeGeneration(pendingId: string, wasAborted: boolean = false) {
+		if (this.activeGeneration?.id !== pendingId) return;
+		this.activeGeneration = null;
 
-		this.store.set({ generatingMessageId: null });
+		if (wasAborted) {
+			this.removeEmptyAbortedMessage(pendingId);
+		}
+
+		if (this.state.generatingMessageId === pendingId) {
+			this.store.set({ generatingMessageId: null });
+		}
 
 		try {
 			await this.persistCurrentSession();
@@ -475,6 +516,16 @@ export class ChatEngine {
 			console.error("Failed to finalize stream", error);
 		}
 	}
+
+	private removeEmptyAbortedMessage(pendingId: string): void {
+		const pendingMessage = this.state.messages.find((m) => m.id === pendingId);
+		if (!pendingMessage || pendingMessage.blocks.length > 0) return;
+
+		this.store.set({
+			messages: this.state.messages.filter((m) => m.id !== pendingId),
+		});
+	}
+
 	private async persistCurrentSession(): Promise<boolean> {
 		const { currentSessionId, messages, sessions } = this.store.get();
 		if (messages.length === 0) return true;
@@ -523,9 +574,14 @@ export class ChatEngine {
 
 	private async triggerAutoTitle(sessionId: string, messages: Message[]) {
 		try {
-			const payloadParams = await this.prepareRequestParams(messages);
+			const controller = new AbortController();
+			const payloadParams = await this.prepareRequestParams(messages, controller.signal);
 
-			const smartTitle = await this.provider.generateTitle!(payloadParams.messages, payloadParams.options);
+			const smartTitle = await this.provider.generateTitle!(
+				payloadParams.messages,
+				payloadParams.options,
+				controller.signal,
+			);
 			if (!smartTitle) return;
 
 			// user may have deleted this session while the title was generating in the background.
