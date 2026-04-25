@@ -7,6 +7,7 @@ import type {
 	ChatSession,
 	ChatSessionMeta,
 	ChatStorage,
+	ContentBlock,
 	Message,
 	PaginatedSessions,
 	RequestOptions,
@@ -14,27 +15,185 @@ import type {
 } from "./types";
 
 class MemoryStorage implements ChatStorage {
+	public sessions = new Map<string, ChatSession>();
+	public metas: ChatSessionMeta[] = [];
 	public saved: ChatSession[] = [];
 	public deleted: string[] = [];
+	public metadataUpdates: { id: string; meta: Partial<ChatSessionMeta> }[] = [];
+	public loadOneCalls: string[] = [];
 
-	async loadSessions(): Promise<PaginatedSessions> {
-		return { items: [], hasMore: false };
+	constructor(sessions: ChatSession[] = []) {
+		for (const session of sessions) {
+			this.sessions.set(session.id, session);
+			this.metas.push({ id: session.id, title: session.title, updatedAt: session.updatedAt });
+		}
 	}
 
-	async loadOne(): Promise<ChatSession | null> {
-		return null;
+	async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
+		let metas = [...this.metas].sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id));
+
+		if (cursor) {
+			const cursorIndex = metas.findIndex(
+				(session) => session.updatedAt === cursor.updatedAt && session.id === cursor.id,
+			);
+			if (cursorIndex >= 0) metas = metas.slice(cursorIndex + 1);
+		}
+
+		return { items: metas.slice(0, limit), hasMore: metas.length > limit };
+	}
+
+	async loadOne(id: string): Promise<ChatSession | null> {
+		this.loadOneCalls.push(id);
+		return this.sessions.get(id) ?? null;
 	}
 
 	async save(session: ChatSession): Promise<void> {
 		this.saved.push(session);
+		this.sessions.set(session.id, session);
+
+		const meta = { id: session.id, title: session.title, updatedAt: session.updatedAt };
+		this.metas = [meta, ...this.metas.filter((s) => s.id !== session.id)];
 	}
 
-	async updateMetadata(_id: string, _meta: Partial<ChatSessionMeta>): Promise<void> {}
+	async updateMetadata(id: string, meta: Partial<ChatSessionMeta>): Promise<void> {
+		this.metadataUpdates.push({ id, meta });
+		this.metas = this.metas.map((session) => (session.id === id ? { ...session, ...meta } : session));
+	}
 
 	async delete(id: string): Promise<void> {
 		this.deleted.push(id);
+		this.sessions.delete(id);
+		this.metas = this.metas.filter((session) => session.id !== id);
 	}
 }
+
+function textMessage(id: string, role: "user" | "assistant", text: string): Message {
+	return {
+		id,
+		role,
+		blocks: [{ id: `${id}-text`, type: "text", text }],
+	};
+}
+
+function fileBlock(id = "file-1"): Extract<ContentBlock, { type: "file" }> {
+	return {
+		id,
+		type: "file",
+		mimeType: "text/plain",
+		name: "notes.txt",
+		data: "important context",
+	};
+}
+
+function getText(message: Message): string {
+	return message.blocks
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("\n\n");
+}
+
+async function waitFor(assertion: () => boolean, label: string): Promise<void> {
+	for (let i = 0; i < 20; i++) {
+		if (assertion()) return;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+
+	assert.fail(`Timed out waiting for ${label}`);
+}
+
+function replyingProvider(reply: string): ChatProvider {
+	return {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: reply });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+}
+
+test("initial load opens the most recent stored session", async () => {
+	const older = {
+		id: "older",
+		title: "Older chat",
+		updatedAt: 100,
+		messages: [textMessage("older-user", "user", "old question")],
+	};
+	const latest = {
+		id: "latest",
+		title: "Latest chat",
+		updatedAt: 200,
+		messages: [textMessage("latest-user", "user", "new question")],
+	};
+	const storage = new MemoryStorage([older, latest]);
+
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "initial session load");
+
+	assert.equal(engine.store.get().currentSessionId, "latest");
+	assert.deepEqual(
+		engine.store.get().sessions.map((session) => session.id),
+		["latest", "older"],
+	);
+	assert.equal(getText(engine.store.get().messages[0]), "new question");
+	assert.deepEqual(storage.loadOneCalls, ["latest"]);
+});
+
+test("initial load can open a session that is not in the first sidebar page", async () => {
+	const listed = {
+		id: "listed",
+		title: "Listed chat",
+		updatedAt: 200,
+		messages: [textMessage("listed-user", "user", "listed question")],
+	};
+	const deepLinked = {
+		id: "deep-linked",
+		title: "Deep link",
+		updatedAt: 100,
+		messages: [textMessage("deep-user", "user", "linked question")],
+	};
+	const storage = new (class extends MemoryStorage {
+		override async loadSessions(): Promise<PaginatedSessions> {
+			return { items: [{ id: listed.id, title: listed.title, updatedAt: listed.updatedAt }], hasMore: false };
+		}
+	})([listed, deepLinked]);
+
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: deepLinked.id });
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "deep-linked session load");
+
+	assert.equal(engine.store.get().currentSessionId, deepLinked.id);
+	assert.equal(getText(engine.store.get().messages[0]), "linked question");
+	assert.deepEqual(
+		engine.store.get().sessions.map((session) => session.id),
+		["deep-linked", "listed"],
+	);
+});
+
+test("sendMessage streams an assistant reply and persists the session", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await engine.sendMessage("hello");
+	await waitFor(
+		() => engine.store.get().generatingMessageId === null && storage.saved.length === 1,
+		"stream finalization",
+	);
+
+	const state = engine.store.get();
+	assert.equal(state.messages.length, 2);
+	assert.equal(state.messages[0].role, "user");
+	assert.equal(getText(state.messages[0]), "hello");
+	assert.equal(state.messages[1].role, "assistant");
+	assert.equal(getText(state.messages[1]), "hello back");
+	assert.equal(storage.saved[0].title, "hello");
+	assert.equal(state.sessions[0].id, state.currentSessionId);
+});
 
 test("stopping while beforeSubmit is pending prevents the provider request", async () => {
 	let releaseBeforeSubmit!: () => void;
@@ -90,6 +249,158 @@ test("stopping while beforeSubmit is pending prevents the provider request", asy
 	assert.equal(engine.store.get().generatingMessageId, null);
 	assert.equal(engine.store.get().messages.length, 1);
 	assert.equal(engine.store.get().messages[0].role, "user");
+});
+
+test("stopping after streamed content keeps the partial assistant message", async () => {
+	const storage = new MemoryStorage();
+	let releaseStream!: () => void;
+	const streamReleased = new Promise<void>((resolve) => {
+		releaseStream = resolve;
+	});
+
+	let streamStarted!: () => void;
+	const streamStartedPromise = new Promise<void>((resolve) => {
+		streamStarted = resolve;
+	});
+
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "partial-text", delta: "partial" });
+			streamStarted();
+			await streamReleased;
+			if (signal.aborted) {
+				onEvent({ type: "finish", reason: "aborted" });
+			}
+		},
+	};
+
+	const engine = new ChatEngine({ provider, storage });
+	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+
+	await engine.sendMessage("hello");
+	await streamStartedPromise;
+	await engine.stopGeneration();
+	releaseStream();
+
+	await waitFor(
+		() => engine.store.get().generatingMessageId === null && storage.saved.length === 1,
+		"abort finalization",
+	);
+
+	const state = engine.store.get();
+	assert.equal(state.messages.length, 2);
+	assert.equal(state.messages[1].role, "assistant");
+	assert.equal(getText(state.messages[1]), "partial");
+});
+
+test("editAndResubmit truncates later history while preserving non-text blocks", async () => {
+	let providerMessages: Message[] = [];
+	const provider: ChatProvider = {
+		async streamChat(
+			messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			providerMessages = messages;
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "edited-reply", delta: "edited response" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({ provider, storage });
+	const userMessage: Message = {
+		id: "user-1",
+		role: "user",
+		blocks: [{ id: "old-text", type: "text", text: "old text" }, fileBlock()],
+	};
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await engine.setMessages([userMessage, textMessage("assistant-1", "assistant", "old response")]);
+	await engine.editAndResubmit("user-1", "new text");
+	await waitFor(() => engine.store.get().generatingMessageId === null && providerMessages.length > 0, "edited stream");
+
+	assert.equal(providerMessages.length, 1);
+	assert.equal(getText(providerMessages[0]), "new text");
+	assert.ok(providerMessages[0].blocks.some((block) => block.type === "file" && block.name === "notes.txt"));
+
+	const state = engine.store.get();
+	assert.equal(state.messages.length, 2);
+	assert.equal(state.messages[0].id, "user-1");
+	assert.equal(getText(state.messages[0]), "new text");
+	assert.equal(getText(state.messages[1]), "edited response");
+});
+
+test("plugins can add user message data and patch request options", async () => {
+	let providerMessages: Message[] = [];
+	let providerOptions: RequestOptions = {};
+	const plugin: ChatPlugin = {
+		name: "request-shaper",
+		onUserSubmit: (message) => {
+			message.blocks.push(fileBlock("plugin-file"));
+		},
+		beforeSubmit: (params) => {
+			assert.equal(params.messages[0].role, "user");
+			return { options: { temperature: 0.2 } };
+		},
+	};
+	const provider: ChatProvider = {
+		async streamChat(
+			messages: Message[],
+			options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			providerMessages = messages;
+			providerOptions = options;
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	const engine = new ChatEngine({ provider, storage: new MemoryStorage() });
+	engine.registerPlugins([plugin]);
+	engine.setRequestDefaults({ model: "base-model" });
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await engine.sendMessage("hello");
+	await waitFor(() => engine.store.get().generatingMessageId === null && providerMessages.length > 0, "plugin stream");
+
+	assert.equal(providerOptions.model, "base-model");
+	assert.equal(providerOptions.temperature, 0.2);
+	assert.equal(getText(providerMessages[0]), "hello");
+	assert.ok(providerMessages[0].blocks.some((block) => block.type === "file" && block.id === "plugin-file"));
+});
+
+test("auto-title updates session metadata after the first assistant reply", async () => {
+	const storage = new MemoryStorage();
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+		async generateTitle(): Promise<string> {
+			return "Smart Title";
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await engine.sendMessage("hello");
+	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
+
+	const sessionId = engine.store.get().currentSessionId;
+	assert.deepEqual(storage.metadataUpdates, [{ id: sessionId, meta: { title: "Smart Title" } }]);
+	assert.equal(engine.store.get().sessions.find((session) => session.id === sessionId)?.title, "Smart Title");
 });
 
 test("deleting the active session stops generation before deleting storage", async () => {
