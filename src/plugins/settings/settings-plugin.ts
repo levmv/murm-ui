@@ -48,8 +48,8 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		if (saved) {
 			currentSettings = { ...defaults, ...JSON.parse(saved) };
 		}
-	} catch (e) {
-		console.warn("Could not read settings from localStorage");
+	} catch (error) {
+		console.warn("SettingsPlugin: Could not read settings from localStorage.", error);
 	}
 
 	let modalOverlay: HTMLElement | null = null;
@@ -62,7 +62,9 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		currentSettings = settings;
 		try {
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-		} catch (e) {}
+		} catch (error) {
+			console.warn("SettingsPlugin: Could not save settings to localStorage.", error);
+		}
 
 		ctx.engine.setProvider(buildAdapter(settings));
 

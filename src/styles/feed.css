@@ -206,8 +206,8 @@
 }
 
 /* Hide actions while generating */
-.message.generating .message-actions {
-	display: none !important;
+.message.generating > .message-actions {
+	display: none;
 }
 
 .action-icon-btn {

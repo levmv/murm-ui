@@ -263,7 +263,11 @@ export class OpenAIProvider implements ChatProvider {
 			if (!response.ok) return "";
 			const data = await response.json();
 			return data.choices[0]?.message?.content?.trim() || "";
-		} catch (e) {
+		} catch (error) {
+			const isAbort = error instanceof Error && error.name === "AbortError";
+			if (!isAbort && !signal?.aborted) {
+				console.warn("Failed to generate chat title.", error);
+			}
 			return "";
 		}
 	}
