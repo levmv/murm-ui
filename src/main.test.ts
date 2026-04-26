@@ -13,6 +13,7 @@ import type {
 
 class MemoryStorage implements ChatStorage {
 	public sessions = new Map<string, ChatSession>();
+	public loadSessionsCalls = 0;
 
 	constructor(sessions: ChatSession[] = []) {
 		for (const session of sessions) {
@@ -21,6 +22,7 @@ class MemoryStorage implements ChatStorage {
 	}
 
 	async loadSessions(limit: number): Promise<PaginatedSessions> {
+		this.loadSessionsCalls++;
 		const items = [...this.sessions.values()]
 			.sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))
 			.slice(0, limit)
@@ -184,17 +186,19 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 		},
 		destroy: () => lifecycle.push("destroy"),
 	};
+	const storage = new MemoryStorage();
 
 	const ui = new ChatUI({
 		container,
 		enableSidebar: false,
 		provider,
 		routing: false,
-		storage: new MemoryStorage(),
+		storage,
 		plugins: () => [plugin],
 	});
 
 	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
+	assert.equal(storage.loadSessionsCalls, 0);
 	assert.deepEqual(lifecycle, ["mount", "input"]);
 
 	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
@@ -249,7 +253,7 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 		storage,
 	});
 
-	await waitFor(() => !ui.engine.state.isLoadingSession, "stored session load");
+	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
 	assert.equal(container.querySelector(".mur-header-title")?.textContent, "New Chat");
 	assert.equal(container.querySelector(".mur-sidebar-item-link")?.textContent, "Stored Chat");
 
@@ -398,10 +402,13 @@ test("ChatUI keeps a blank route when initial history loads without a URL id", a
 	});
 
 	await loadStartedPromise;
+	assert.equal(ui.engine.state.isLoadingSession, false);
+	assert.equal(ui.engine.state.isLoadingSessions, true);
 	assert.equal(window.location.hash, "");
+	assert.match(container.querySelector(".mur-sidebar-content")?.textContent ?? "", /Loading chats/);
 
 	releaseLoad();
-	await waitFor(() => !ui.engine.state.isLoadingSession, "stored history load");
+	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
 
 	assert.notEqual(ui.engine.state.currentSessionId, "latest");
 	assert.deepEqual(ui.engine.state.messages, []);

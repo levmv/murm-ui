@@ -6,6 +6,7 @@ import type {
 	ChatProvider,
 	ChatRequestParams,
 	ChatSession,
+	ChatSessionMeta,
 	ChatState,
 	ChatStorage,
 	ContentBlock,
@@ -29,6 +30,7 @@ export class ChatEngine {
 	private plugins: ChatPlugin[] = [];
 	private requestDefaults: Partial<RequestOptions> = {};
 	private activeGeneration: { id: string; controller: AbortController } | null = null;
+	private activeSessionMeta: ChatSessionMeta | null = null;
 
 	private isFetchingSessions = false;
 
@@ -46,11 +48,14 @@ export class ChatEngine {
 			currentSessionId: startingId,
 			messages: [],
 			generatingMessageId: null,
-			isLoadingSession: true,
+			isLoadingSession: !!config.initialSessionId,
+			isLoadingSessions: false,
 			error: null,
 		});
 
-		void this.init(startingId, !!config.initialSessionId);
+		if (config.initialSessionId) {
+			void this.loadSession(startingId, "Chat not found. Started a new one.");
+		}
 	}
 
 	public registerPlugins(plugins: ChatPlugin[]) {
@@ -86,51 +91,37 @@ export class ChatEngine {
 		this.store.set({ error: null });
 	}
 
+	public async loadSessionHistory() {
+		await this.fetchSessionsPage(false);
+	}
+
 	// Call this when the user scrolls to the bottom of the sidebar
 	public async loadMoreSessions() {
-		if (this.isFetchingSessions || !this.state.hasMoreSessions) return;
-
-		this.isFetchingSessions = true;
-
-		try {
-			const sessions = this.state.sessions;
-			const cursor =
-				sessions.length > 0
-					? { updatedAt: sessions[sessions.length - 1].updatedAt, id: sessions[sessions.length - 1].id }
-					: undefined;
-
-			const result = await this.storage.loadSessions(20, cursor);
-
-			if (result.items.length > 0) {
-				this.store.set({
-					sessions: [...this.state.sessions, ...result.items],
-					hasMoreSessions: result.hasMore,
-				});
-			} else {
-				this.store.set({ hasMoreSessions: false });
-			}
-		} catch (error) {
-			console.error("Failed to load more sessions", error);
-		} finally {
-			this.isFetchingSessions = false;
-		}
+		await this.fetchSessionsPage(true);
 	}
 
 	public async createNewSession() {
 		if (this.isBusy) await this.stopGeneration();
+		this.activeSessionMeta = null;
 
 		this.store.set({
 			currentSessionId: uuidv7(),
 			messages: [],
+			isLoadingSession: false,
 			error: null,
 		});
 	}
 
 	public async switchSession(id: string) {
-		if (this.state.currentSessionId === id) return;
+		await this.loadSession(id, "Failed to load chat. Started a new one.");
+	}
+
+	private async loadSession(id: string, failureMessage: string) {
+		if (this.state.currentSessionId === id && !this.state.isLoadingSession) return;
 		if (this.isBusy) await this.stopGeneration();
 
 		const seq = ++this.switchSeq;
+		this.activeSessionMeta = null;
 
 		this.store.set({
 			currentSessionId: id,
@@ -148,7 +139,9 @@ export class ChatEngine {
 
 			if (!session) throw new Error("Chat not found");
 
+			this.activeSessionMeta = this.toSessionMeta(session);
 			this.store.set({
+				sessions: this.withActiveSessionMeta(this.state.sessions),
 				messages: session ? session.messages : [],
 				isLoadingSession: false,
 			});
@@ -157,11 +150,12 @@ export class ChatEngine {
 			if (seq !== this.switchSeq) return;
 			if (this.state.currentSessionId !== id) return;
 
+			this.activeSessionMeta = null;
 			this.store.set({
 				messages: [],
 				currentSessionId: uuidv7(),
 				isLoadingSession: false,
-				error: { message: "Failed to load chat. Started a new one." },
+				error: { message: failureMessage },
 			});
 		}
 	}
@@ -181,6 +175,8 @@ export class ChatEngine {
 
 			if (isCurrent) {
 				await this.createNewSession();
+			} else if (this.activeSessionMeta?.id === id) {
+				this.activeSessionMeta = null;
 			}
 		} catch (error) {
 			console.error(`Failed to delete session "${id}"`, error);
@@ -271,61 +267,50 @@ export class ChatEngine {
 		this.store.clearAllListeners();
 	}
 
-	private async init(targetId: string, isFromUrl: boolean) {
+	private async fetchSessionsPage(append: boolean) {
+		if (this.isFetchingSessions || (append && !this.state.hasMoreSessions)) return;
+
+		this.isFetchingSessions = true;
+		this.store.set({ isLoadingSessions: true });
+
 		try {
-			await this.loadInitialState(targetId, isFromUrl);
-		} catch (error) {
-			console.error("Storage Error during init:", error);
+			const sessions = this.state.sessions;
+			const cursor =
+				append && sessions.length > 0
+					? { updatedAt: sessions[sessions.length - 1].updatedAt, id: sessions[sessions.length - 1].id }
+					: undefined;
+
+			const result = await this.storage.loadSessions(20, cursor);
+			const nextSessions = append ? [...this.state.sessions, ...result.items] : result.items;
+
 			this.store.set({
-				currentSessionId: uuidv7(),
-				isLoadingSession: false,
-				error: { message: "Failed to load history. Chatting in memory mode." },
+				sessions: this.withActiveSessionMeta(nextSessions),
+				hasMoreSessions: result.items.length > 0 ? result.hasMore : false,
+				isLoadingSessions: false,
 			});
+		} catch (error) {
+			console.error("Failed to load sessions", error);
+			this.store.set(
+				this.state.error
+					? { isLoadingSessions: false }
+					: { isLoadingSessions: false, error: { message: "Failed to load chat history." } },
+			);
+		} finally {
+			this.isFetchingSessions = false;
 		}
 	}
 
-	private async loadInitialState(targetId: string, isFromUrl: boolean) {
-		const result = await this.storage.loadSessions(20);
-		const sessions = result.items;
-		const baseState = {
-			sessions,
-			hasMoreSessions: result.hasMore,
-			isLoadingSession: false,
-		};
+	private toSessionMeta(session: ChatSession): ChatSessionMeta {
+		return { id: session.id, title: session.title, updatedAt: session.updatedAt };
+	}
 
-		if (!isFromUrl) {
-			this.store.set(baseState);
-			return;
-		}
-
-		const activeSession = await this.storage.loadOne(targetId);
-		if (!activeSession) {
-			if (this.state.currentSessionId !== targetId) return;
-
-			this.store.set({
-				...baseState,
-				currentSessionId: uuidv7(),
-				messages: [],
-				error: { message: "Chat not found. Started a new one." },
-			});
-			return;
-		}
-
-		if (!sessions.find((s) => s.id === targetId)) {
-			// Inject metadata into sidebar if it wasn't in the first 20
-			sessions.unshift({
-				id: activeSession.id,
-				title: activeSession.title,
-				updatedAt: activeSession.updatedAt,
-			});
-		}
-
-		if (this.state.currentSessionId !== targetId) return;
-		this.store.set({
-			...baseState,
-			currentSessionId: activeSession.id,
-			messages: activeSession.messages,
-		});
+	private withActiveSessionMeta(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
+		const deduped = sessions.filter(
+			(session, index) => sessions.findIndex((candidate) => candidate.id === session.id) === index,
+		);
+		if (!this.activeSessionMeta) return deduped;
+		if (deduped.some((session) => session.id === this.activeSessionMeta?.id)) return deduped;
+		return [this.activeSessionMeta, ...deduped];
 	}
 
 	private async startGeneration(contextMessages: Message[]) {
@@ -583,11 +568,9 @@ export class ChatEngine {
 		try {
 			await this.storage.save(sessionToSave);
 
+			this.activeSessionMeta = { id: currentSessionId, title, updatedAt };
 			this.store.set({
-				sessions: [
-					{ id: currentSessionId, title, updatedAt },
-					...this.state.sessions.filter((s) => s.id !== currentSessionId),
-				],
+				sessions: [this.activeSessionMeta, ...this.state.sessions.filter((s) => s.id !== currentSessionId)],
 			});
 
 			return true;
@@ -619,6 +602,9 @@ export class ChatEngine {
 			this.store.set({
 				sessions: this.state.sessions.map((s) => (s.id === sessionId ? { ...s, title: smartTitle } : s)),
 			});
+			if (this.activeSessionMeta?.id === sessionId) {
+				this.activeSessionMeta = { ...this.activeSessionMeta, title: smartTitle };
+			}
 		} catch (e) {
 			console.error("Failed to auto-generate title", e);
 		}

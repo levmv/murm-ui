@@ -61,7 +61,14 @@ export class Sidebar {
 		}
 	}
 
-	public renderSessions(sessions: ChatSessionMeta[], activeId: string, hasMore: boolean) {
+	public renderSessions(sessions: ChatSessionMeta[], activeId: string, hasMore: boolean, isLoading = false) {
+		if (isLoading && sessions.length === 0) {
+			this.content.innerHTML =
+				'<p style="padding: 1rem; font-size: 0.9rem; color: #9ca3af; text-align: center;">Loading chats...</p>';
+			this.observer?.unobserve(this.loadMoreTrigger);
+			return;
+		}
+
 		if (sessions.length === 0) {
 			this.content.innerHTML =
 				'<p style="padding: 1rem; font-size: 0.9rem; color: #9ca3af; text-align: center;">No past chats.</p>';

@@ -186,6 +186,7 @@ export class ChatUI {
 				},
 				getSessionHref: (id) => this.router.hrefFor(id),
 			});
+			void this.engine.loadSessionHistory();
 		}
 	}
 
@@ -221,9 +222,29 @@ export class ChatUI {
 			(sessions) => {
 				const state = this.engine.state;
 				if (this.config.enableSidebar && this.sidebarComponent) {
-					this.sidebarComponent.renderSessions(sessions, state.currentSessionId, state.hasMoreSessions);
+					this.sidebarComponent.renderSessions(
+						sessions,
+						state.currentSessionId,
+						state.hasMoreSessions,
+						state.isLoadingSessions,
+					);
 				}
 				this.updateHeaderTitle();
+			},
+		);
+
+		this.engine.subscribe(
+			(state) => (state.hasMoreSessions ? 1 : 0) | (state.isLoadingSessions ? 2 : 0),
+			() => {
+				const state = this.engine.state;
+				if (this.config.enableSidebar && this.sidebarComponent) {
+					this.sidebarComponent.renderSessions(
+						state.sessions,
+						state.currentSessionId,
+						state.hasMoreSessions,
+						state.isLoadingSessions,
+					);
+				}
 			},
 		);
 

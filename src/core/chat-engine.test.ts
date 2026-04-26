@@ -115,7 +115,7 @@ function replyingProvider(reply: string): ChatProvider {
 	};
 }
 
-test("initial load lists stored sessions but starts a blank chat when there is no URL id", async () => {
+test("loadSessionHistory lists stored sessions while a clean URL starts a blank chat", async () => {
 	const older = {
 		id: "older",
 		title: "Older chat",
@@ -132,7 +132,13 @@ test("initial load lists stored sessions but starts a blank chat when there is n
 
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "initial session load");
+	assert.equal(engine.state.isLoadingSession, false);
+	assert.equal(engine.state.isLoadingSessions, false);
+	assert.equal(engine.state.sessions.length, 0);
+
+	void engine.loadSessionHistory();
+	assert.equal(engine.state.isLoadingSessions, true);
+	await waitFor(() => !engine.state.isLoadingSessions, "session history load");
 
 	assert.notEqual(engine.state.currentSessionId, "latest");
 	assert.notEqual(engine.state.currentSessionId, "older");
@@ -171,6 +177,13 @@ test("initial load can open a session that is not in the first sidebar page", as
 	assert.equal(getText(engine.state.messages[0]), "linked question");
 	assert.deepEqual(
 		engine.state.sessions.map((session) => session.id),
+		["deep-linked"],
+	);
+
+	void engine.loadSessionHistory();
+	await waitFor(() => !engine.state.isLoadingSessions, "deep-linked sidebar load");
+	assert.deepEqual(
+		engine.state.sessions.map((session) => session.id),
 		["deep-linked", "listed"],
 	);
 });
@@ -191,10 +204,7 @@ test("invalid initial session URL starts a blank chat with a global error", asyn
 	const state = engine.state;
 	assert.notEqual(state.currentSessionId, "missing-chat");
 	assert.equal(state.currentSessionId.length > 0, true);
-	assert.deepEqual(
-		state.sessions.map((session) => session.id),
-		["latest"],
-	);
+	assert.equal(state.sessions.length, 0);
 	assert.deepEqual(state.messages, []);
 	assert.deepEqual(state.error, { message: "Chat not found. Started a new one." });
 	assert.deepEqual(storage.loadOneCalls, ["missing-chat"]);
@@ -213,7 +223,6 @@ test("failed session switch starts a blank chat with a fresh internal id", async
 	const storage = new MemoryStorage([latest]);
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "initial session load");
 	await engine.switchSession("missing-chat");
 
 	const fallbackId = engine.state.currentSessionId;
@@ -229,23 +238,33 @@ test("failed session switch starts a blank chat with a fresh internal id", async
 	assert.notEqual(storage.saved[0].id, "missing-chat");
 });
 
-test("storage initialization failure from a URL starts a fresh memory chat", async () => {
+test("history loading failure does not block a routed session", async () => {
+	const routed = {
+		id: "url-chat",
+		title: "URL Chat",
+		updatedAt: 300,
+		messages: [textMessage("url-user", "user", "linked question")],
+	};
 	const storage = new (class extends MemoryStorage {
 		override async loadSessions(): Promise<PaginatedSessions> {
 			throw new Error("IndexedDB unavailable");
 		}
-	})();
+	})([routed]);
 	const originalConsoleError = console.error;
 	console.error = () => {};
 
 	try {
 		const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: "url-chat" });
+		void engine.loadSessionHistory();
 
-		await waitFor(() => !engine.state.isLoadingSession, "storage failure fallback");
+		await waitFor(
+			() => !engine.state.isLoadingSession && !engine.state.isLoadingSessions,
+			"routed load and history failure",
+		);
 
-		assert.notEqual(engine.state.currentSessionId, "url-chat");
-		assert.deepEqual(engine.state.messages, []);
-		assert.deepEqual(engine.state.error, { message: "Failed to load history. Chatting in memory mode." });
+		assert.equal(engine.state.currentSessionId, "url-chat");
+		assert.equal(getText(engine.state.messages[0]), "linked question");
+		assert.deepEqual(engine.state.error, { message: "Failed to load chat history." });
 	} finally {
 		console.error = originalConsoleError;
 	}
@@ -269,7 +288,7 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(state.sessions[0].id, state.currentSessionId);
 });
 
-test("sendMessage is ignored while the initial session is loading", async () => {
+test("sendMessage works while initial history is loading", async () => {
 	let releaseLoad!: () => void;
 	const loadReleased = new Promise<void>((resolve) => {
 		releaseLoad = resolve;
@@ -289,16 +308,19 @@ test("sendMessage is ignored while the initial session is loading", async () => 
 	})();
 
 	let pluginCalled = false;
-	let providerCalled = false;
+	let providerCalls = 0;
 
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(): Promise<void> {
-				providerCalled = true;
+			async streamChat(_messages, _options, _signal, onEvent): Promise<void> {
+				providerCalls++;
+				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
+				onEvent({ type: "finish", reason: "stop" });
 			},
 		},
 		storage,
 	});
+	void engine.loadSessionHistory();
 	engine.registerPlugins([
 		{
 			name: "submit-spy",
@@ -309,6 +331,69 @@ test("sendMessage is ignored while the initial session is loading", async () => 
 	]);
 
 	await loadStartedPromise;
+	assert.equal(engine.state.isLoadingSession, false);
+	assert.equal(engine.state.isLoadingSessions, true);
+
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
+
+	assert.equal(pluginCalled, true);
+	assert.equal(providerCalls, 1);
+	assert.equal(getText(engine.state.messages[0]), "hello");
+	assert.equal(getText(engine.state.messages[1]), "ok");
+
+	releaseLoad();
+	await waitFor(() => !engine.state.isLoadingSessions, "initial history completion");
+});
+
+test("sendMessage is ignored while a routed session is loading", async () => {
+	const routed = {
+		id: "url-chat",
+		title: "URL Chat",
+		updatedAt: 100,
+		messages: [textMessage("url-user", "user", "linked question")],
+	};
+
+	let releaseLoadOne!: () => void;
+	const loadOneReleased = new Promise<void>((resolve) => {
+		releaseLoadOne = resolve;
+	});
+
+	let loadOneStarted!: () => void;
+	const loadOneStartedPromise = new Promise<void>((resolve) => {
+		loadOneStarted = resolve;
+	});
+
+	const storage = new (class extends MemoryStorage {
+		override async loadOne(id: string): Promise<ChatSession | null> {
+			loadOneStarted();
+			await loadOneReleased;
+			return super.loadOne(id);
+		}
+	})([routed]);
+
+	let pluginCalled = false;
+	let providerCalled = false;
+
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(): Promise<void> {
+				providerCalled = true;
+			},
+		},
+		storage,
+		initialSessionId: routed.id,
+	});
+	engine.registerPlugins([
+		{
+			name: "submit-spy",
+			onUserSubmit: () => {
+				pluginCalled = true;
+			},
+		},
+	]);
+
+	await loadOneStartedPromise;
 	engine.sendMessage("hello");
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -317,8 +402,8 @@ test("sendMessage is ignored while the initial session is loading", async () => 
 	assert.equal(engine.state.generatingMessageId, null);
 	assert.deepEqual(engine.state.messages, []);
 
-	releaseLoad();
-	await waitFor(() => !engine.state.isLoadingSession, "initial load completion");
+	releaseLoadOne();
+	await waitFor(() => !engine.state.isLoadingSession, "routed session load");
 });
 
 test("stopping while beforeSubmit is pending prevents the provider request", async () => {

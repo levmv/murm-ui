@@ -145,6 +145,7 @@ export interface ChatState {
 	messages: Message[];
 	generatingMessageId: string | null;
 	isLoadingSession: boolean;
+	isLoadingSessions: boolean;
 	error: { message: string; id?: string } | null;
 }
 
