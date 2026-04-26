@@ -23,6 +23,8 @@ export class MessageNode {
 
 	private cacheError: string | null = null;
 	private cacheIsGenerating: boolean = false;
+	private cacheActionsVisible: boolean = false;
+	private currentMsg: Message | null = null;
 	private isDestroyed = false;
 
 	constructor(
@@ -41,6 +43,8 @@ export class MessageNode {
 	}
 
 	public update(msg: Message, isGenerating: boolean, error: string | null) {
+		this.currentMsg = msg;
+
 		if (this.cacheIsGenerating !== isGenerating) {
 			this.el.classList.toggle("mur-generating", isGenerating);
 			this.cacheIsGenerating = isGenerating;
@@ -84,7 +88,7 @@ export class MessageNode {
 	}
 
 	private renderBlocks(msg: Message, isGenerating: boolean) {
-		const currentBlockIds = new Set<string>();
+		const visibleBlockIds = new Set<string>();
 		let displayIndex = 0;
 
 		for (let i = 0; i < msg.blocks.length; i++) {
@@ -109,22 +113,30 @@ export class MessageNode {
 			}
 
 			if (!handledByPlugin) {
-				if (block.type === "reasoning") {
-					// Fallback behavior: If no plugin (like ThinkingPlugin) handles reasoning blocks,
-					// we skip them entirely. No DOM node will be added or retained.
-					continue;
-				} else if (block.type === "text") {
-					this.renderTextBlock(block, container, isGenerating, isLastBlock);
-				} else if (block.type === "file") {
-					this.renderFileBlock(block, container);
-				} else if (block.type === "tool_call") {
-					container.textContent = `🛠 Tool Call: ${block.name} (${block.status})`;
-					container.className = `mur-content-block mur-block-tool mur-tool-${block.status}`;
+				switch (block.type) {
+					case "reasoning":
+						// Fallback behavior: If no plugin (like ThinkingPlugin) handles reasoning blocks,
+						// we skip them entirely. No DOM node will be added or retained.
+						continue;
+					case "text":
+						this.renderTextBlock(block, container, isGenerating, isLastBlock);
+						break;
+					case "file":
+						this.renderFileBlock(block, container);
+						break;
+					case "tool_call":
+						container.textContent = `🛠 Tool Call: ${block.name} (${block.status})`;
+						container.className = `mur-content-block mur-block-tool mur-tool-${block.status}`;
+						break;
+					case "tool_result":
+					case "artifact":
+						// These are background/contextual blocks not meant for direct rendering.
+						continue;
 				}
 			}
 
 			// If we didn't 'continue', it means the block is visible
-			currentBlockIds.add(block.id);
+			visibleBlockIds.add(block.id);
 
 			if (isNew) {
 				this.blocksContainer.appendChild(container);
@@ -140,7 +152,7 @@ export class MessageNode {
 
 		// Cleanup orphaned or newly-ignored blocks
 		for (const [id, container] of this.blockNodes.entries()) {
-			if (!currentBlockIds.has(id)) {
+			if (!visibleBlockIds.has(id)) {
 				container.remove();
 				this.blockNodes.delete(id);
 				this.blockTextCache.delete(id);
@@ -238,8 +250,13 @@ export class MessageNode {
 	}
 
 	private renderActions(msg: Message) {
-		if (msg.role !== "assistant" || msg.blocks.length === 0) {
-			if (this.actionsEl) this.actionsEl.style.display = "none";
+		const shouldShow = msg.role === "assistant" && msg.blocks.length > 0;
+
+		if (!shouldShow) {
+			if (this.actionsEl && this.cacheActionsVisible) {
+				this.actionsEl.style.display = "none";
+				this.cacheActionsVisible = false;
+			}
 			return;
 		}
 
@@ -253,8 +270,10 @@ export class MessageNode {
 				});
 				copyBtn.addEventListener("click", async () => {
 					try {
+						if (!this.currentMsg) return;
+
 						// Extract all text blocks combined
-						const textToCopy = extractPlainText(msg);
+						const textToCopy = extractPlainText(this.currentMsg);
 						await navigator.clipboard.writeText(textToCopy);
 						copyBtn.innerHTML = ICON_CHECK;
 						setTimeout(() => (copyBtn.innerHTML = ICON_COPY), 2000);
@@ -267,6 +286,10 @@ export class MessageNode {
 
 			this.actionsEl = el("div", "mur-message-actions", null, actionButtons);
 			this.el.appendChild(this.actionsEl);
+			this.cacheActionsVisible = true;
+		} else if (!this.cacheActionsVisible) {
+			this.actionsEl.style.display = "";
+			this.cacheActionsVisible = true;
 		}
 	}
 

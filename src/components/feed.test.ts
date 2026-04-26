@@ -99,6 +99,11 @@ function messages(): Message[] {
 	];
 }
 
+async function flushMicrotasks(): Promise<void> {
+	await Promise.resolve();
+	await Promise.resolve();
+}
+
 test("generation start schedules one smooth scroll", () => {
 	const { feed, frameCount, flushFrames, scrollCalls } = createFeedHarness();
 
@@ -158,6 +163,101 @@ test("global errors without a message id are ignored by the feed", () => {
 	feed.update(messages(), null, false, false, { message: "Chat not found. Started a new one." });
 
 	assert.equal(root.querySelector(".mur-message-error"), null);
+
+	feed.destroy();
+});
+
+test("copy action reads the latest message for a reused node", async () => {
+	const { feed, root } = createFeedHarness();
+	const copied: string[] = [];
+
+	setGlobal("navigator", {
+		clipboard: {
+			writeText: async (text: string) => {
+				copied.push(text);
+			},
+		},
+	});
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-1", type: "text", text: "Old text" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	const copyBtn = root.querySelector<HTMLButtonElement>(".mur-action-icon-btn");
+	assert.ok(copyBtn);
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-2", type: "text", text: "New text" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	copyBtn.click();
+	await flushMicrotasks();
+
+	assert.deepEqual(copied, ["New text"]);
+
+	feed.destroy();
+});
+
+test("message actions are shown again when they become applicable", () => {
+	const { feed, root } = createFeedHarness();
+
+	setGlobal("navigator", {
+		clipboard: {
+			writeText: async () => {},
+		},
+	});
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-1", type: "text", text: "Text" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	const actions = root.querySelector<HTMLElement>(".mur-message-actions");
+	assert.ok(actions);
+
+	feed.update([{ id: "assistant-1", role: "assistant", blocks: [] }], null, false, false);
+	assert.equal(actions.style.display, "none");
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-2", type: "text", text: "Text again" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(actions.style.display, "");
 
 	feed.destroy();
 });
