@@ -91,7 +91,7 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 			}
 			ctx.form.appendChild(fileInput);
 
-			boundOnChange = async () => {
+			boundOnChange = () => {
 				const files = Array.from(fileInput.files || []);
 				for (const file of files) {
 					if (file.size > maxSize) {

@@ -170,7 +170,7 @@ export class MessageNode {
 		if (!isActivelyTyping) {
 			this.clearBlockTimer(block.id);
 
-			this.applyMarkdown(block.id, block.text, this.nextBlockRenderSeq(block.id), container);
+			void this.applyMarkdown(block.id, block.text, this.nextBlockRenderSeq(block.id), container);
 			return;
 		}
 
@@ -179,7 +179,7 @@ export class MessageNode {
 		const timer = window.setTimeout(() => {
 			this.blockTimers.delete(block.id);
 
-			this.applyMarkdown(block.id, block.text, this.nextBlockRenderSeq(block.id), container);
+			void this.applyMarkdown(block.id, block.text, this.nextBlockRenderSeq(block.id), container);
 		}, MARKDOWN_THROTTLE_MS);
 
 		this.blockTimers.set(block.id, timer);
@@ -196,22 +196,26 @@ export class MessageNode {
 	}
 
 	private async applyMarkdown(blockId: string, content: string, seq: number, container: HTMLElement) {
-		const html = await marked.parse(content);
-		if (this.isDestroyed || seq !== this.blockRenderSeqs.get(blockId)) return;
+		try {
+			const html = await marked.parse(content);
+			if (this.isDestroyed || seq !== this.blockRenderSeqs.get(blockId)) return;
 
-		let contentEl = container.querySelector(".mur-message-content");
+			let contentEl = container.querySelector(".mur-message-content");
 
-		if (!contentEl) {
-			contentEl = el("div", "mur-message-content");
-			renderSafeHTML(contentEl as HTMLElement, html, this.config.highlighter);
-			container.appendChild(contentEl);
-		} else {
-			const tempDiv = el("div", "mur-message-content");
-			renderSafeHTML(tempDiv, html, this.config.highlighter);
-			syncDOM(contentEl, tempDiv);
+			if (!contentEl) {
+				contentEl = el("div", "mur-message-content");
+				renderSafeHTML(contentEl as HTMLElement, html, this.config.highlighter);
+				container.appendChild(contentEl);
+			} else {
+				const tempDiv = el("div", "mur-message-content");
+				renderSafeHTML(tempDiv, html, this.config.highlighter);
+				syncDOM(contentEl, tempDiv);
+			}
+
+			this.blockTextCache.set(blockId, content);
+		} catch (error) {
+			console.error("Failed to render markdown", error);
 		}
-
-		this.blockTextCache.set(blockId, content);
 	}
 
 	private renderError(error: string | null) {

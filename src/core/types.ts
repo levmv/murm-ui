@@ -233,8 +233,9 @@ export interface ChatPlugin {
 
 	/**
 	 * Intercept and mutate the payload (messages, options) right before it is sent to the LLM.
-	 * To optimize performance, the payload is passed as Readonly.
+	 * To optimize performance, the payload is typed as readonly.
 	 * Return a ChatRequestPatch to override specific parts, or void if no changes are needed.
+	 * This hook may be async.
 	 */
 	beforeSubmit?: (
 		params: ReadonlyChatRequestParams,
@@ -252,6 +253,7 @@ export interface ChatPlugin {
 
 	/**
 	 * Intercept and mutate a newly created user message before it is saved and sent.
+	 * This hook must finish synchronously; use beforeSubmit for async request shaping.
 	 */
 	onUserSubmit?: (msg: Message) => void;
 

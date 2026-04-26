@@ -50,7 +50,7 @@ export class ChatEngine {
 			error: null,
 		});
 
-		this.init(startingId, !!config.initialSessionId);
+		void this.init(startingId, !!config.initialSessionId);
 	}
 
 	public registerPlugins(plugins: ChatPlugin[]) {
@@ -183,7 +183,7 @@ export class ChatEngine {
 		}
 	}
 
-	public async sendMessage(content: string) {
+	public sendMessage(content: string) {
 		if (this.isBusy) return;
 
 		const currentMessages = this.cleanDeadMessages(this.state.messages);
@@ -200,10 +200,10 @@ export class ChatEngine {
 			}
 		}
 
-		this.startGeneration([...currentMessages, userMsg]);
+		void this.startGeneration([...currentMessages, userMsg]);
 	}
 
-	public async editAndResubmit(messageId: string, newContent: string) {
+	public editAndResubmit(messageId: string, newContent: string) {
 		if (this.isBusy) return;
 
 		const currentMessages = this.cleanDeadMessages(this.state.messages);
@@ -224,21 +224,21 @@ export class ChatEngine {
 			blocks: [...preservedBlocks, ...newTextBlock],
 		};
 
-		this.startGeneration(updatedMessages);
+		void this.startGeneration(updatedMessages);
 	}
 
 	/**
-	 * Completely replaces the current session's message history and saves it to storage.
+	 * Completely replaces the current session's message history and attempts to save it to storage.
 	 * Useful for clearing history, compacting context, or modifying past messages.
 	 */
-	public async setMessages(messages: Message[]) {
+	public async setMessages(messages: Message[]): Promise<boolean> {
 		if (this.isBusy) {
 			console.warn("Cannot modify history while the AI is generating a response.");
-			return;
+			return false;
 		}
 
 		this.store.set({ messages });
-		await this.persistCurrentSession();
+		return await this.persistCurrentSession();
 	}
 
 	/**
@@ -262,7 +262,7 @@ export class ChatEngine {
 	public async destroy() {
 		await this.stopGeneration();
 		if (this.storage.close) {
-			this.storage.close();
+			await this.storage.close();
 		}
 		this.store.clearAllListeners();
 	}
@@ -555,21 +555,24 @@ export class ChatEngine {
 
 	private async persistCurrentSession(): Promise<boolean> {
 		const { currentSessionId, messages, sessions } = this.store.get();
-		if (messages.length === 0) return true;
 
 		const existingMeta = sessions.find((s) => s.id === currentSessionId);
 		let title = existingMeta?.title;
 
 		if (!title) {
 			const firstMsg = messages[0];
-			const text = extractPlainText(firstMsg);
-			if (text.trim().length > 0) {
-				title = text.length > 30 ? text.slice(0, 30) + "..." : text;
-			} else if (firstMsg.blocks.some((b) => b.type === "file")) {
-				const fileBlock = firstMsg.blocks.find((b) => b.type === "file") as Extract<ContentBlock, { type: "file" }>;
-				title = `File: ${fileBlock.name || "Upload"}`;
+			if (firstMsg) {
+				const text = extractPlainText(firstMsg);
+				if (text.trim().length > 0) {
+					title = text.length > 30 ? text.slice(0, 30) + "..." : text;
+				} else if (firstMsg.blocks.some((b) => b.type === "file")) {
+					const fileBlock = firstMsg.blocks.find((b) => b.type === "file") as Extract<ContentBlock, { type: "file" }>;
+					title = `File: ${fileBlock.name || "Upload"}`;
+				} else {
+					title = "New Chat";
+				}
 			} else {
-				title = "New Chat";
+				title = "Empty Chat";
 			}
 		}
 

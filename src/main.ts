@@ -147,9 +147,11 @@ export class ChatUI {
 			{
 				container: this.container,
 				onSubmit: (text) => {
-					void this.engine.sendMessage(text);
+					this.engine.sendMessage(text);
 				},
-				onStop: () => this.engine.stopGeneration(),
+				onStop: () => {
+					void this.engine.stopGeneration();
+				},
 			},
 			this.plugins,
 		);
@@ -166,18 +168,18 @@ export class ChatUI {
 			this.sidebarComponent = new Sidebar({
 				container: this.container,
 				onNewChat: () => {
-					this.engine.createNewSession();
+					void this.engine.createNewSession();
 					this.closeSidebar(true);
 				},
 				onSelectSession: (id) => {
-					this.engine.switchSession(id);
+					void this.engine.switchSession(id);
 					this.closeSidebar(true);
 				},
 				onDeleteSession: (id) => {
-					this.engine.deleteSession(id);
+					void this.engine.deleteSession(id);
 				},
 				onLoadMore: () => {
-					this.engine.loadMoreSessions();
+					void this.engine.loadMoreSessions();
 				},
 				onClose: () => {
 					this.closeSidebar(false);
@@ -208,9 +210,9 @@ export class ChatUI {
 
 		this.router.listen((id) => {
 			if (id) {
-				this.engine.switchSession(id);
+				void this.engine.switchSession(id);
 			} else {
-				this.engine.createNewSession();
+				void this.engine.createNewSession();
 			}
 		});
 

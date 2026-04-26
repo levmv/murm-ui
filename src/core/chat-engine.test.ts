@@ -221,7 +221,7 @@ test("failed session switch starts a blank chat with a fresh internal id", async
 	assert.deepEqual(engine.state.error, { message: "Failed to load chat. Started a new one." });
 	assert.deepEqual(storage.loadOneCalls, ["latest", "missing-chat"]);
 
-	await engine.sendMessage("hello");
+	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "fallback save");
 
 	assert.equal(storage.saved[0].id, fallbackId);
@@ -255,7 +255,7 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-	await engine.sendMessage("hello");
+	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
 
 	const state = engine.state;
@@ -310,7 +310,7 @@ test("stopping while beforeSubmit is pending prevents the provider request", asy
 	});
 	engine.registerPlugins([plugin]);
 
-	await engine.sendMessage("hello");
+	engine.sendMessage("hello");
 	await beforeSubmitStartedPromise;
 	await engine.stopGeneration();
 
@@ -355,7 +355,7 @@ test("stopping after streamed content keeps the partial assistant message", asyn
 	const engine = new ChatEngine({ provider, storage });
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 
-	await engine.sendMessage("hello");
+	engine.sendMessage("hello");
 	await streamStartedPromise;
 	await engine.stopGeneration();
 	releaseStream();
@@ -392,7 +392,7 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.setMessages([userMessage, textMessage("assistant-1", "assistant", "old response")]);
-	await engine.editAndResubmit("user-1", "new text");
+	engine.editAndResubmit("user-1", "new text");
 	await waitFor(() => engine.state.generatingMessageId === null && providerMessages.length > 0, "edited stream");
 
 	assert.equal(providerMessages.length, 1);
@@ -404,6 +404,22 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 	assert.equal(state.messages[0].id, "user-1");
 	assert.equal(getText(state.messages[0]), "new text");
 	assert.equal(getText(state.messages[1]), "edited response");
+});
+
+test("setMessages can persist an empty current session", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+
+	const saved = await engine.setMessages([]);
+
+	assert.equal(saved, true);
+	assert.equal(storage.saved.length, 1);
+	assert.deepEqual(storage.saved[0].messages, []);
+	assert.equal(storage.saved[0].title, "Empty Chat");
+	assert.equal(engine.state.sessions[0].id, engine.state.currentSessionId);
+	assert.equal(engine.state.sessions[0].title, "Empty Chat");
 });
 
 test("plugins can add user message data and patch request options", async () => {
@@ -441,7 +457,7 @@ test("plugins can add user message data and patch request options", async () => 
 	engine.setRequestDefaults({ model: "base-model" });
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-	await engine.sendMessage("hello");
+	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && providerMessages.length > 0, "plugin stream");
 
 	assert.equal(providerOptions.model, "base-model");
@@ -473,7 +489,7 @@ test("auto-title updates session metadata after the first assistant reply", asyn
 	const engine = new ChatEngine({ provider, storage });
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-	await engine.sendMessage("hello");
+	engine.sendMessage("hello");
 	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
 
 	const sessionId = engine.state.currentSessionId;
@@ -530,7 +546,7 @@ test("deleting the active session stops generation before deleting storage", asy
 	const engine = new ChatEngine({ provider, storage, initialSessionId: "active-session" });
 	await waitFor(() => !engine.state.isLoadingSession, "active session load");
 
-	await engine.sendMessage("hello");
+	engine.sendMessage("hello");
 	await streamStartedPromise;
 	await engine.deleteSession("active-session");
 
