@@ -194,7 +194,7 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 		plugins: () => [plugin],
 	});
 
-	await waitFor(() => !ui.engine.store.get().isLoadingSession, "initial load");
+	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
 	assert.deepEqual(lifecycle, ["mount", "input"]);
 
 	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
@@ -202,18 +202,18 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 
 	input.value = "hello";
 	submit(form);
-	await waitFor(() => providerCalls === 1 && ui.engine.store.get().generatingMessageId === null, "first reply");
+	await waitFor(() => providerCalls === 1 && ui.engine.state.generatingMessageId === null, "first reply");
 
 	assert.equal(providerMessages[0][0].meta?.fromPlugin, true);
 	assert.match(container.querySelector(".mur-chat-history")?.textContent ?? "", /hello back/);
 
 	input.value = "second";
 	submit(form);
-	await waitFor(() => providerCalls === 2 && ui.engine.store.get().generatingMessageId !== null, "second stream");
+	await waitFor(() => providerCalls === 2 && ui.engine.state.generatingMessageId !== null, "second stream");
 	assert.equal(container.querySelector(".mur-send-btn")?.classList.contains("mur-generating"), true);
 
 	submit(form);
-	await waitFor(() => latestSignal?.aborted === true && ui.engine.store.get().generatingMessageId === null, "stop");
+	await waitFor(() => latestSignal?.aborted === true && ui.engine.state.generatingMessageId === null, "stop");
 
 	await ui.destroy();
 	assert.deepEqual(lifecycle, ["mount", "input", "destroy"]);
@@ -249,14 +249,14 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 		storage,
 	});
 
-	await waitFor(() => !ui.engine.store.get().isLoadingSession, "stored session load");
+	await waitFor(() => !ui.engine.state.isLoadingSession, "stored session load");
 	assert.equal(container.querySelector(".mur-header-title")?.textContent, "Stored Chat");
 	assert.equal(container.querySelector(".mur-sidebar-item-link")?.textContent, "Stored Chat");
 
 	const sidebar = container.querySelector(".mur-sidebar") as HTMLElement;
 	const closeBtn = container.querySelector(".mur-close-sidebar-btn") as HTMLButtonElement;
 	const openBtn = container.querySelector(".mur-open-sidebar-btn") as HTMLButtonElement;
-	const previousSessionId = ui.engine.store.get().currentSessionId;
+	const previousSessionId = ui.engine.state.currentSessionId;
 
 	closeBtn.click();
 	assert.equal(sidebar.classList.contains("mur-hidden-desktop"), true);
@@ -267,7 +267,7 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	assert.equal(container.classList.contains("mur-sidebar-closed"), false);
 
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
-	assert.notEqual(ui.engine.store.get().currentSessionId, previousSessionId);
+	assert.notEqual(ui.engine.state.currentSessionId, previousSessionId);
 
 	await ui.destroy();
 });
@@ -277,27 +277,25 @@ test("ChatUI shows dismissible global errors outside the feed", async () => {
 	const { ChatUI } = await import("./main");
 
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
+		async streamChat(): Promise<void> {
+			throw new Error("Provider failed");
 		},
 	};
 
 	const ui = new ChatUI({
 		container,
 		enableSidebar: false,
+		initialSessionId: "missing-chat",
 		provider,
 		routing: false,
 		storage: new MemoryStorage(),
 	});
 
-	await waitFor(() => !ui.engine.store.get().isLoadingSession, "initial load");
+	await waitFor(() => !ui.engine.state.isLoadingSession, "missing session fallback");
 
 	const error = container.querySelector(".mur-global-error") as HTMLElement;
 	const closeButton = container.querySelector(".mur-global-error-close") as HTMLButtonElement;
 	assert.ok(error);
-	assert.equal(error.hidden, true);
-
-	ui.engine.store.set({ error: { message: "Chat not found. Started a new one." } });
 
 	assert.equal(error.hidden, false);
 	assert.match(error.textContent ?? "", /Chat not found/);
@@ -305,10 +303,15 @@ test("ChatUI shows dismissible global errors outside the feed", async () => {
 
 	closeButton.click();
 
-	assert.equal(ui.engine.store.get().error, null);
+	assert.equal(ui.engine.state.error, null);
 	assert.equal(error.hidden, true);
 
-	ui.engine.store.set({ error: { message: "Provider failed", id: "assistant-1" } });
+	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
+	const form = container.querySelector(".mur-chat-form") as HTMLFormElement;
+	input.value = "hello";
+	submit(form);
+
+	await waitFor(() => ui.engine.state.error?.id !== undefined, "message-scoped provider error");
 
 	assert.equal(error.hidden, true);
 
@@ -338,11 +341,11 @@ test("ChatUI replaces an invalid routed chat URL with the blank chat URL", async
 		]),
 	});
 
-	await waitFor(() => !ui.engine.store.get().isLoadingSession, "invalid routed chat fallback");
+	await waitFor(() => !ui.engine.state.isLoadingSession, "invalid routed chat fallback");
 
 	assert.equal(window.location.hash, "#/");
-	assert.notEqual(ui.engine.store.get().currentSessionId, "missing-chat");
-	assert.deepEqual(ui.engine.store.get().messages, []);
+	assert.notEqual(ui.engine.state.currentSessionId, "missing-chat");
+	assert.deepEqual(ui.engine.state.messages, []);
 	assert.match(container.querySelector(".mur-global-error")?.textContent ?? "", /Chat not found/);
 
 	await ui.destroy();

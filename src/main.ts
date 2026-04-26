@@ -199,7 +199,6 @@ export class ChatUI {
 	}
 
 	private bindEvents() {
-		const store = this.engine.store;
 		this.elements.globalErrorCloseBtn.addEventListener("click", this.onGlobalErrorCloseBound);
 
 		if (this.config.enableSidebar) {
@@ -215,10 +214,10 @@ export class ChatUI {
 			}
 		});
 
-		store.subscribe(
+		this.engine.subscribe(
 			(state) => state.sessions,
 			(sessions) => {
-				const state = store.get();
+				const state = this.engine.state;
 				if (this.config.enableSidebar && this.sidebarComponent) {
 					this.sidebarComponent.renderSessions(sessions, state.currentSessionId, state.hasMoreSessions);
 				}
@@ -226,7 +225,7 @@ export class ChatUI {
 			},
 		);
 
-		store.subscribe(
+		this.engine.subscribe(
 			(state) => state.currentSessionId,
 			(currentSessionId) => {
 				if (this.config.enableSidebar && this.sidebarComponent) {
@@ -237,7 +236,7 @@ export class ChatUI {
 			},
 		);
 
-		store.subscribe(
+		this.engine.subscribe(
 			(state) =>
 				(state.isLoadingSession ? 1 : 0) | (state.error !== null ? 2 : 0) | (state.messages.length > 0 ? 4 : 0),
 			() => this.syncRouterToState(),
@@ -247,7 +246,7 @@ export class ChatUI {
 
 		// Feed subscribes to the hot lane because stream chunks are applied via
 		// in-place mutation and should not run every normal selector per token.
-		store.subscribeHot((state) => {
+		this.engine.subscribeHot((state) => {
 			const isGenerating = state.generatingMessageId !== null;
 			const generationStarted = !prevIsGenerating && isGenerating;
 
@@ -261,7 +260,7 @@ export class ChatUI {
 			prevIsGenerating = isGenerating;
 		});
 
-		store.subscribe(
+		this.engine.subscribe(
 			(state) => state.currentSessionId,
 			() => {
 				this.inputComponent.setText("");
@@ -269,7 +268,7 @@ export class ChatUI {
 			},
 		);
 
-		store.subscribe(
+		this.engine.subscribe(
 			(state) => (state.generatingMessageId ? 2 : 0) | (state.isLoadingSession ? 1 : 0),
 			(bits) => {
 				const isGenerating = !!(bits & 2);
@@ -279,11 +278,11 @@ export class ChatUI {
 			},
 		);
 
-		store.subscribe(
+		this.engine.subscribe(
 			(state) => state.error,
 			(error) => this.renderGlobalError(error),
 		);
-		this.renderGlobalError(store.get().error);
+		this.renderGlobalError(this.engine.state.error);
 	}
 
 	private renderGlobalError(error: { message: string; id?: string } | null) {
@@ -298,13 +297,13 @@ export class ChatUI {
 	}
 
 	private updateHeaderTitle() {
-		const state = this.engine.store.get();
+		const state = this.engine.state;
 		const activeSession = state.sessions.find((s) => s.id === state.currentSessionId);
 		this.elements.headerTitle.textContent = activeSession ? activeSession.title : "New Chat";
 	}
 
 	private syncRouterToState() {
-		const state = this.engine.store.get();
+		const state = this.engine.state;
 		const shouldHaveUrlId = state.messages.length > 0 || state.isLoadingSession;
 		const targetId = shouldHaveUrlId ? state.currentSessionId : null;
 

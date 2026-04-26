@@ -1,4 +1,3 @@
-import { devFreeze } from "../utils/freeze";
 import { uuidv7 } from "../utils/uuid";
 import { extractPlainText } from "./msg-utils";
 import { Store } from "./store";
@@ -23,7 +22,7 @@ export interface ChatEngineConfig {
 }
 
 export class ChatEngine {
-	public store: Store<ChatState>;
+	private store: Store<ChatState>;
 
 	private provider: ChatProvider;
 	private storage: ChatStorage;
@@ -58,8 +57,16 @@ export class ChatEngine {
 		this.plugins = plugins;
 	}
 
-	private get state() {
+	public get state(): ChatState {
 		return this.store.get();
+	}
+
+	public subscribe<U>(selector: (state: ChatState) => U, listener: (selectedState: U) => void): () => void {
+		return this.store.subscribe(selector, listener);
+	}
+
+	public subscribeHot(listener: (state: ChatState) => void): () => void {
+		return this.store.subscribeHot(listener);
 	}
 
 	private get isBusy() {
@@ -486,12 +493,12 @@ export class ChatEngine {
 			if (signal.aborted) return payloadParams;
 
 			if (plugin.beforeSubmit) {
-				const frozenParams = {
-					messages: devFreeze([...payloadParams.messages]),
-					options: devFreeze({ ...payloadParams.options }),
+				const params = {
+					messages: [...payloadParams.messages],
+					options: { ...payloadParams.options },
 					signal,
 				} as ReadonlyChatRequestParams;
-				const patch = await plugin.beforeSubmit(frozenParams);
+				const patch = await plugin.beforeSubmit(params);
 				if (signal.aborted) return payloadParams;
 
 				if (patch) {

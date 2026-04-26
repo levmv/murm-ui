@@ -132,14 +132,14 @@ test("initial load opens the most recent stored session", async () => {
 
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "initial session load");
+	await waitFor(() => !engine.state.isLoadingSession, "initial session load");
 
-	assert.equal(engine.store.get().currentSessionId, "latest");
+	assert.equal(engine.state.currentSessionId, "latest");
 	assert.deepEqual(
-		engine.store.get().sessions.map((session) => session.id),
+		engine.state.sessions.map((session) => session.id),
 		["latest", "older"],
 	);
-	assert.equal(getText(engine.store.get().messages[0]), "new question");
+	assert.equal(getText(engine.state.messages[0]), "new question");
 	assert.deepEqual(storage.loadOneCalls, ["latest"]);
 });
 
@@ -164,12 +164,12 @@ test("initial load can open a session that is not in the first sidebar page", as
 
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: deepLinked.id });
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "deep-linked session load");
+	await waitFor(() => !engine.state.isLoadingSession, "deep-linked session load");
 
-	assert.equal(engine.store.get().currentSessionId, deepLinked.id);
-	assert.equal(getText(engine.store.get().messages[0]), "linked question");
+	assert.equal(engine.state.currentSessionId, deepLinked.id);
+	assert.equal(getText(engine.state.messages[0]), "linked question");
 	assert.deepEqual(
-		engine.store.get().sessions.map((session) => session.id),
+		engine.state.sessions.map((session) => session.id),
 		["deep-linked", "listed"],
 	);
 });
@@ -185,9 +185,9 @@ test("invalid initial session URL starts a blank chat with a global error", asyn
 
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: "missing-chat" });
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "invalid initial session fallback");
+	await waitFor(() => !engine.state.isLoadingSession, "invalid initial session fallback");
 
-	const state = engine.store.get();
+	const state = engine.state;
 	assert.notEqual(state.currentSessionId, "missing-chat");
 	assert.equal(state.currentSessionId.length > 0, true);
 	assert.deepEqual(
@@ -199,7 +199,7 @@ test("invalid initial session URL starts a blank chat with a global error", asyn
 	assert.deepEqual(storage.loadOneCalls, ["missing-chat"]);
 
 	engine.clearError();
-	assert.equal(engine.store.get().error, null);
+	assert.equal(engine.state.error, null);
 });
 
 test("failed session switch starts a blank chat with a fresh internal id", async () => {
@@ -212,17 +212,17 @@ test("failed session switch starts a blank chat with a fresh internal id", async
 	const storage = new MemoryStorage([latest]);
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "initial session load");
+	await waitFor(() => !engine.state.isLoadingSession, "initial session load");
 	await engine.switchSession("missing-chat");
 
-	const fallbackId = engine.store.get().currentSessionId;
+	const fallbackId = engine.state.currentSessionId;
 	assert.notEqual(fallbackId, "missing-chat");
-	assert.deepEqual(engine.store.get().messages, []);
-	assert.deepEqual(engine.store.get().error, { message: "Failed to load chat. Started a new one." });
+	assert.deepEqual(engine.state.messages, []);
+	assert.deepEqual(engine.state.error, { message: "Failed to load chat. Started a new one." });
 	assert.deepEqual(storage.loadOneCalls, ["latest", "missing-chat"]);
 
 	await engine.sendMessage("hello");
-	await waitFor(() => engine.store.get().generatingMessageId === null && storage.saved.length === 1, "fallback save");
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "fallback save");
 
 	assert.equal(storage.saved[0].id, fallbackId);
 	assert.notEqual(storage.saved[0].id, "missing-chat");
@@ -240,11 +240,11 @@ test("storage initialization failure from a URL starts a fresh memory chat", asy
 	try {
 		const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: "url-chat" });
 
-		await waitFor(() => !engine.store.get().isLoadingSession, "storage failure fallback");
+		await waitFor(() => !engine.state.isLoadingSession, "storage failure fallback");
 
-		assert.notEqual(engine.store.get().currentSessionId, "url-chat");
-		assert.deepEqual(engine.store.get().messages, []);
-		assert.deepEqual(engine.store.get().error, { message: "Failed to load history. Chatting in memory mode." });
+		assert.notEqual(engine.state.currentSessionId, "url-chat");
+		assert.deepEqual(engine.state.messages, []);
+		assert.deepEqual(engine.state.error, { message: "Failed to load history. Chatting in memory mode." });
 	} finally {
 		console.error = originalConsoleError;
 	}
@@ -254,14 +254,11 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.sendMessage("hello");
-	await waitFor(
-		() => engine.store.get().generatingMessageId === null && storage.saved.length === 1,
-		"stream finalization",
-	);
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
 
-	const state = engine.store.get();
+	const state = engine.state;
 	assert.equal(state.messages.length, 2);
 	assert.equal(state.messages[0].role, "user");
 	assert.equal(getText(state.messages[0]), "hello");
@@ -322,9 +319,9 @@ test("stopping while beforeSubmit is pending prevents the provider request", asy
 
 	assert.equal(pluginSawAbortedSignal, true);
 	assert.equal(providerCalled, false);
-	assert.equal(engine.store.get().generatingMessageId, null);
-	assert.equal(engine.store.get().messages.length, 1);
-	assert.equal(engine.store.get().messages[0].role, "user");
+	assert.equal(engine.state.generatingMessageId, null);
+	assert.equal(engine.state.messages.length, 1);
+	assert.equal(engine.state.messages[0].role, "user");
 });
 
 test("stopping after streamed content keeps the partial assistant message", async () => {
@@ -356,19 +353,16 @@ test("stopping after streamed content keeps the partial assistant message", asyn
 	};
 
 	const engine = new ChatEngine({ provider, storage });
-	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 
 	await engine.sendMessage("hello");
 	await streamStartedPromise;
 	await engine.stopGeneration();
 	releaseStream();
 
-	await waitFor(
-		() => engine.store.get().generatingMessageId === null && storage.saved.length === 1,
-		"abort finalization",
-	);
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "abort finalization");
 
-	const state = engine.store.get();
+	const state = engine.state;
 	assert.equal(state.messages.length, 2);
 	assert.equal(state.messages[1].role, "assistant");
 	assert.equal(getText(state.messages[1]), "partial");
@@ -396,16 +390,16 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 		blocks: [{ id: "old-text", type: "text", text: "old text" }, fileBlock()],
 	};
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.setMessages([userMessage, textMessage("assistant-1", "assistant", "old response")]);
 	await engine.editAndResubmit("user-1", "new text");
-	await waitFor(() => engine.store.get().generatingMessageId === null && providerMessages.length > 0, "edited stream");
+	await waitFor(() => engine.state.generatingMessageId === null && providerMessages.length > 0, "edited stream");
 
 	assert.equal(providerMessages.length, 1);
 	assert.equal(getText(providerMessages[0]), "new text");
 	assert.ok(providerMessages[0].blocks.some((block) => block.type === "file" && block.name === "notes.txt"));
 
-	const state = engine.store.get();
+	const state = engine.state;
 	assert.equal(state.messages.length, 2);
 	assert.equal(state.messages[0].id, "user-1");
 	assert.equal(getText(state.messages[0]), "new text");
@@ -415,6 +409,8 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 test("plugins can add user message data and patch request options", async () => {
 	let providerMessages: Message[] = [];
 	let providerOptions: RequestOptions = {};
+	let pluginInputMessageFrozen = true;
+	let pluginInputBlocksFrozen = true;
 	const plugin: ChatPlugin = {
 		name: "request-shaper",
 		onUserSubmit: (message) => {
@@ -422,6 +418,8 @@ test("plugins can add user message data and patch request options", async () => 
 		},
 		beforeSubmit: (params) => {
 			assert.equal(params.messages[0].role, "user");
+			pluginInputMessageFrozen = Object.isFrozen(params.messages[0]);
+			pluginInputBlocksFrozen = Object.isFrozen(params.messages[0].blocks);
 			return { options: { temperature: 0.2 } };
 		},
 	};
@@ -442,14 +440,18 @@ test("plugins can add user message data and patch request options", async () => 
 	engine.registerPlugins([plugin]);
 	engine.setRequestDefaults({ model: "base-model" });
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.sendMessage("hello");
-	await waitFor(() => engine.store.get().generatingMessageId === null && providerMessages.length > 0, "plugin stream");
+	await waitFor(() => engine.state.generatingMessageId === null && providerMessages.length > 0, "plugin stream");
 
 	assert.equal(providerOptions.model, "base-model");
 	assert.equal(providerOptions.temperature, 0.2);
 	assert.equal(getText(providerMessages[0]), "hello");
 	assert.ok(providerMessages[0].blocks.some((block) => block.type === "file" && block.id === "plugin-file"));
+	assert.equal(pluginInputMessageFrozen, false);
+	assert.equal(pluginInputBlocksFrozen, false);
+	assert.equal(Object.isFrozen(engine.state.messages[0]), false);
+	assert.equal(Object.isFrozen(engine.state.messages[0].blocks), false);
 });
 
 test("auto-title updates session metadata after the first assistant reply", async () => {
@@ -470,13 +472,13 @@ test("auto-title updates session metadata after the first assistant reply", asyn
 	};
 	const engine = new ChatEngine({ provider, storage });
 
-	await waitFor(() => !engine.store.get().isLoadingSession, "empty initial load");
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.sendMessage("hello");
 	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
 
-	const sessionId = engine.store.get().currentSessionId;
+	const sessionId = engine.state.currentSessionId;
 	assert.deepEqual(storage.metadataUpdates, [{ id: sessionId, meta: { title: "Smart Title" } }]);
-	assert.equal(engine.store.get().sessions.find((session) => session.id === sessionId)?.title, "Smart Title");
+	assert.equal(engine.state.sessions.find((session) => session.id === sessionId)?.title, "Smart Title");
 });
 
 test("deleting the active session stops generation before deleting storage", async () => {
@@ -526,7 +528,7 @@ test("deleting the active session stops generation before deleting storage", asy
 	};
 
 	const engine = new ChatEngine({ provider, storage, initialSessionId: "active-session" });
-	await waitFor(() => !engine.store.get().isLoadingSession, "active session load");
+	await waitFor(() => !engine.state.isLoadingSession, "active session load");
 
 	await engine.sendMessage("hello");
 	await streamStartedPromise;
@@ -538,5 +540,5 @@ test("deleting the active session stops generation before deleting storage", asy
 	assert.deepEqual(calls, ["save:active-session", "delete:active-session"]);
 	assert.equal(storage.saved.length, 1);
 	assert.equal(storage.deleted.length, 1);
-	assert.notEqual(engine.store.get().currentSessionId, "active-session");
+	assert.notEqual(engine.state.currentSessionId, "active-session");
 });
