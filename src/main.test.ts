@@ -158,6 +158,7 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	let latestSignal: AbortSignal | null = null;
 	const providerMessages: Message[][] = [];
 	const lifecycle: string[] = [];
+	let inputContextIsComplete = false;
 
 	const provider: ChatProvider = {
 		async streamChat(messages, _options, signal, onEvent): Promise<void> {
@@ -180,7 +181,14 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	const plugin: ChatPlugin = {
 		name: "smoke-plugin",
 		onMount: () => lifecycle.push("mount"),
-		onInputMount: () => lifecycle.push("input"),
+		onInputMount: (ctx) => {
+			lifecycle.push("input");
+			inputContextIsComplete =
+				ctx.container === container &&
+				ctx.form === container.querySelector(".mur-chat-form") &&
+				ctx.input === container.querySelector(".mur-chat-input") &&
+				typeof ctx.requestSubmitStateSync === "function";
+		},
 		onUserSubmit: (message) => {
 			message.meta = { fromPlugin: true };
 		},
@@ -200,6 +208,7 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
 	assert.equal(storage.loadSessionsCalls, 0);
 	assert.deepEqual(lifecycle, ["mount", "input"]);
+	assert.equal(inputContextIsComplete, true);
 
 	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
 	const form = container.querySelector(".mur-chat-form") as HTMLFormElement;

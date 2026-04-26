@@ -31,7 +31,12 @@ export class Input {
 
 		for (const plugin of plugins) {
 			if (plugin.onInputMount) {
-				plugin.onInputMount({ form: this.form });
+				plugin.onInputMount({
+					container: this.props.container,
+					form: this.form,
+					input: this.input,
+					requestSubmitStateSync: () => this.syncSubmitState(),
+				});
 			}
 		}
 
@@ -56,8 +61,8 @@ export class Input {
 
 		this.isGenerating = isGenerating;
 		this.input.disabled = disabled;
-		this.sendBtn.disabled = isLoadingSession;
 		this.sendBtn.classList.toggle("mur-generating", isGenerating);
+		this.syncSubmitState(isLoadingSession);
 
 		if (endedGeneration && !disabled && this.shouldRestoreFocus) {
 			this.focus();
@@ -111,6 +116,8 @@ export class Input {
 			return;
 		}
 
+		if (this.isSubmitBlocked()) return;
+
 		const text = this.input.value.trim();
 		const hasPluginData = this.plugins.some((p) => p.hasPendingData?.());
 
@@ -124,5 +131,13 @@ export class Input {
 		}
 
 		this.props.onSubmit(text);
+	}
+
+	private syncSubmitState(isLoadingSession = this.input.disabled && !this.isGenerating) {
+		this.sendBtn.disabled = isLoadingSession || (!this.isGenerating && this.isSubmitBlocked());
+	}
+
+	private isSubmitBlocked(): boolean {
+		return this.plugins.some((p) => p.isSubmitBlocked?.());
 	}
 }

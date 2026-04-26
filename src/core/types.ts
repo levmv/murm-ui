@@ -216,7 +216,10 @@ export interface PluginContext {
 }
 
 export interface PluginInputContext {
+	container: HTMLElement;
 	form: HTMLFormElement;
+	input: HTMLTextAreaElement;
+	requestSubmitStateSync: () => void;
 }
 
 export interface ChatPlugin {
@@ -251,6 +254,11 @@ export interface ChatPlugin {
 	 * Allows the input form to be submitted even if the text area is empty.
 	 */
 	hasPendingData?: () => boolean;
+
+	/**
+	 * Blocks user submission while a plugin is resolving async input state.
+	 */
+	isSubmitBlocked?: () => boolean;
 
 	/**
 	 * Intercept and mutate a newly created user message before it is saved and sent.

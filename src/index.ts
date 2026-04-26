@@ -16,7 +16,11 @@ export type {
 } from "./core/types";
 export { ChatUI, type ChatUIConfig } from "./main";
 
-export { AttachmentPlugin } from "./plugins/attachment/attachment-plugin";
+export {
+	AttachmentPlugin,
+	type AttachmentPluginConfig,
+	type FileHandler,
+} from "./plugins/attachment/attachment-plugin";
 export { EditPlugin } from "./plugins/edit/edit-plugin";
 export { SettingsPlugin } from "./plugins/settings/settings-plugin";
 export { ThinkingPlugin } from "./plugins/thinking/thinking-plugin";
