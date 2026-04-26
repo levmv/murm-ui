@@ -18,7 +18,7 @@ export class Sidebar {
 	private closeBtn?: HTMLButtonElement | null;
 
 	private loadMoreTrigger: HTMLElement;
-	private observer: IntersectionObserver;
+	private observer?: IntersectionObserver;
 
 	private onNewChatBound = () => this.props.onNewChat();
 	private onCloseBound = (e: MouseEvent) => {
@@ -35,17 +35,19 @@ export class Sidebar {
 		this.loadMoreTrigger = document.createElement("div");
 		this.loadMoreTrigger.style.height = "1px";
 
-		this.observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0].isIntersecting) {
-					this.props.onLoadMore();
-				}
-			},
-			{
-				root: this.content, // Watch scrolling inside the sidebar
-				rootMargin: "50px", // Trigger 50px before it actually becomes visible
-			},
-		);
+		if (typeof IntersectionObserver !== "undefined") {
+			this.observer = new IntersectionObserver(
+				(entries) => {
+					if (entries[0].isIntersecting) {
+						this.props.onLoadMore();
+					}
+				},
+				{
+					root: this.content, // Watch scrolling inside the sidebar
+					rootMargin: "50px", // Trigger 50px before it actually becomes visible
+				},
+			);
+		}
 
 		this.bindEvents();
 	}
@@ -63,7 +65,7 @@ export class Sidebar {
 		if (sessions.length === 0) {
 			this.content.innerHTML =
 				'<p style="padding: 1rem; font-size: 0.9rem; color: #9ca3af; text-align: center;">No past chats.</p>';
-			this.observer.unobserve(this.loadMoreTrigger);
+			this.observer?.unobserve(this.loadMoreTrigger);
 			return;
 		}
 
@@ -81,9 +83,9 @@ export class Sidebar {
 		replaceNodes(this.content, fragment);
 
 		if (hasMore) {
-			this.observer.observe(this.loadMoreTrigger);
+			this.observer?.observe(this.loadMoreTrigger);
 		} else {
-			this.observer.unobserve(this.loadMoreTrigger);
+			this.observer?.unobserve(this.loadMoreTrigger);
 		}
 	}
 
@@ -132,7 +134,9 @@ export class Sidebar {
 			current.querySelector(".mur-sidebar-item-link")?.removeAttribute("aria-current");
 		}
 
-		const next = this.content.querySelector<HTMLElement>(`[data-session-id="${id}"]`);
+		const next = Array.from(this.content.querySelectorAll<HTMLElement>(".mur-sidebar-item")).find(
+			(item) => item.getAttribute("data-session-id") === id,
+		);
 
 		if (next) {
 			next.classList.add("mur-active");
@@ -145,7 +149,7 @@ export class Sidebar {
 	}
 
 	public destroy() {
-		this.observer.disconnect();
+		this.observer?.disconnect();
 		if (this.newChatBtn) {
 			this.newChatBtn.removeEventListener("click", this.onNewChatBound);
 		}

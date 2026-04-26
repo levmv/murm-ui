@@ -14,21 +14,25 @@ export class RemoteStorage implements ChatStorage {
 		};
 	}
 
+	private getPath(suffix = ""): string {
+		const base = this.baseUrl.replace(/\/+$/, "");
+		return `${base}/api/chats${suffix}`;
+	}
+
 	async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
-		const url = new URL(`${this.baseUrl}/api/chats`);
-		url.searchParams.append("limit", limit.toString());
+		const params = new URLSearchParams({ limit: limit.toString() });
 		if (cursor) {
-			url.searchParams.append("cursor", cursor.updatedAt.toString());
-			url.searchParams.append("cursorId", cursor.id);
+			params.append("cursor", cursor.updatedAt.toString());
+			params.append("cursorId", cursor.id);
 		}
 
-		const res = await fetch(url.toString(), { headers: this.headers });
+		const res = await fetch(`${this.getPath()}?${params.toString()}`, { headers: this.headers });
 		if (!res.ok) throw new Error("Failed to load chats");
 		return res.json();
 	}
 
 	async loadOne(id: string): Promise<ChatSession | null> {
-		const res = await fetch(`${this.baseUrl}/api/chats/${id}`, {
+		const res = await fetch(this.getPath(`/${encodeURIComponent(id)}`), {
 			headers: this.headers,
 		});
 		if (res.status === 404) return null;
@@ -37,7 +41,7 @@ export class RemoteStorage implements ChatStorage {
 	}
 
 	async save(session: ChatSession): Promise<void> {
-		const res = await fetch(`${this.baseUrl}/api/chats/${session.id}`, {
+		const res = await fetch(this.getPath(`/${encodeURIComponent(session.id)}`), {
 			method: "PUT",
 			headers: this.headers,
 			body: JSON.stringify(session),
@@ -46,7 +50,7 @@ export class RemoteStorage implements ChatStorage {
 	}
 
 	async updateMetadata(id: string, meta: Partial<ChatSessionMeta>): Promise<void> {
-		const res = await fetch(`${this.baseUrl}/api/chats/${id}/meta`, {
+		const res = await fetch(this.getPath(`/${encodeURIComponent(id)}/meta`), {
 			method: "POST",
 			headers: this.headers,
 			body: JSON.stringify(meta),
@@ -55,7 +59,7 @@ export class RemoteStorage implements ChatStorage {
 	}
 
 	async delete(id: string): Promise<void> {
-		const res = await fetch(`${this.baseUrl}/api/chats/${id}`, {
+		const res = await fetch(this.getPath(`/${encodeURIComponent(id)}`), {
 			method: "DELETE",
 			headers: this.headers,
 		});

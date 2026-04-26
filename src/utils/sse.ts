@@ -22,7 +22,11 @@ export async function parseSSE(response: Response, onMessage: (data: string) => 
 			const { done, value } = await reader.read();
 
 			if (value) {
-				buffer += decoder.decode(value, { stream: !done });
+				buffer += decoder.decode(value, { stream: true });
+			}
+
+			if (done) {
+				buffer += decoder.decode();
 			}
 
 			if (buffer.length > MAX_EVENT_SIZE) {

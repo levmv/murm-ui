@@ -48,6 +48,18 @@ test("loadSessions sends pagination params and auth header", async () => {
 	});
 });
 
+test("supports empty and relative base URLs", async () => {
+	const { calls } = mockJsonFetch({ items: [], hasMore: false });
+
+	await new RemoteStorage("", () => null).loadSessions(5);
+	await new RemoteStorage("/storage", () => null).loadSessions(5);
+	await new RemoteStorage("storage", () => null).loadSessions(5);
+
+	assert.equal(calls[0].url, "/api/chats?limit=5");
+	assert.equal(calls[1].url, "/storage/api/chats?limit=5");
+	assert.equal(calls[2].url, "storage/api/chats?limit=5");
+});
+
 test("requests omit Authorization when no token is available", async () => {
 	const { calls } = mockJsonFetch({ items: [], hasMore: false });
 	const storage = new RemoteStorage("https://example.test", () => null);
@@ -86,6 +98,15 @@ test("save, updateMetadata, and delete use the expected endpoints and methods", 
 
 	assert.equal(calls[2].url, "https://example.test/api/chats/chat-1");
 	assert.equal(calls[2].init.method, "DELETE");
+});
+
+test("encodes chat ids as remote URL path segments", async () => {
+	const { calls } = mockJsonFetch({ id: "chat/with spaces", title: "A chat", updatedAt: 123, messages: [] });
+	const storage = new RemoteStorage("https://example.test", () => null);
+
+	await storage.loadOne("chat/with spaces");
+
+	assert.equal(calls[0].url, "https://example.test/api/chats/chat%2Fwith%20spaces");
 });
 
 test("write methods throw on non-OK responses", async () => {

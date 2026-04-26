@@ -130,4 +130,5 @@ Required browser APIs include `fetch`, streaming `Response.body`, `ReadableStrea
 We prioritize graceful degradation for optional enhancements:
 * Clipboard API support enables copy buttons when available.
 * `ResizeObserver` improves sticky scrolling when available.
+* `IntersectionObserver` enables automatic sidebar pagination when available.
 * CSS features like `:has` and `field-sizing: content` are progressive enhancements; older browsers keep the core chat experience.
