@@ -262,7 +262,7 @@ export class ChatUI {
 			prevIsGenerating = isGenerating;
 		});
 
-		this.engine.subscribe(
+		this.engine.onChange(
 			(state) => state.currentSessionId,
 			() => {
 				this.inputComponent.setText("");
@@ -306,10 +306,17 @@ export class ChatUI {
 
 	private syncRouterToState() {
 		const state = this.engine.state;
-		const shouldHaveUrlId = state.messages.length > 0 || state.isLoadingSession;
+		const currentUrlId = this.router.getId();
+
+		const isSavedSession = state.sessions.some((s) => s.id === state.currentSessionId);
+		const shouldHaveUrlId =
+			state.messages.length > 0 ||
+			isSavedSession ||
+			(state.isLoadingSession && currentUrlId === state.currentSessionId);
+
 		const targetId = shouldHaveUrlId ? state.currentSessionId : null;
 
-		if (this.router.getId() === targetId) return;
+		if (currentUrlId === targetId) return;
 
 		// If we fell back to an empty chat due to a loading error (e.g., broken link),
 		// use replace so we don't trap the user's Back button.

@@ -35,31 +35,48 @@ export class Store<T extends object> {
 
 	/**
 	 * Subscribes to a specific slice of state.
-	 * The listener only fires when the selected value actually changes.
+	 * The listener fires IMMEDIATELY with the current state, and then
+	 * whenever the selected value actually changes.
 	 */
 	subscribe<U>(selector: (state: T) => U, listener: (selectedState: U) => void): () => void {
-		let lastSlice = selector(this.state);
+		const initialSlice = selector(this.state);
+		listener(initialSlice);
+		return this.onChangeFrom(selector, listener, initialSlice);
+	}
 
+	/**
+	 * Subscribes to normal set() updates and hot in-place mutations.
+	 * Fires IMMEDIATELY with the current state, then on subsequent updates.
+	 * Use sparingly for render paths that must observe high-frequency mutable state.
+	 */
+	subscribeHot(listener: (state: T) => void): () => void {
+		listener(this.state);
+		this.hotListeners.add(listener);
+		return () => this.hotListeners.delete(listener);
+	}
+	/**
+	 * Subscribes to a specific slice of state.
+	 * The listener ONLY fires on future changes, not immediately.
+	 */
+	public onChange<U>(selector: (state: T) => U, listener: (selectedState: U) => void): () => void {
+		return this.onChangeFrom(selector, listener, selector(this.state));
+	}
+
+	private onChangeFrom<U>(
+		selector: (state: T) => U,
+		listener: (selectedState: U) => void,
+		initialSlice: U,
+	): () => void {
+		let lastSlice = initialSlice;
 		const wrappedListener = (state: T) => {
 			const currentSlice = selector(state);
-
 			if (currentSlice !== lastSlice) {
 				lastSlice = currentSlice;
 				listener(currentSlice);
 			}
 		};
-
 		this.selectorListeners.add(wrappedListener);
 		return () => this.selectorListeners.delete(wrappedListener);
-	}
-
-	/**
-	 * Subscribes to normal set() updates and hot in-place mutations.
-	 * Use sparingly for render paths that must observe high-frequency mutable state.
-	 */
-	subscribeHot(listener: (state: T) => void): () => void {
-		this.hotListeners.add(listener);
-		return () => this.hotListeners.delete(listener);
 	}
 
 	public clearAllListeners(): void {

@@ -250,12 +250,13 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	});
 
 	await waitFor(() => !ui.engine.state.isLoadingSession, "stored session load");
-	assert.equal(container.querySelector(".mur-header-title")?.textContent, "Stored Chat");
+	assert.equal(container.querySelector(".mur-header-title")?.textContent, "New Chat");
 	assert.equal(container.querySelector(".mur-sidebar-item-link")?.textContent, "Stored Chat");
 
 	const sidebar = container.querySelector(".mur-sidebar") as HTMLElement;
 	const closeBtn = container.querySelector(".mur-close-sidebar-btn") as HTMLButtonElement;
 	const openBtn = container.querySelector(".mur-open-sidebar-btn") as HTMLButtonElement;
+	const storedChatLink = container.querySelector(".mur-sidebar-item-link") as HTMLAnchorElement;
 	const previousSessionId = ui.engine.state.currentSessionId;
 
 	closeBtn.click();
@@ -265,6 +266,10 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	openBtn.click();
 	assert.equal(sidebar.classList.contains("mur-hidden-desktop"), false);
 	assert.equal(container.classList.contains("mur-sidebar-closed"), false);
+
+	storedChatLink.click();
+	await waitFor(() => ui.engine.state.currentSessionId === "chat-1", "stored session selection");
+	assert.equal(container.querySelector(".mur-header-title")?.textContent, "Stored Chat");
 
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.state.currentSessionId, previousSessionId);
@@ -347,6 +352,60 @@ test("ChatUI replaces an invalid routed chat URL with the blank chat URL", async
 	assert.notEqual(ui.engine.state.currentSessionId, "missing-chat");
 	assert.deepEqual(ui.engine.state.messages, []);
 	assert.match(container.querySelector(".mur-global-error")?.textContent ?? "", /Chat not found/);
+
+	await ui.destroy();
+});
+
+test("ChatUI keeps a blank route when initial history loads without a URL id", async () => {
+	const container = installDom("https://example.test/");
+	const { ChatUI } = await import("./main");
+
+	let releaseLoad!: () => void;
+	const loadReleased = new Promise<void>((resolve) => {
+		releaseLoad = resolve;
+	});
+
+	let loadStarted!: () => void;
+	const loadStartedPromise = new Promise<void>((resolve) => {
+		loadStarted = resolve;
+	});
+
+	const storage = new (class extends MemoryStorage {
+		override async loadSessions(limit: number): Promise<PaginatedSessions> {
+			loadStarted();
+			await loadReleased;
+			return super.loadSessions(limit);
+		}
+	})([
+		{
+			id: "latest",
+			title: "Latest chat",
+			updatedAt: 200,
+			messages: [textMessage("latest-user", "user", "new question")],
+		},
+	]);
+
+	const provider: ChatProvider = {
+		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+
+	const ui = new ChatUI({
+		container,
+		provider,
+		storage,
+	});
+
+	await loadStartedPromise;
+	assert.equal(window.location.hash, "");
+
+	releaseLoad();
+	await waitFor(() => !ui.engine.state.isLoadingSession, "stored history load");
+
+	assert.notEqual(ui.engine.state.currentSessionId, "latest");
+	assert.deepEqual(ui.engine.state.messages, []);
+	assert.equal(window.location.hash, "");
 
 	await ui.destroy();
 });

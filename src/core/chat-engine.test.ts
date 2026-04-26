@@ -115,7 +115,7 @@ function replyingProvider(reply: string): ChatProvider {
 	};
 }
 
-test("initial load opens the most recent stored session", async () => {
+test("initial load lists stored sessions but starts a blank chat when there is no URL id", async () => {
 	const older = {
 		id: "older",
 		title: "Older chat",
@@ -134,13 +134,14 @@ test("initial load opens the most recent stored session", async () => {
 
 	await waitFor(() => !engine.state.isLoadingSession, "initial session load");
 
-	assert.equal(engine.state.currentSessionId, "latest");
+	assert.notEqual(engine.state.currentSessionId, "latest");
+	assert.notEqual(engine.state.currentSessionId, "older");
 	assert.deepEqual(
 		engine.state.sessions.map((session) => session.id),
 		["latest", "older"],
 	);
-	assert.equal(getText(engine.state.messages[0]), "new question");
-	assert.deepEqual(storage.loadOneCalls, ["latest"]);
+	assert.deepEqual(engine.state.messages, []);
+	assert.deepEqual(storage.loadOneCalls, []);
 });
 
 test("initial load can open a session that is not in the first sidebar page", async () => {
@@ -219,7 +220,7 @@ test("failed session switch starts a blank chat with a fresh internal id", async
 	assert.notEqual(fallbackId, "missing-chat");
 	assert.deepEqual(engine.state.messages, []);
 	assert.deepEqual(engine.state.error, { message: "Failed to load chat. Started a new one." });
-	assert.deepEqual(storage.loadOneCalls, ["latest", "missing-chat"]);
+	assert.deepEqual(storage.loadOneCalls, ["missing-chat"]);
 
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "fallback save");
@@ -268,6 +269,58 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(state.sessions[0].id, state.currentSessionId);
 });
 
+test("sendMessage is ignored while the initial session is loading", async () => {
+	let releaseLoad!: () => void;
+	const loadReleased = new Promise<void>((resolve) => {
+		releaseLoad = resolve;
+	});
+
+	let loadStarted!: () => void;
+	const loadStartedPromise = new Promise<void>((resolve) => {
+		loadStarted = resolve;
+	});
+
+	const storage = new (class extends MemoryStorage {
+		override async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
+			loadStarted();
+			await loadReleased;
+			return super.loadSessions(limit, cursor);
+		}
+	})();
+
+	let pluginCalled = false;
+	let providerCalled = false;
+
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(): Promise<void> {
+				providerCalled = true;
+			},
+		},
+		storage,
+	});
+	engine.registerPlugins([
+		{
+			name: "submit-spy",
+			onUserSubmit: () => {
+				pluginCalled = true;
+			},
+		},
+	]);
+
+	await loadStartedPromise;
+	engine.sendMessage("hello");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.equal(pluginCalled, false);
+	assert.equal(providerCalled, false);
+	assert.equal(engine.state.generatingMessageId, null);
+	assert.deepEqual(engine.state.messages, []);
+
+	releaseLoad();
+	await waitFor(() => !engine.state.isLoadingSession, "initial load completion");
+});
+
 test("stopping while beforeSubmit is pending prevents the provider request", async () => {
 	let releaseBeforeSubmit!: () => void;
 	const beforeSubmitReleased = new Promise<void>((resolve) => {
@@ -310,6 +363,7 @@ test("stopping while beforeSubmit is pending prevents the provider request", asy
 	});
 	engine.registerPlugins([plugin]);
 
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await beforeSubmitStartedPromise;
 	await engine.stopGeneration();

@@ -69,6 +69,10 @@ export class ChatEngine {
 		return this.store.subscribeHot(listener);
 	}
 
+	public onChange<U>(selector: (state: ChatState) => U, listener: (selectedState: U) => void): () => void {
+		return this.store.onChange(selector, listener);
+	}
+
 	private get isBusy() {
 		return this.activeGeneration !== null;
 	}
@@ -184,7 +188,7 @@ export class ChatEngine {
 	}
 
 	public sendMessage(content: string) {
-		if (this.isBusy) return;
+		if (this.isBusy || this.state.isLoadingSession) return;
 
 		const currentMessages = this.cleanDeadMessages(this.state.messages);
 
@@ -283,54 +287,45 @@ export class ChatEngine {
 	private async loadInitialState(targetId: string, isFromUrl: boolean) {
 		const result = await this.storage.loadSessions(20);
 		const sessions = result.items;
+		const baseState = {
+			sessions,
+			hasMoreSessions: result.hasMore,
+			isLoadingSession: false,
+		};
 
-		let activeSession: ChatSession | null = null;
-
-		if (isFromUrl) {
-			activeSession = await this.storage.loadOne(targetId);
-			if (!activeSession) {
-				if (this.state.currentSessionId !== targetId) return;
-
-				this.store.set({
-					sessions,
-					hasMoreSessions: result.hasMore,
-					currentSessionId: uuidv7(),
-					messages: [],
-					isLoadingSession: false,
-					error: { message: "Chat not found. Started a new one." },
-				});
-				return;
-			}
-
-			if (activeSession && !sessions.find((s) => s.id === targetId)) {
-				// Inject metadata into sidebar if it wasn't in the first 20
-				sessions.unshift({
-					id: activeSession.id,
-					title: activeSession.title,
-					updatedAt: activeSession.updatedAt,
-				});
-			}
-		} else if (sessions.length > 0) {
-			// Default behavior: just load the most recent chat
-			activeSession = await this.storage.loadOne(sessions[0].id);
+		if (!isFromUrl) {
+			this.store.set(baseState);
+			return;
 		}
 
-		if (activeSession) {
+		const activeSession = await this.storage.loadOne(targetId);
+		if (!activeSession) {
 			if (this.state.currentSessionId !== targetId) return;
+
 			this.store.set({
-				sessions,
-				hasMoreSessions: result.hasMore,
-				currentSessionId: activeSession.id,
-				messages: activeSession.messages,
-				isLoadingSession: false,
+				...baseState,
+				currentSessionId: uuidv7(),
+				messages: [],
+				error: { message: "Chat not found. Started a new one." },
 			});
-		} else {
-			this.store.set({
-				sessions,
-				hasMoreSessions: result.hasMore,
-				isLoadingSession: false,
+			return;
+		}
+
+		if (!sessions.find((s) => s.id === targetId)) {
+			// Inject metadata into sidebar if it wasn't in the first 20
+			sessions.unshift({
+				id: activeSession.id,
+				title: activeSession.title,
+				updatedAt: activeSession.updatedAt,
 			});
 		}
+
+		if (this.state.currentSessionId !== targetId) return;
+		this.store.set({
+			...baseState,
+			currentSessionId: activeSession.id,
+			messages: activeSession.messages,
+		});
 	}
 
 	private async startGeneration(contextMessages: Message[]) {
