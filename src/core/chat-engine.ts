@@ -71,6 +71,10 @@ export class ChatEngine {
 		this.provider = newProvider;
 	}
 
+	public clearError() {
+		this.store.set({ error: null });
+	}
+
 	// Call this when the user scrolls to the bottom of the sidebar
 	public async loadMoreSessions() {
 		if (this.isFetchingSessions || !this.state.hasMoreSessions) return;
@@ -144,8 +148,9 @@ export class ChatEngine {
 
 			this.store.set({
 				messages: [],
+				currentSessionId: uuidv7(),
 				isLoadingSession: false,
-				error: { message: "Failed to load chat." },
+				error: { message: "Failed to load chat. Started a new one." },
 			});
 		}
 	}
@@ -261,6 +266,7 @@ export class ChatEngine {
 		} catch (error) {
 			console.error("Storage Error during init:", error);
 			this.store.set({
+				currentSessionId: uuidv7(),
 				isLoadingSession: false,
 				error: { message: "Failed to load history. Chatting in memory mode." },
 			});
@@ -275,6 +281,20 @@ export class ChatEngine {
 
 		if (isFromUrl) {
 			activeSession = await this.storage.loadOne(targetId);
+			if (!activeSession) {
+				if (this.state.currentSessionId !== targetId) return;
+
+				this.store.set({
+					sessions,
+					hasMoreSessions: result.hasMore,
+					currentSessionId: uuidv7(),
+					messages: [],
+					isLoadingSession: false,
+					error: { message: "Chat not found. Started a new one." },
+				});
+				return;
+			}
+
 			if (activeSession && !sessions.find((s) => s.id === targetId)) {
 				// Inject metadata into sidebar if it wasn't in the first 20
 				sessions.unshift({

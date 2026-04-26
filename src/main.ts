@@ -1,7 +1,7 @@
 import { ChatEngine } from "./core/chat-engine";
 import type { ChatPlugin, ChatProvider, ChatStorage } from "./core/types";
 import { AppRouter, type RouterConfig } from "./router";
-import { queryOrThrow } from "./utils/dom";
+import { el, queryOrThrow } from "./utils/dom";
 
 import "./styles/base.css";
 import "./styles/sidebar.css";
@@ -41,12 +41,19 @@ export class ChatUI {
 		sidebarEl: HTMLElement;
 		openSidebarBtn: HTMLButtonElement;
 		headerTitle: HTMLElement;
+		globalError: HTMLElement;
+		globalErrorText: HTMLElement;
+		globalErrorCloseBtn: HTMLButtonElement;
 	};
 
 	private onMainAreaClickBound = () => this.closeSidebar(true);
 	private onOpenSidebarBound = (e: MouseEvent) => {
 		e.stopPropagation();
 		this.openSidebar();
+	};
+	private onGlobalErrorCloseBound = (e: MouseEvent) => {
+		e.stopPropagation();
+		this.engine.clearError();
 	};
 
 	constructor(config: ChatUIConfig) {
@@ -84,6 +91,8 @@ export class ChatUI {
 		this.router.destroy();
 		await this.engine.destroy();
 
+		this.elements.globalErrorCloseBtn.removeEventListener("click", this.onGlobalErrorCloseBound);
+
 		if (this.config.enableSidebar) {
 			this.elements.openSidebarBtn.removeEventListener("click", this.onOpenSidebarBound);
 			this.elements.mainArea.removeEventListener("click", this.onMainAreaClickBound);
@@ -107,6 +116,23 @@ export class ChatUI {
 		this.elements = {} as typeof this.elements;
 		this.elements.mainArea = queryOrThrow<HTMLElement>(this.container, ".mur-main-area");
 		this.elements.headerTitle = queryOrThrow<HTMLElement>(mainHeader, ".mur-header-title");
+		this.elements.globalErrorText = el("span", "mur-global-error-text");
+		this.elements.globalErrorCloseBtn = el("button", "mur-global-error-close", {
+			type: "button",
+			textContent: "x",
+			title: "Dismiss error",
+		});
+		this.elements.globalErrorCloseBtn.setAttribute("aria-label", "Dismiss error");
+		this.elements.globalError = el(
+			"div",
+			"mur-global-error",
+			{
+				hidden: true,
+			},
+			[this.elements.globalErrorText, this.elements.globalErrorCloseBtn],
+		);
+		this.elements.globalError.setAttribute("role", "alert");
+		this.elements.mainArea.appendChild(this.elements.globalError);
 
 		const pluginCtx = {
 			engine: this.engine,
@@ -174,6 +200,8 @@ export class ChatUI {
 
 	private bindEvents() {
 		const store = this.engine.store;
+		this.elements.globalErrorCloseBtn.addEventListener("click", this.onGlobalErrorCloseBound);
+
 		if (this.config.enableSidebar) {
 			this.elements.openSidebarBtn.addEventListener("click", this.onOpenSidebarBound);
 			this.elements.mainArea.addEventListener("click", this.onMainAreaClickBound);
@@ -250,6 +278,23 @@ export class ChatUI {
 				this.inputComponent.setGeneratingState(isGenerating, isLoadingSession);
 			},
 		);
+
+		store.subscribe(
+			(state) => state.error,
+			(error) => this.renderGlobalError(error),
+		);
+		this.renderGlobalError(store.get().error);
+	}
+
+	private renderGlobalError(error: { message: string; id?: string } | null) {
+		if (!error || error.id) {
+			this.elements.globalError.hidden = true;
+			this.elements.globalErrorText.textContent = "";
+			return;
+		}
+
+		this.elements.globalErrorText.textContent = error.message;
+		this.elements.globalError.hidden = false;
 	}
 
 	private updateHeaderTitle() {

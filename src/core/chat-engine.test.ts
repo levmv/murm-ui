@@ -174,6 +174,82 @@ test("initial load can open a session that is not in the first sidebar page", as
 	);
 });
 
+test("invalid initial session URL starts a blank chat with a global error", async () => {
+	const latest = {
+		id: "latest",
+		title: "Latest chat",
+		updatedAt: 200,
+		messages: [textMessage("latest-user", "user", "new question")],
+	};
+	const storage = new MemoryStorage([latest]);
+
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: "missing-chat" });
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "invalid initial session fallback");
+
+	const state = engine.store.get();
+	assert.notEqual(state.currentSessionId, "missing-chat");
+	assert.equal(state.currentSessionId.length > 0, true);
+	assert.deepEqual(
+		state.sessions.map((session) => session.id),
+		["latest"],
+	);
+	assert.deepEqual(state.messages, []);
+	assert.deepEqual(state.error, { message: "Chat not found. Started a new one." });
+	assert.deepEqual(storage.loadOneCalls, ["missing-chat"]);
+
+	engine.clearError();
+	assert.equal(engine.store.get().error, null);
+});
+
+test("failed session switch starts a blank chat with a fresh internal id", async () => {
+	const latest = {
+		id: "latest",
+		title: "Latest chat",
+		updatedAt: 200,
+		messages: [textMessage("latest-user", "user", "new question")],
+	};
+	const storage = new MemoryStorage([latest]);
+	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
+
+	await waitFor(() => !engine.store.get().isLoadingSession, "initial session load");
+	await engine.switchSession("missing-chat");
+
+	const fallbackId = engine.store.get().currentSessionId;
+	assert.notEqual(fallbackId, "missing-chat");
+	assert.deepEqual(engine.store.get().messages, []);
+	assert.deepEqual(engine.store.get().error, { message: "Failed to load chat. Started a new one." });
+	assert.deepEqual(storage.loadOneCalls, ["latest", "missing-chat"]);
+
+	await engine.sendMessage("hello");
+	await waitFor(() => engine.store.get().generatingMessageId === null && storage.saved.length === 1, "fallback save");
+
+	assert.equal(storage.saved[0].id, fallbackId);
+	assert.notEqual(storage.saved[0].id, "missing-chat");
+});
+
+test("storage initialization failure from a URL starts a fresh memory chat", async () => {
+	const storage = new (class extends MemoryStorage {
+		override async loadSessions(): Promise<PaginatedSessions> {
+			throw new Error("IndexedDB unavailable");
+		}
+	})();
+	const originalConsoleError = console.error;
+	console.error = () => {};
+
+	try {
+		const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: "url-chat" });
+
+		await waitFor(() => !engine.store.get().isLoadingSession, "storage failure fallback");
+
+		assert.notEqual(engine.store.get().currentSessionId, "url-chat");
+		assert.deepEqual(engine.store.get().messages, []);
+		assert.deepEqual(engine.store.get().error, { message: "Failed to load history. Chatting in memory mode." });
+	} finally {
+		console.error = originalConsoleError;
+	}
+});
+
 test("sendMessage streams an assistant reply and persists the session", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
@@ -415,7 +491,14 @@ test("deleting the active session stops generation before deleting storage", asy
 			calls.push(`delete:${id}`);
 			await super.delete(id);
 		}
-	})();
+	})([
+		{
+			id: "active-session",
+			title: "Active chat",
+			updatedAt: 100,
+			messages: [],
+		},
+	]);
 
 	let releaseStream!: () => void;
 	const streamReleased = new Promise<void>((resolve) => {
@@ -443,7 +526,7 @@ test("deleting the active session stops generation before deleting storage", asy
 	};
 
 	const engine = new ChatEngine({ provider, storage, initialSessionId: "active-session" });
-	engine.store.set({ isLoadingSession: false });
+	await waitFor(() => !engine.store.get().isLoadingSession, "active session load");
 
 	await engine.sendMessage("hello");
 	await streamStartedPromise;

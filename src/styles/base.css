@@ -11,6 +11,12 @@
 	--border: #e5e7eb;
 	--primary: #000000;
 	--danger: #ef4444;
+	--danger-text: #991b1b;
+	--danger-bg: #fef2f2;
+	--danger-border: rgba(239, 68, 68, 0.3);
+	--danger-hover-bg: rgba(239, 68, 68, 0.12);
+
+	--shadow-popover: 0 12px 30px rgba(17, 24, 39, 0.12);
 
 	--font: system-ui, -apple-system, sans-serif;
 }
@@ -84,6 +90,56 @@ body {
 	background-color: rgba(255, 255, 255, 0.5);
 	border-radius: 5px;
 	padding: 5px 5px 5px 0;
+}
+
+.mur-global-error {
+	position: absolute;
+	top: 72px;
+	left: 50%;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	max-width: min(520px, calc(100% - 2rem));
+	padding: 0.75rem 0.875rem 0.75rem 1rem;
+	color: var(--danger-text);
+	background-color: var(--danger-bg);
+	border-radius: 8px;
+	box-shadow: var(--shadow-popover);
+	transform: translateX(-50%);
+}
+
+.mur-global-error[hidden] {
+	display: none;
+}
+
+.mur-global-error-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font-size: 0.9rem;
+	line-height: 1.35;
+}
+
+.mur-global-error-close {
+	flex: 0 0 auto;
+	width: 1.5rem;
+	height: 1.5rem;
+	border: none;
+	border-radius: 4px;
+	color: var(--danger-text);
+	background: transparent;
+	font-size: 1rem;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.mur-global-error-close:hover {
+	background: var(--danger-hover-bg);
+}
+
+.mur-global-error-close:focus-visible {
+	outline: 2px solid var(--danger-text);
+	outline-offset: 2px;
 }
 
 .mur-open-sidebar-btn {

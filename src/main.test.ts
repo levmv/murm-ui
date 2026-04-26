@@ -50,10 +50,10 @@ function setGlobal(name: string, value: unknown): void {
 	});
 }
 
-function installDom(): HTMLElement {
+function installDom(url = "https://example.test/"): HTMLElement {
 	const dom = new JSDOM(renderShell(), {
 		pretendToBeVisual: true,
-		url: "https://example.test/",
+		url,
 	});
 
 	const requestAnimationFrame = (callback: FrameRequestCallback) => {
@@ -268,6 +268,82 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.store.get().currentSessionId, previousSessionId);
+
+	await ui.destroy();
+});
+
+test("ChatUI shows dismissible global errors outside the feed", async () => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+
+	const provider: ChatProvider = {
+		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+
+	const ui = new ChatUI({
+		container,
+		enableSidebar: false,
+		provider,
+		routing: false,
+		storage: new MemoryStorage(),
+	});
+
+	await waitFor(() => !ui.engine.store.get().isLoadingSession, "initial load");
+
+	const error = container.querySelector(".mur-global-error") as HTMLElement;
+	const closeButton = container.querySelector(".mur-global-error-close") as HTMLButtonElement;
+	assert.ok(error);
+	assert.equal(error.hidden, true);
+
+	ui.engine.store.set({ error: { message: "Chat not found. Started a new one." } });
+
+	assert.equal(error.hidden, false);
+	assert.match(error.textContent ?? "", /Chat not found/);
+	assert.doesNotMatch(container.querySelector(".mur-chat-history")?.textContent ?? "", /Chat not found/);
+
+	closeButton.click();
+
+	assert.equal(ui.engine.store.get().error, null);
+	assert.equal(error.hidden, true);
+
+	ui.engine.store.set({ error: { message: "Provider failed", id: "assistant-1" } });
+
+	assert.equal(error.hidden, true);
+
+	await ui.destroy();
+});
+
+test("ChatUI replaces an invalid routed chat URL with the blank chat URL", async () => {
+	const container = installDom("https://example.test/#/chat/missing-chat");
+	const { ChatUI } = await import("./main");
+
+	const provider: ChatProvider = {
+		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+
+	const ui = new ChatUI({
+		container,
+		provider,
+		storage: new MemoryStorage([
+			{
+				id: "latest",
+				title: "Latest chat",
+				updatedAt: 200,
+				messages: [textMessage("latest-user", "user", "new question")],
+			},
+		]),
+	});
+
+	await waitFor(() => !ui.engine.store.get().isLoadingSession, "invalid routed chat fallback");
+
+	assert.equal(window.location.hash, "#/");
+	assert.notEqual(ui.engine.store.get().currentSessionId, "missing-chat");
+	assert.deepEqual(ui.engine.store.get().messages, []);
+	assert.match(container.querySelector(".mur-global-error")?.textContent ?? "", /Chat not found/);
 
 	await ui.destroy();
 });

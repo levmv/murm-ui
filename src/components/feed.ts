@@ -71,8 +71,7 @@ export class Feed {
 
 			const isGenerating = msg.id === generatingMessageId;
 			const isTargetOfError = error && error.id === msg.id;
-			const isImplicitErrorTarget = error && !error.id && i === messages.length - 1;
-			const targetError = isTargetOfError || isImplicitErrorTarget ? error.message : null;
+			const targetError = isTargetOfError ? error.message : null;
 
 			let node = this.nodes.get(msg.id);
 

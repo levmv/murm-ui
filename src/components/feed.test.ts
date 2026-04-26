@@ -6,6 +6,7 @@ import { Feed } from "./feed";
 
 interface FeedHarness {
 	feed: Feed;
+	root: HTMLElement;
 	frameCount: () => number;
 	flushFrames: () => void;
 	scrollCalls: ScrollBehavior[];
@@ -68,6 +69,7 @@ function createFeedHarness(options: { resizeObserver?: boolean } = {}): FeedHarn
 
 	return {
 		feed,
+		root: dom.window.document.body,
 		frameCount: () => frames.size,
 		flushFrames: () => {
 			const pending = [...frames.values()];
@@ -146,6 +148,29 @@ test("resize observer does not replace a pending render scroll", () => {
 	assert.deepEqual(scrollCalls, []);
 	flushFrames();
 	assert.deepEqual(scrollCalls, ["smooth"]);
+
+	feed.destroy();
+});
+
+test("global errors without a message id are ignored by the feed", () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(messages(), null, false, false, { message: "Chat not found. Started a new one." });
+
+	assert.equal(root.querySelector(".mur-message-error"), null);
+
+	feed.destroy();
+});
+
+test("message-scoped errors render only on the matching message", () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(messages(), "assistant-1", false, false, { message: "Provider failed", id: "assistant-1" });
+
+	const errors = root.querySelectorAll(".mur-message-error");
+	assert.equal(errors.length, 1);
+	assert.match(errors[0].textContent ?? "", /Provider failed/);
+	assert.equal(errors[0].closest(".mur-message")?.classList.contains("mur-message-assistant"), true);
 
 	feed.destroy();
 });

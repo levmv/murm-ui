@@ -171,9 +171,9 @@
 	align-items: flex-start;
 	gap: 0.5rem;
 	padding: 0.75rem 1rem;
-	background-color: rgba(239, 68, 68, 0.1);
-	color: var(--danger);
-	border: 1px solid rgba(239, 68, 68, 0.3);
+	background-color: var(--danger-bg);
+	color: var(--danger-text);
+	border: 1px solid var(--danger-border);
 	border-radius: 0.5rem;
 	font-size: 0.95rem;
 	margin-top: 0.5rem;
