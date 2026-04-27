@@ -7,6 +7,13 @@ import { ICON_CHECK, ICON_COPY } from "../utils/icons";
 
 const MARKDOWN_THROTTLE_MS = 70;
 
+interface BlockState {
+	container: HTMLElement;
+	textCache: string | null;
+	renderSeq: number;
+	timer?: number;
+}
+
 export class MessageNode {
 	public readonly el: HTMLElement;
 
@@ -15,11 +22,7 @@ export class MessageNode {
 	private errorEl?: HTMLElement;
 	private actionsEl?: HTMLElement;
 
-	// Track state per-block
-	private blockNodes = new Map<string, HTMLElement>();
-	private blockTextCache = new Map<string, string>();
-	private blockRenderSeqs = new Map<string, number>();
-	private blockTimers = new Map<string, number>();
+	private activeBlocks = new Map<string, BlockState>();
 
 	private cacheError: string | null = null;
 	private cacheIsGenerating: boolean = false;
@@ -64,14 +67,14 @@ export class MessageNode {
 
 	public destroy() {
 		this.isDestroyed = true;
-		for (const timer of this.blockTimers.values()) {
-			clearTimeout(timer);
+		for (const state of this.activeBlocks.values()) {
+			if (state.timer !== undefined) clearTimeout(state.timer);
 		}
 		this.el.remove();
 	}
 
 	private renderLoading(msg: Message, isGenerating: boolean, error: string | null) {
-		const hasVisibleBlocks = this.blockNodes.size > 0;
+		const hasVisibleBlocks = this.activeBlocks.size > 0;
 		const isLoading = isGenerating && !error && msg.role === "assistant" && !hasVisibleBlocks;
 
 		if (isLoading) {
@@ -96,14 +99,16 @@ export class MessageNode {
 			const isLastBlock = i === msg.blocks.length - 1;
 			const isGeneratingBlock = isGenerating && isLastBlock;
 
-			let container = this.blockNodes.get(block.id);
+			let state = this.activeBlocks.get(block.id);
 			let isNew = false;
 
-			if (!container) {
-				container = el("div", `mur-content-block mur-block-${block.type}`);
+			if (!state) {
+				const container = el("div", `mur-content-block mur-block-${block.type}`);
 				container.dataset.blockId = block.id;
+				state = { container, textCache: null, renderSeq: 0 };
 				isNew = true;
 			}
+			const container = state.container;
 
 			let handledByPlugin = false;
 			for (const plugin of this.config.plugins) {
@@ -120,7 +125,7 @@ export class MessageNode {
 						// we skip them entirely. No DOM node will be added or retained.
 						continue;
 					case "text":
-						this.renderTextBlock(block, container, isGeneratingBlock);
+						this.renderTextBlock(block, state, isGeneratingBlock);
 						break;
 					case "file":
 						this.renderFileBlock(block, container);
@@ -141,7 +146,7 @@ export class MessageNode {
 
 			if (isNew) {
 				this.blocksContainer.appendChild(container);
-				this.blockNodes.set(block.id, container);
+				this.activeBlocks.set(block.id, state);
 			}
 
 			// Ensure physical DOM order matches visual index order
@@ -152,47 +157,39 @@ export class MessageNode {
 		}
 
 		// Cleanup orphaned or newly-ignored blocks
-		for (const [id, container] of this.blockNodes.entries()) {
+		for (const [id, state] of this.activeBlocks.entries()) {
 			if (!visibleBlockIds.has(id)) {
-				container.remove();
-				this.blockNodes.delete(id);
-				this.blockTextCache.delete(id);
-				this.blockRenderSeqs.delete(id);
-				this.clearBlockTimer(id);
+				state.container.remove();
+				if (state.timer) clearTimeout(state.timer);
+				this.activeBlocks.delete(id);
 			}
 		}
 	}
 
-	private nextBlockRenderSeq(blockId: string): number {
-		const seq = (this.blockRenderSeqs.get(blockId) || 0) + 1;
-		this.blockRenderSeqs.set(blockId, seq);
-		return seq;
-	}
-
 	private renderTextBlock(
 		block: Extract<ContentBlock, { type: "text" }>,
-		container: HTMLElement,
+		state: BlockState,
 		isGeneratingBlock: boolean,
 	) {
-		const cached = this.blockTextCache.get(block.id);
-		if (cached === block.text) return;
+		if (state.textCache === block.text) return;
 
 		if (!isGeneratingBlock) {
-			this.clearBlockTimer(block.id);
-
-			void this.applyMarkdown(block.id, block.text, this.nextBlockRenderSeq(block.id), container);
+			if (state.timer) {
+				clearTimeout(state.timer);
+				state.timer = undefined;
+			}
+			state.renderSeq++;
+			void this.applyMarkdown(block.id, block.text, state.renderSeq);
 			return;
 		}
 
-		if (this.blockTimers.has(block.id)) return;
+		if (state.timer) return;
 
-		const timer = window.setTimeout(() => {
-			this.blockTimers.delete(block.id);
-
-			void this.applyMarkdown(block.id, block.text, this.nextBlockRenderSeq(block.id), container);
+		state.timer = window.setTimeout(() => {
+			state.timer = undefined;
+			state.renderSeq++;
+			void this.applyMarkdown(block.id, block.text, state.renderSeq);
 		}, MARKDOWN_THROTTLE_MS);
-
-		this.blockTimers.set(block.id, timer);
 	}
 
 	private renderFileBlock(block: Extract<ContentBlock, { type: "file" }>, container: HTMLElement) {
@@ -205,24 +202,26 @@ export class MessageNode {
 		}
 	}
 
-	private async applyMarkdown(blockId: string, content: string, seq: number, container: HTMLElement) {
+	private async applyMarkdown(blockId: string, content: string, seq: number) {
 		try {
 			const html = await marked.parse(content);
-			if (this.isDestroyed || seq !== this.blockRenderSeqs.get(blockId)) return;
+			const state = this.activeBlocks.get(blockId);
 
-			let contentEl = container.querySelector(".mur-message-content");
+			if (this.isDestroyed || !state || seq !== state.renderSeq) return;
+
+			let contentEl = state.container.querySelector(".mur-message-content");
 
 			if (!contentEl) {
 				contentEl = el("div", "mur-message-content");
 				renderSafeHTML(contentEl as HTMLElement, html, this.config.highlighter);
-				container.appendChild(contentEl);
+				state.container.appendChild(contentEl);
 			} else {
 				const tempDiv = el("div", "mur-message-content");
 				renderSafeHTML(tempDiv, html, this.config.highlighter);
 				syncDOM(contentEl, tempDiv);
 			}
 
-			this.blockTextCache.set(blockId, content);
+			state.textCache = content;
 		} catch (error) {
 			console.error("Failed to render markdown", error);
 		}
@@ -288,14 +287,6 @@ export class MessageNode {
 		} else if (!this.cacheActionsVisible) {
 			this.actionsEl.hidden = false;
 			this.cacheActionsVisible = true;
-		}
-	}
-
-	private clearBlockTimer(blockId: string) {
-		const timer = this.blockTimers.get(blockId);
-		if (timer) {
-			clearTimeout(timer);
-			this.blockTimers.delete(blockId);
 		}
 	}
 }
