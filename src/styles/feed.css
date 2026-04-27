@@ -31,7 +31,7 @@
 
 .mur-message.mur-message-user .mur-message-content {
 	align-self: flex-end;
-	background-color: var(--surface-user);
+	background-color: var(--mur-surface-user);
 	padding: 0.75rem 1.25rem;
 	border-radius: 1.5rem 1.5rem 0 1.5rem;
 }
@@ -70,12 +70,12 @@
 	margin-bottom: 0.75rem;
 	font-weight: 600;
 	line-height: 1.25;
-	color: var(--text);
+	color: var(--mur-text);
 }
 
 .mur-message h1,
 .mur-message h2 {
-	color: var(--text-secondary);
+	color: var(--mur-text-secondary);
 }
 
 /* Adjacent headers spacing */
@@ -84,7 +84,7 @@
 }
 
 .mur-message code {
-	background-color: var(--surface);
+	background-color: var(--mur-surface);
 	padding: 0.2em 0.4em;
 	border-radius: 0.25rem;
 	font-family: monospace;
@@ -93,13 +93,13 @@
 
 /* Code inside headers */
 .mur-message :is(h1, h2, h3, h4, h5, h6) code {
-	background-color: #fdf1e7;
+	background-color: var(--mur-code-heading-bg);
 	padding: 0.2em;
 	color: inherit;
 }
 
 .mur-message pre {
-	background-color: var(--surface);
+	background-color: var(--mur-surface);
 	padding: 1rem;
 	border-radius: 0.5rem;
 	overflow-x: auto;
@@ -112,17 +112,17 @@
 }
 
 .mur-message blockquote {
-	border-left: 4px solid var(--border);
+	border-left: 4px solid var(--mur-border);
 	padding-left: 1rem;
 	margin-left: 0;
 	margin-bottom: 1rem;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 }
 
 /* Clean hr */
 .mur-message hr {
 	border: none;
-	border-top: 1px solid var(--border);
+	border-top: 1px solid var(--mur-border);
 	margin: 1.5rem 0;
 }
 
@@ -133,7 +133,7 @@
 	gap: 4px;
 	padding: 0.5rem 0;
 	height: 1.5rem;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 }
 
 .mur-message-loading .mur-loading-dot {
@@ -171,9 +171,9 @@
 	align-items: flex-start;
 	gap: 0.5rem;
 	padding: 0.75rem 1rem;
-	background-color: var(--danger-bg);
-	color: var(--danger-text);
-	border: 1px solid var(--danger-border);
+	background-color: var(--mur-danger-bg);
+	color: var(--mur-danger-text);
+	border: 1px solid var(--mur-danger-border);
 	border-radius: 0.5rem;
 	font-size: 0.95rem;
 	margin-top: 0.5rem;
@@ -213,7 +213,7 @@
 .mur-action-icon-btn {
 	background: transparent;
 	border: none;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	cursor: pointer;
 	padding: 4px;
 	border-radius: 4px;
@@ -225,8 +225,8 @@
 }
 
 .mur-action-icon-btn:hover {
-	color: var(--text);
-	background-color: var(--hover-bg);
+	color: var(--mur-text);
+	background-color: var(--mur-hover-bg);
 }
 
 .mur-feed-spinner {
@@ -245,7 +245,7 @@
 	display: inline-block;
 	width: 6px;
 	height: 1.1em;
-	background-color: var(--text-muted);
+	background-color: var(--mur-text-muted);
 	vertical-align: -0.1em;
 	margin-left: 4px;
 	animation: mur-cursor-blink 1s step-end infinite;
@@ -268,27 +268,27 @@
 	align-items: center;
 	gap: 8px;
 	padding: 0.5rem 0.75rem;
-	background-color: var(--surface);
-	border: 1px solid var(--border);
+	background-color: var(--mur-surface);
+	border: 1px solid var(--mur-border);
 	border-radius: 0.5rem;
 	font-family: monospace;
 	font-size: 0.85rem;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	margin-bottom: 0.5rem;
 	transition: all 0.2s ease;
 }
 
 .mur-tool-streaming {
-	border-color: var(--text-muted);
+	border-color: var(--mur-text-muted);
 	opacity: 0.8;
 }
 
 .mur-tool-complete {
-	border-left: 4px solid #10b981;
-	color: var(--text);
+	border-left: 4px solid var(--mur-success);
+	color: var(--mur-text);
 }
 
 .mur-tool-error {
-	border-left: 4px solid var(--danger);
-	color: var(--danger);
+	border-left: 4px solid var(--mur-danger);
+	color: var(--mur-danger);
 }

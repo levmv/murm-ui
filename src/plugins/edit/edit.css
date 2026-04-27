@@ -4,6 +4,15 @@
 	width: 100%;
 }
 
+.mur-message.mur-editing > .mur-message-blocks-wrapper,
+.mur-message.mur-editing > .mur-message-actions {
+	display: none;
+}
+
+.mur-message.mur-editing > .mur-edit-container {
+	display: block;
+}
+
 .mur-edit-textarea {
 	width: 100%;
 	font-family: inherit;
@@ -28,7 +37,7 @@
 .mur-cancel-edit-btn {
 	background: transparent;
 	border: none;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	cursor: pointer;
 	font-size: 0.9rem;
 	padding: 4px 8px;
@@ -39,15 +48,15 @@
 }
 
 .mur-cancel-edit-btn:hover {
-	background-color: var(--hover-bg);
-	color: var(--text);
+	background-color: var(--mur-hover-bg);
+	color: var(--mur-text);
 }
 
 .mur-save-edit-btn {
 	padding: 6px 14px;
 	font-size: 0.9rem;
-	background-color: var(--primary);
-	color: var(--bg);
+	background-color: var(--mur-primary);
+	color: var(--mur-bg);
 	border: none;
 	border-radius: 6px;
 	cursor: pointer;

@@ -8,7 +8,7 @@
 	gap: 0.35rem;
 	background: none;
 	border: none;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	font-size: 0.85rem;
 	font-weight: 500;
 	cursor: pointer;
@@ -21,18 +21,26 @@
 }
 
 .mur-think-toggle:hover {
-	background-color: var(--hover-bg);
-	color: var(--text);
+	background-color: var(--mur-hover-bg);
+	color: var(--mur-text);
+}
+
+.mur-think-toggle svg {
+	transition: transform 0.2s;
+}
+
+.mur-think-toggle[aria-expanded="true"] svg {
+	transform: rotate(90deg);
 }
 
 .mur-think-content {
 	margin-top: 0.25rem;
 	padding: 0.5rem 0.75rem;
-	border-left: 2px solid var(--border);
-	color: var(--text-muted);
+	border-left: 2px solid var(--mur-border);
+	color: var(--mur-text-muted);
 	font-size: 0.9rem;
 	line-height: 1.5;
-	background-color: var(--surface);
+	background-color: var(--mur-surface);
 	border-radius: 0 0.25rem 0.25rem 0;
 	white-space: pre-wrap;
 	animation: mur-slide-down 0.2s ease-out forwards;

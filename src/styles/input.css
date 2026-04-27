@@ -2,10 +2,10 @@
 	width: 100%;
 	max-width: 768px;
 	pointer-events: auto;
-	border: 1px solid var(--border);
+	border: 1px solid var(--mur-border);
 	border-radius: 24px;
-	background-color: var(--bg);
-	box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+	background-color: var(--mur-bg);
+	box-shadow: var(--mur-shadow-input);
 	display: flex;
 	flex-direction: row;
 	align-items: flex-end;
@@ -23,8 +23,8 @@
 }
 
 .mur-chat-form:focus-within {
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-	border-color: var(--text-muted);
+	box-shadow: var(--mur-shadow-input-focus);
+	border-color: var(--mur-text-muted);
 }
 
 .mur-chat-input {
@@ -36,7 +36,7 @@
 	margin: 0;
 	font-family: inherit;
 	font-size: 1rem;
-	color: var(--text);
+	color: var(--mur-text);
 	background: transparent;
 	line-height: 1.5;
 	max-height: 200px;
@@ -60,7 +60,7 @@
 .mur-form-icon-btn {
 	background: transparent;
 	border: none;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	cursor: pointer;
 	display: flex;
 	align-items: center;
@@ -75,13 +75,13 @@
 }
 
 .mur-form-icon-btn:hover:not(:disabled) {
-	background-color: var(--hover-bg);
-	color: var(--text);
+	background-color: var(--mur-hover-bg);
+	color: var(--mur-text);
 }
 
 .mur-action-btn {
-	background-color: var(--primary);
-	color: var(--bg);
+	background-color: var(--mur-primary);
+	color: var(--mur-bg);
 }
 
 /*.mur-action-btn:hover:not(:disabled) {

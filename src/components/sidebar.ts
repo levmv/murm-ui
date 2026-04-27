@@ -32,8 +32,7 @@ export class Sidebar {
 		this.newChatBtn = this.sidebar.querySelector(".mur-new-chat-btn");
 		this.closeBtn = this.sidebar.querySelector(".mur-close-sidebar-btn");
 
-		this.loadMoreTrigger = document.createElement("div");
-		this.loadMoreTrigger.style.height = "1px";
+		this.loadMoreTrigger = el("div", "mur-sidebar-load-more-trigger");
 
 		if (typeof IntersectionObserver !== "undefined") {
 			this.observer = new IntersectionObserver(
@@ -63,15 +62,13 @@ export class Sidebar {
 
 	public renderSessions(sessions: ChatSessionMeta[], activeId: string, hasMore: boolean, isLoading = false) {
 		if (isLoading && sessions.length === 0) {
-			this.content.innerHTML =
-				'<p style="padding: 1rem; font-size: 0.9rem; color: #9ca3af; text-align: center;">Loading chats...</p>';
+			replaceNodes(this.content, el("p", "mur-sidebar-status", { textContent: "Loading chats..." }));
 			this.observer?.unobserve(this.loadMoreTrigger);
 			return;
 		}
 
 		if (sessions.length === 0) {
-			this.content.innerHTML =
-				'<p style="padding: 1rem; font-size: 0.9rem; color: #9ca3af; text-align: center;">No past chats.</p>';
+			replaceNodes(this.content, el("p", "mur-sidebar-status", { textContent: "No past chats." }));
 			this.observer?.unobserve(this.loadMoreTrigger);
 			return;
 		}
@@ -152,7 +149,7 @@ export class Sidebar {
 	}
 
 	public setVisible(isVisible: boolean) {
-		this.sidebar.style.display = isVisible ? "" : "none";
+		this.sidebar.hidden = !isVisible;
 	}
 
 	public destroy() {

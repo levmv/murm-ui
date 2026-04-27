@@ -58,6 +58,8 @@ import "murm-ui/plugins/thinking/thinking.css";
 
 You provide the HTML skeleton. See `example/index.html` for the standard class names expected by `ChatUI`.
 
+Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-theme="light"` or `data-theme="dark"` on `.mur-app` for an explicit theme, or omit `data-theme` to follow the user's `prefers-color-scheme` setting.
+
 ### Remote Storage API
 
 `RemoteStorage` expects these endpoints. It sends `Authorization: Bearer <token>` when the token callback returns a value.

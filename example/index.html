@@ -7,11 +7,21 @@
     <title>Minimal LLM Chat</title>
     <link rel="stylesheet" href="bundle.css">
     <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+        }
+
+        body {
+            overflow: hidden;
+        }
+
         .mur-brand {
             align-items: center;
-            background-color: #333;
+            background-color: var(--mur-primary);
             border-radius: 4px;
-            color: #fff;
+            color: var(--mur-inverse-text);
             display: flex;
             font-size: 0.8rem;
             font-weight: 700;
@@ -45,7 +55,7 @@
                 </button>
             </div>
             <div class="mur-sidebar-content">
-                <p style="padding: 1rem; font-size: 0.9rem; color: #666;">No past chats yet.</p>
+                <p class="mur-sidebar-status">No past chats yet.</p>
             </div>
             <div class="mur-sidebar-footer">
             </div>

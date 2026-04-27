@@ -1,7 +1,7 @@
 .mur-sidebar {
 	width: 260px;
-	background-color: var(--surface);
-	border-right: 1px solid var(--border);
+	background-color: var(--mur-surface);
+	border-right: 1px solid var(--mur-border);
 	display: flex;
 	flex-direction: column;
 	flex-shrink: 0;
@@ -24,7 +24,7 @@
 	background: none;
 	border: none;
 	cursor: pointer;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -34,7 +34,7 @@
 }
 
 .mur-close-sidebar-btn:hover {
-	background-color: var(--hover-bg);
+	background-color: var(--mur-hover-bg);
 }
 
 .mur-sidebar-logo {
@@ -43,7 +43,7 @@
 	gap: 0.5rem;
 	font-weight: 600;
 	font-size: 1.1rem;
-	color: var(--text);
+	color: var(--mur-text);
 }
 
 .mur-sidebar-actions {
@@ -57,24 +57,24 @@
 	justify-content: center;
 	gap: 0.5rem;
 	padding: 0.6rem 1rem;
-	background-color: var(--bg);
-	color: var(--text);
-	border: 1px solid var(--border);
+	background-color: var(--mur-bg);
+	color: var(--mur-text);
+	border: 1px solid var(--mur-border);
 	border-radius: 0.5rem;
 	cursor: pointer;
 	font-weight: 500;
 	font-size: 0.95rem;
 	transition: background-color 0.2s;
-	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	box-shadow: var(--mur-shadow-button);
 }
 
 .mur-btn-primary:hover {
-	background-color: var(--hover-bg);
+	background-color: var(--mur-hover-bg);
 }
 
 .mur-sidebar-footer {
 	padding: 1rem;
-	border-top: 1px solid var(--border);
+	border-top: 1px solid var(--mur-border);
 }
 
 .mur-settings-btn {
@@ -84,7 +84,7 @@
 	gap: 0.5rem;
 	background: none;
 	border: none;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	font-size: 0.95rem;
 	font-weight: 500;
 	cursor: pointer;
@@ -96,8 +96,8 @@
 }
 
 .mur-settings-btn:hover {
-	background-color: var(--hover-bg);
-	color: var(--text);
+	background-color: var(--mur-hover-bg);
+	color: var(--mur-text);
 }
 
 .mur-sidebar-content {
@@ -109,6 +109,17 @@
 	gap: 0.25rem;
 }
 
+.mur-sidebar-status {
+	padding: 1rem;
+	color: var(--mur-text-muted);
+	font-size: 0.9rem;
+	text-align: center;
+}
+
+.mur-sidebar-load-more-trigger {
+	height: 1px;
+}
+
 .mur-sidebar-item {
 	display: flex;
 	align-items: center;
@@ -117,17 +128,17 @@
 	transition:
 		background-color 0.2s,
 		color 0.2s;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 }
 
 .mur-sidebar-item:hover {
-	background-color: var(--hover-bg);
-	color: var(--text);
+	background-color: var(--mur-hover-bg);
+	color: var(--mur-text);
 }
 
 .mur-sidebar-item.mur-active {
-	background-color: var(--hover-bg);
-	color: var(--text);
+	background-color: var(--mur-hover-bg);
+	color: var(--mur-text);
 	font-weight: 500;
 }
 
@@ -145,14 +156,14 @@
 }
 
 .mur-sidebar-item-link:focus-visible {
-	outline: 2px solid var(--text);
+	outline: 2px solid var(--mur-text);
 	outline-offset: -2px;
 }
 
 .mur-sidebar-item .mur-delete-btn {
 	background: none;
 	border: none;
-	color: var(--text-muted);
+	color: var(--mur-text-muted);
 	cursor: pointer;
 	font-size: 1.25rem;
 	line-height: 0;
@@ -170,7 +181,7 @@
 }
 
 .mur-sidebar-item .mur-delete-btn:hover {
-	color: var(--danger);
+	color: var(--mur-danger);
 }
 
 @media (max-width: 768px) {
@@ -181,7 +192,7 @@
 		margin-left: 0;
 		transform: translateX(-100%);
 		transition: transform 0.3s ease;
-		box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+		box-shadow: var(--mur-shadow-sidebar);
 	}
 
 	.mur-sidebar.mur-mobile-open {

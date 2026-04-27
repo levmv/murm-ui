@@ -242,7 +242,7 @@ test("message actions are shown again when they become applicable", () => {
 	assert.ok(actions);
 
 	feed.update([{ id: "assistant-1", role: "assistant", blocks: [] }], null, false, false);
-	assert.equal(actions.style.display, "none");
+	assert.equal(actions.hidden, true);
 
 	feed.update(
 		[
@@ -257,7 +257,7 @@ test("message actions are shown again when they become applicable", () => {
 		false,
 	);
 
-	assert.equal(actions.style.display, "");
+	assert.equal(actions.hidden, false);
 
 	feed.destroy();
 });

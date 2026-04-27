@@ -63,7 +63,7 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 	const renderPreviews = () => {
 		if (!previewContainer) return;
 		previewContainer.innerHTML = "";
-		previewContainer.style.display = queue.length ? "flex" : "none";
+		previewContainer.hidden = queue.length === 0;
 
 		queue.forEach((item) => {
 			const previewItem = el("div", `mur-attachment-preview-item mur-attachment-${item.state}`);
@@ -249,7 +249,7 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 			inputContext = ctx;
 			destroyed = false;
 			previewContainer = el("div", "mur-attachment-previews");
-			previewContainer.style.display = "none";
+			previewContainer.hidden = true;
 
 			fileInput = el("input", "", { type: "file", hidden: true, multiple: true, accept: acceptedTypes });
 

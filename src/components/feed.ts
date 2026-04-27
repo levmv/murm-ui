@@ -39,7 +39,7 @@ export class Feed {
 		this.spinnerEl = el("div", "mur-feed-spinner", {
 			innerHTML: `<div class="mur-message-loading"><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span></div>`,
 		});
-		this.spinnerEl.style.display = "none";
+		this.spinnerEl.hidden = true;
 		this.scrollArea.appendChild(this.spinnerEl);
 	}
 
@@ -50,7 +50,7 @@ export class Feed {
 		generationStarted: boolean,
 		error: { message: string; id?: string } | null = null,
 	) {
-		this.spinnerEl.style.display = isLoadingSession ? "flex" : "none";
+		this.spinnerEl.hidden = !isLoadingSession;
 
 		if (isLoadingSession) {
 			this.clearAllNodes();

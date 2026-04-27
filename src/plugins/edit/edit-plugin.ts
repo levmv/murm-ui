@@ -9,7 +9,6 @@ export interface EditConfig {
 
 interface EditState {
 	isEditing: boolean;
-	actionBar: HTMLElement;
 	editContainer: HTMLElement;
 	currentMsg: Message;
 }
@@ -21,10 +20,6 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 		const msg = state.currentMsg;
 		const currentText = extractPlainText(msg);
 
-		state.isEditing = true;
-		state.actionBar.style.display = "none";
-		state.editContainer.style.display = "block";
-
 		const blocksWrapper = parentEl.querySelector(".mur-message-blocks-wrapper") as HTMLElement | null;
 
 		let targetHeight = "auto";
@@ -33,8 +28,10 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 		if (blocksWrapper) {
 			targetHeight = Math.max(blocksWrapper.offsetHeight, 24) + "px";
 			targetMinWidth = blocksWrapper.offsetWidth + "px";
-			blocksWrapper.style.display = "none";
 		}
+
+		state.isEditing = true;
+		parentEl.classList.add("mur-editing");
 
 		const textarea = el("textarea", "mur-edit-textarea", { spellcheck: false }) as HTMLTextAreaElement;
 		const cancelBtn = el("button", "mur-cancel-edit-btn", { textContent: "Cancel" });
@@ -57,10 +54,8 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 
 		const exitEdit = () => {
 			state.isEditing = false;
-			state.editContainer.style.display = "none";
+			parentEl.classList.remove("mur-editing");
 			state.editContainer.innerHTML = "";
-			state.actionBar.style.display = "flex";
-			if (blocksWrapper) blocksWrapper.style.display = "block";
 		};
 
 		cancelBtn.addEventListener("click", exitEdit);
@@ -109,7 +104,6 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 
 				state = {
 					isEditing: false,
-					actionBar,
 					editContainer,
 					currentMsg: msg,
 				};

@@ -232,7 +232,7 @@ export class MessageNode {
 
 	private renderError(error: string | null) {
 		if (!error) {
-			if (this.errorEl) this.errorEl.style.display = "none";
+			if (this.errorEl) this.errorEl.hidden = true;
 			this.cacheError = null;
 			return;
 		}
@@ -244,7 +244,7 @@ export class MessageNode {
 
 		if (this.cacheError !== error) {
 			this.errorEl.textContent = `⚠ ${error}`;
-			this.errorEl.style.display = "flex";
+			this.errorEl.hidden = false;
 			this.cacheError = error;
 		}
 	}
@@ -254,7 +254,7 @@ export class MessageNode {
 
 		if (!shouldShow) {
 			if (this.actionsEl && this.cacheActionsVisible) {
-				this.actionsEl.style.display = "none";
+				this.actionsEl.hidden = true;
 				this.cacheActionsVisible = false;
 			}
 			return;
@@ -288,7 +288,7 @@ export class MessageNode {
 			this.el.appendChild(this.actionsEl);
 			this.cacheActionsVisible = true;
 		} else if (!this.cacheActionsVisible) {
-			this.actionsEl.style.display = "";
+			this.actionsEl.hidden = false;
 			this.cacheActionsVisible = true;
 		}
 	}

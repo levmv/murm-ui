@@ -10,7 +10,6 @@ interface ThinkingState {
 	cacheIsGenerating: boolean;
 	contentEl: HTMLElement;
 	btnSpan: HTMLElement;
-	svgIcon: SVGElement;
 }
 
 export function ThinkingPlugin(): ChatPlugin {
@@ -29,10 +28,10 @@ export function ThinkingPlugin(): ChatPlugin {
 				});
 
 				const btnSpan = btn.querySelector("span") as HTMLElement;
-				const svgIcon = btn.querySelector("svg") as SVGElement;
+				btn.setAttribute("aria-expanded", "false");
 
 				const contentEl = el("div", "mur-think-content");
-				contentEl.style.display = "none";
+				contentEl.hidden = true;
 				const wrapper = el("div", "mur-think-wrapper", {}, [btn, contentEl]);
 
 				containerEl.innerHTML = "";
@@ -44,13 +43,12 @@ export function ThinkingPlugin(): ChatPlugin {
 					cacheIsGenerating: false,
 					contentEl,
 					btnSpan,
-					svgIcon,
 				};
 
 				btn.onclick = () => {
 					state!.isExpanded = !state!.isExpanded;
-					contentEl.style.display = state!.isExpanded ? "block" : "none";
-					svgIcon.style.transform = `rotate(${state!.isExpanded ? "90deg" : "0deg"})`;
+					contentEl.hidden = !state!.isExpanded;
+					btn.setAttribute("aria-expanded", String(state!.isExpanded));
 
 					const displayContent =
 						block.text || (block.encrypted ? "<i>Thought process is hidden by the model provider.</i>" : "");
