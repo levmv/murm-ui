@@ -94,6 +94,7 @@ export class MessageNode {
 		for (let i = 0; i < msg.blocks.length; i++) {
 			const block = msg.blocks[i];
 			const isLastBlock = i === msg.blocks.length - 1;
+			const isGeneratingBlock = isGenerating && isLastBlock;
 
 			let container = this.blockNodes.get(block.id);
 			let isNew = false;
@@ -106,7 +107,7 @@ export class MessageNode {
 
 			let handledByPlugin = false;
 			for (const plugin of this.config.plugins) {
-				if (plugin.onBlockRender?.(block, container, isGenerating)) {
+				if (plugin.onBlockRender?.(block, container, isGeneratingBlock)) {
 					handledByPlugin = true;
 					break;
 				}
@@ -119,7 +120,7 @@ export class MessageNode {
 						// we skip them entirely. No DOM node will be added or retained.
 						continue;
 					case "text":
-						this.renderTextBlock(block, container, isGenerating, isLastBlock);
+						this.renderTextBlock(block, container, isGeneratingBlock);
 						break;
 					case "file":
 						this.renderFileBlock(block, container);
@@ -171,15 +172,12 @@ export class MessageNode {
 	private renderTextBlock(
 		block: Extract<ContentBlock, { type: "text" }>,
 		container: HTMLElement,
-		isGenerating: boolean,
-		isActivelyTypingBlock: boolean,
+		isGeneratingBlock: boolean,
 	) {
 		const cached = this.blockTextCache.get(block.id);
 		if (cached === block.text) return;
 
-		const isActivelyTyping = isGenerating && isActivelyTypingBlock;
-
-		if (!isActivelyTyping) {
+		if (!isGeneratingBlock) {
 			this.clearBlockTimer(block.id);
 
 			void this.applyMarkdown(block.id, block.text, this.nextBlockRenderSeq(block.id), container);
