@@ -305,9 +305,13 @@ export class ChatEngine {
 	}
 
 	private withActiveSessionMeta(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
-		const deduped = sessions.filter(
-			(session, index) => sessions.findIndex((candidate) => candidate.id === session.id) === index,
-		);
+		const seen = new Set<string>();
+		const deduped = sessions.filter((s) => {
+			if (seen.has(s.id)) return false;
+			seen.add(s.id);
+			return true;
+		});
+
 		if (!this.activeSessionMeta) return deduped;
 		if (deduped.some((session) => session.id === this.activeSessionMeta?.id)) return deduped;
 		return [this.activeSessionMeta, ...deduped];
@@ -397,7 +401,10 @@ export class ChatEngine {
 	 */
 	private applyStreamEvent(pendingId: string, event: StreamEvent) {
 		this.store.mutateHot((state) => {
-			const msg = state.messages.find((m) => m.id === pendingId);
+			let msg: Message | undefined = state.messages[state.messages.length - 1];
+			if (msg?.id !== pendingId) {
+				msg = state.messages.find((m) => m.id === pendingId);
+			}
 			if (!msg) return; // Only happens if user rapidly deleted the chat during stream
 
 			switch (event.type) {
