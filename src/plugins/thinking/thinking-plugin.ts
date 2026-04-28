@@ -12,6 +12,13 @@ interface ThinkingState {
 	btnSpan: HTMLElement;
 }
 
+const ENCRYPTED_REASONING_FALLBACK = "<i>Thought process is hidden by the model provider.</i>";
+
+function getReasoningDisplayContent(block: { text: string; encrypted?: boolean }): string {
+	if (block.encrypted) return ENCRYPTED_REASONING_FALLBACK;
+	return block.text;
+}
+
 export function ThinkingPlugin(): ChatPlugin {
 	const stateMap = new WeakMap<HTMLElement, ThinkingState>();
 
@@ -50,8 +57,7 @@ export function ThinkingPlugin(): ChatPlugin {
 					contentEl.hidden = !state!.isExpanded;
 					btn.setAttribute("aria-expanded", String(state!.isExpanded));
 
-					const displayContent =
-						block.text || (block.encrypted ? "<i>Thought process is hidden by the model provider.</i>" : "");
+					const displayContent = getReasoningDisplayContent(block);
 
 					if (state!.isExpanded && state!.cacheReasoning !== displayContent) {
 						renderSafeHTML(contentEl, displayContent);
@@ -67,8 +73,7 @@ export function ThinkingPlugin(): ChatPlugin {
 				state.cacheIsGenerating = isGenerating;
 			}
 
-			const displayContent =
-				block.text || (block.encrypted ? "<i>Thought process is hidden by the model provider.</i>" : "");
+			const displayContent = getReasoningDisplayContent(block);
 
 			if (state.isExpanded && state.cacheReasoning !== displayContent) {
 				renderSafeHTML(state.contentEl, displayContent);

@@ -13,6 +13,7 @@ export type ContentBlock =
 			type: "reasoning";
 			text: string;
 			encrypted?: boolean;
+			encryptedText?: string;
 	  }
 	| {
 			id: string;

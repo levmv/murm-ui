@@ -364,10 +364,10 @@ export class OpenAIProvider implements ChatProvider {
 	private extractReasoning(delta: OpenAIStreamDelta): { text: string; encrypted: boolean } | null {
 		// Check for encrypted reasoning (e.g., Anthropic via OpenRouter / Some DeepSeek setups)
 		if (delta.reasoning && typeof delta.reasoning === "object" && typeof delta.reasoning.encrypted === "string") {
-			return { text: delta.reasoning.encrypted, encrypted: true };
+			return { text: "", encrypted: true };
 		}
 		if (typeof delta.reasoning_encrypted === "string") {
-			return { text: delta.reasoning_encrypted, encrypted: true };
+			return { text: "", encrypted: true };
 		}
 
 		// Check for standard reasoning

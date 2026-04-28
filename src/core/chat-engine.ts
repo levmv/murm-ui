@@ -424,7 +424,14 @@ export class ChatEngine {
 						rb = { id: event.blockId, type: "reasoning", text: "", encrypted: event.encrypted };
 						msg.blocks.push(rb);
 					}
-					rb.text += event.delta;
+					if (event.encrypted) {
+						rb.encrypted = true;
+						if (event.delta) {
+							rb.encryptedText = (rb.encryptedText ?? "") + event.delta;
+						}
+					} else {
+						rb.text += event.delta;
+					}
 					break;
 				}
 

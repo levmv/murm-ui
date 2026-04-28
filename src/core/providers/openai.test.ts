@@ -111,6 +111,35 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 	assert.deepEqual(events.at(-1), { type: "finish", reason: "tool_use" });
 });
 
+test("streamChat marks encrypted reasoning without retaining provider payloads", async () => {
+	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
+	const encryptedObjectChunk = JSON.stringify({
+		id: "provider-message",
+		choices: [{ delta: { reasoning: { encrypted: "cipher-object" } } }],
+	});
+	const encryptedFieldChunk = JSON.stringify({
+		choices: [{ delta: { reasoning_encrypted: "cipher-field" } }],
+	});
+	mockFetch(sse(encryptedObjectChunk, encryptedFieldChunk, "[DONE]"));
+	const events: StreamEvent[] = [];
+
+	await provider.streamChat([textMessage("user-1", "user", "hello")], {}, new AbortController().signal, (event) =>
+		events.push(event),
+	);
+
+	const reasoningEvents = events.filter(
+		(event): event is Extract<StreamEvent, { type: "reasoning_delta" }> => event.type === "reasoning_delta",
+	);
+	assert.equal(reasoningEvents.length, 2);
+	assert.deepEqual(
+		reasoningEvents.map(({ delta, encrypted }) => ({ delta, encrypted })),
+		[
+			{ delta: "", encrypted: true },
+			{ delta: "", encrypted: true },
+		],
+	);
+});
+
 test("streamChat formats mixed message blocks for OpenAI-compatible requests", async () => {
 	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
 	const { calls } = mockFetch(sse("[DONE]"));

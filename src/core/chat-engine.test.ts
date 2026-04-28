@@ -292,6 +292,68 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(state.sessions[0].id, state.currentSessionId);
 });
 
+test("sendMessage preserves encrypted reasoning as hidden metadata", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(_messages, _options, _signal, onEvent): Promise<void> {
+				onEvent({
+					type: "reasoning_delta",
+					messageId: "provider-message",
+					blockId: "hidden-reasoning",
+					delta: "ciphertext",
+					encrypted: true,
+				});
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		storage,
+	});
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
+
+	const reasoningBlock = engine.state.messages[1].blocks.find(
+		(block): block is Extract<ContentBlock, { type: "reasoning" }> => block.type === "reasoning",
+	);
+	assert.ok(reasoningBlock);
+	assert.equal(reasoningBlock.encrypted, true);
+	assert.equal(reasoningBlock.text, "");
+	assert.equal(reasoningBlock.encryptedText, "ciphertext");
+});
+
+test("sendMessage skips empty encrypted reasoning payloads", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(_messages, _options, _signal, onEvent): Promise<void> {
+				onEvent({
+					type: "reasoning_delta",
+					messageId: "provider-message",
+					blockId: "hidden-reasoning",
+					delta: "",
+					encrypted: true,
+				});
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		storage,
+	});
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
+
+	const reasoningBlock = engine.state.messages[1].blocks.find(
+		(block): block is Extract<ContentBlock, { type: "reasoning" }> => block.type === "reasoning",
+	);
+	assert.ok(reasoningBlock);
+	assert.equal(reasoningBlock.encrypted, true);
+	assert.equal(reasoningBlock.text, "");
+	assert.equal(reasoningBlock.encryptedText, undefined);
+});
+
 test("failed generation keeps empty assistant message in state but omits it from storage", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
