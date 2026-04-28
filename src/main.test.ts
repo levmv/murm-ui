@@ -290,7 +290,9 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	await ui.destroy();
 });
 
-test("ChatUI shows dismissible global errors outside the feed", async () => {
+test("ChatUI shows dismissible global errors outside the feed", async (t) => {
+	t.mock.method(console, "error", () => {});
+
 	const container = installDom();
 	const { ChatUI } = await import("./main");
 
@@ -336,7 +338,9 @@ test("ChatUI shows dismissible global errors outside the feed", async () => {
 	await ui.destroy();
 });
 
-test("ChatUI replaces an invalid routed chat URL with the blank chat URL", async () => {
+test("ChatUI replaces an invalid routed chat URL with the blank chat URL", async (t) => {
+	t.mock.method(console, "error", () => {});
+
 	const container = installDom("https://example.test/#/chat/missing-chat");
 	const { ChatUI } = await import("./main");
 

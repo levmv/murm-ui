@@ -558,11 +558,12 @@ export class ChatEngine {
 
 		const updatedAt = Date.now();
 
+		const messagesToSave = this.cleanDeadMessages(messages);
 		const sessionToSave: ChatSession = {
 			id: currentSessionId,
 			title,
 			updatedAt,
-			messages,
+			messages: messagesToSave,
 		};
 
 		try {

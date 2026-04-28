@@ -188,7 +188,9 @@ test("initial load can open a session that is not in the first sidebar page", as
 	);
 });
 
-test("invalid initial session URL starts a blank chat with a global error", async () => {
+test("invalid initial session URL starts a blank chat with a global error", async (t) => {
+	t.mock.method(console, "error", () => {});
+
 	const latest = {
 		id: "latest",
 		title: "Latest chat",
@@ -213,7 +215,9 @@ test("invalid initial session URL starts a blank chat with a global error", asyn
 	assert.equal(engine.state.error, null);
 });
 
-test("failed session switch starts a blank chat with a fresh internal id", async () => {
+test("failed session switch starts a blank chat with a fresh internal id", async (t) => {
+	t.mock.method(console, "error", () => {});
+
 	const latest = {
 		id: "latest",
 		title: "Latest chat",
@@ -286,6 +290,29 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(getText(state.messages[1]), "hello back");
 	assert.equal(storage.saved[0].title, "hello");
 	assert.equal(state.sessions[0].id, state.currentSessionId);
+});
+
+test("failed generation keeps empty assistant message in state but omits it from storage", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(): Promise<void> {
+				throw new Error("Provider failed");
+			},
+		},
+		storage,
+	});
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "failure finalization");
+
+	const state = engine.state;
+	assert.equal(state.messages.length, 2);
+	assert.equal(state.messages[1].role, "assistant");
+	assert.deepEqual(state.messages[1].blocks, []);
+	assert.deepEqual(state.error, { message: "Provider failed", id: state.messages[1].id });
+	assert.deepEqual(storage.saved[0].messages, [state.messages[0]]);
 });
 
 test("sendMessage works while initial history is loading", async () => {
@@ -559,6 +586,20 @@ test("setMessages can persist an empty current session", async () => {
 	assert.equal(storage.saved[0].title, "Empty Chat");
 	assert.equal(engine.state.sessions[0].id, engine.state.currentSessionId);
 	assert.equal(engine.state.sessions[0].title, "Empty Chat");
+});
+
+test("setMessages omits empty assistant messages when saving", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	const emptyAssistant: Message = { id: "assistant-1", role: "assistant", blocks: [] };
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+
+	const saved = await engine.setMessages([emptyAssistant]);
+
+	assert.equal(saved, true);
+	assert.equal(storage.saved.length, 1);
+	assert.deepEqual(storage.saved[0].messages, []);
 });
 
 test("plugins can add user message data and patch request options", async () => {
