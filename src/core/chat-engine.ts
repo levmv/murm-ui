@@ -22,6 +22,14 @@ export interface ChatEngineConfig {
 	initialSessionId?: string | null;
 }
 
+interface ActiveGeneration {
+	id: string;
+	sessionId: string;
+	controller: AbortController;
+	provider: ChatProvider;
+	requestDefaults: Partial<RequestOptions>;
+}
+
 export class ChatEngine {
 	private store: Store<ChatState>;
 
@@ -29,8 +37,10 @@ export class ChatEngine {
 	private storage: ChatStorage;
 	private plugins: ChatPlugin[] = [];
 	private requestDefaults: Partial<RequestOptions> = {};
-	private activeGeneration: { id: string; controller: AbortController } | null = null;
+	private activeGeneration: ActiveGeneration | null = null;
 	private activeSessionMeta: ChatSessionMeta | null = null;
+	private sessionWriteQueues = new Map<string, Promise<void>>();
+	private deletedSessionIds = new Set<string>();
 
 	private isFetchingSessions = false;
 
@@ -136,6 +146,7 @@ export class ChatEngine {
 
 			// User may have navigated again while this one was loading
 			if (this.state.currentSessionId !== id) return;
+			if (this.deletedSessionIds.has(id)) throw new Error("Chat not found");
 
 			if (!session) throw new Error("Chat not found");
 
@@ -161,23 +172,25 @@ export class ChatEngine {
 	}
 
 	public async deleteSession(id: string) {
+		const isCurrent = this.state.currentSessionId === id;
+		this.deletedSessionIds.add(id);
+		this.activeSessionMeta = this.activeSessionMeta?.id === id ? null : this.activeSessionMeta;
+		this.store.set({
+			sessions: this.state.sessions.filter((s) => s.id !== id),
+		});
+
 		try {
-			const isCurrent = this.state.currentSessionId === id;
 			if (isCurrent && this.isBusy) {
 				await this.stopGeneration();
 			}
 
-			await this.storage.delete(id);
-
-			this.store.set({
-				sessions: this.state.sessions.filter((s) => s.id !== id),
-			});
-
-			if (isCurrent) {
+			if (isCurrent && this.state.currentSessionId === id) {
 				await this.createNewSession();
-			} else if (this.activeSessionMeta?.id === id) {
-				this.activeSessionMeta = null;
 			}
+
+			await this.enqueueSessionWrite(id, async () => {
+				await this.storage.delete(id);
+			});
 		} catch (error) {
 			console.error(`Failed to delete session "${id}"`, error);
 		}
@@ -291,7 +304,8 @@ export class ChatEngine {
 					: undefined;
 
 			const result = await this.storage.loadSessions(20, cursor);
-			const nextSessions = append ? [...this.state.sessions, ...result.items] : result.items;
+			const resultItems = this.withoutDeletedSessions(result.items);
+			const nextSessions = append ? [...this.state.sessions, ...resultItems] : resultItems;
 
 			this.store.set({
 				sessions: this.withActiveSessionMeta(nextSessions),
@@ -315,6 +329,7 @@ export class ChatEngine {
 	}
 
 	private withActiveSessionMeta(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
+		sessions = this.withoutDeletedSessions(sessions);
 		const seen = new Set<string>();
 		const deduped = sessions.filter((s) => {
 			if (seen.has(s.id)) return false;
@@ -322,16 +337,24 @@ export class ChatEngine {
 			return true;
 		});
 
-		if (!this.activeSessionMeta) return deduped;
+		if (!this.activeSessionMeta || this.deletedSessionIds.has(this.activeSessionMeta.id)) return deduped;
 		if (deduped.some((session) => session.id === this.activeSessionMeta?.id)) return deduped;
 		return [this.activeSessionMeta, ...deduped];
 	}
 
 	private async startGeneration(contextMessages: Message[]) {
 		const pendingId = uuidv7();
+		const sessionId = this.state.currentSessionId;
+		const provider = this.provider;
 		const controller = new AbortController();
 		const signal = controller.signal;
-		this.activeGeneration = { id: pendingId, controller };
+		this.activeGeneration = {
+			id: pendingId,
+			sessionId,
+			controller,
+			provider,
+			requestDefaults: { ...this.requestDefaults },
+		};
 
 		// Instantly create an empty assistant message so the UI shows a loading state
 		const assistantMsg: Message = {
@@ -379,7 +402,7 @@ export class ChatEngine {
 				return;
 			}
 
-			await this.provider.streamChat(payloadParams.messages, payloadParams.options, signal, (event) => {
+			await provider.streamChat(payloadParams.messages, payloadParams.options, signal, (event) => {
 				if (signal.aborted) return;
 				if (event.type === "finish" && event.reason === "aborted") {
 					wasAborted = true;
@@ -487,10 +510,14 @@ export class ChatEngine {
 		});
 	}
 
-	private async prepareRequestParams(messages: Message[], signal: AbortSignal): Promise<ChatRequestParams> {
+	private async prepareRequestParams(
+		messages: Message[],
+		signal: AbortSignal,
+		requestDefaults: Partial<RequestOptions> = this.requestDefaults,
+	): Promise<ChatRequestParams> {
 		const payloadParams: ChatRequestParams = {
 			messages: [...messages],
-			options: { ...this.requestDefaults },
+			options: { ...requestDefaults },
 			signal,
 		};
 
@@ -517,7 +544,8 @@ export class ChatEngine {
 	}
 
 	private async finalizeGeneration(pendingId: string, wasAborted: boolean = false) {
-		if (this.activeGeneration?.id !== pendingId) return;
+		const generation = this.activeGeneration;
+		if (generation?.id !== pendingId) return;
 		this.activeGeneration = null;
 
 		if (wasAborted) {
@@ -529,19 +557,23 @@ export class ChatEngine {
 		}
 
 		try {
-			await this.persistCurrentSession();
-
-			const currentMsgs = this.state.messages;
-			const sessionId = this.state.currentSessionId;
-
+			const finalMessages = this.cloneMessages(this.state.messages);
 			const hasError = this.state.error !== null;
+			const saved = await this.persistSessionSnapshot(generation.sessionId, finalMessages);
+
+			if (!saved) return;
 
 			// Auto-title trigger
-			if (!hasError && !wasAborted && this.provider.generateTitle) {
-				const assistantRepliesCount = currentMsgs.filter((m) => m.role === "assistant" && m.blocks.length > 0).length;
+			if (!hasError && !wasAborted && generation.provider.generateTitle) {
+				const assistantRepliesCount = finalMessages.filter((m) => m.role === "assistant" && m.blocks.length > 0).length;
 
 				if (assistantRepliesCount === 1) {
-					void this.triggerAutoTitle(sessionId, currentMsgs);
+					void this.triggerAutoTitle(
+						generation.sessionId,
+						finalMessages,
+						generation.provider,
+						generation.requestDefaults,
+					);
 				}
 			}
 		} catch (error) {
@@ -559,9 +591,14 @@ export class ChatEngine {
 	}
 
 	private async persistCurrentSession(): Promise<boolean> {
-		const { currentSessionId, messages, sessions } = this.store.get();
+		const { currentSessionId, messages } = this.store.get();
+		return await this.persistSessionSnapshot(currentSessionId, this.cloneMessages(messages));
+	}
 
-		const existingMeta = sessions.find((s) => s.id === currentSessionId);
+	private async persistSessionSnapshot(sessionId: string, messages: Message[]): Promise<boolean> {
+		if (this.deletedSessionIds.has(sessionId)) return false;
+
+		const existingMeta = this.state.sessions.find((s) => s.id === sessionId);
 		let title = existingMeta?.title;
 
 		if (!title) {
@@ -585,52 +622,72 @@ export class ChatEngine {
 
 		const messagesToSave = this.dropEmptyAssistantMessages(messages);
 		const sessionToSave: ChatSession = {
-			id: currentSessionId,
+			id: sessionId,
 			title,
 			updatedAt,
 			messages: messagesToSave,
 		};
 
 		try {
-			await this.storage.save(sessionToSave);
+			return await this.enqueueSessionWrite(sessionId, async () => {
+				if (this.deletedSessionIds.has(sessionId)) return false;
+				await this.storage.save(sessionToSave);
 
-			this.activeSessionMeta = { id: currentSessionId, title, updatedAt };
-			this.store.set({
-				sessions: [this.activeSessionMeta, ...this.state.sessions.filter((s) => s.id !== currentSessionId)],
+				if (this.deletedSessionIds.has(sessionId)) return false;
+
+				const sessionMeta = { id: sessionId, title, updatedAt };
+				if (this.state.currentSessionId === sessionId) {
+					this.activeSessionMeta = sessionMeta;
+				}
+				this.store.set({
+					sessions: [sessionMeta, ...this.state.sessions.filter((s) => s.id !== sessionId)],
+				});
+
+				return true;
 			});
-
-			return true;
 		} catch (error) {
-			console.error(`Failed to persist session "${currentSessionId}"`, error);
+			console.error(`Failed to persist session "${sessionId}"`, error);
 			return false;
 		}
 	}
 
-	private async triggerAutoTitle(sessionId: string, messages: Message[]) {
+	private async triggerAutoTitle(
+		sessionId: string,
+		messages: Message[],
+		provider: ChatProvider,
+		requestDefaults: Partial<RequestOptions>,
+	) {
+		if (this.deletedSessionIds.has(sessionId)) return;
+
 		try {
 			const controller = new AbortController();
-			const payloadParams = await this.prepareRequestParams(messages, controller.signal);
+			const payloadParams = await this.prepareRequestParams(messages, controller.signal, requestDefaults);
 
-			const smartTitle = await this.provider.generateTitle!(
+			const smartTitle = await provider.generateTitle!(
 				payloadParams.messages,
 				payloadParams.options,
 				controller.signal,
 			);
 			if (!smartTitle) return;
+			if (this.deletedSessionIds.has(sessionId)) return;
 
-			// user may have deleted this session while the title was generating in the background.
-			if (!this.state.sessions.find((s) => s.id === sessionId)) return;
+			await this.enqueueSessionWrite(sessionId, async () => {
+				if (this.deletedSessionIds.has(sessionId)) return;
 
-			if (this.storage.updateMetadata) {
-				await this.storage.updateMetadata(sessionId, { title: smartTitle });
-			}
+				if (this.storage.updateMetadata) {
+					await this.storage.updateMetadata(sessionId, { title: smartTitle });
+				}
 
-			this.store.set({
-				sessions: this.state.sessions.map((s) => (s.id === sessionId ? { ...s, title: smartTitle } : s)),
+				if (this.deletedSessionIds.has(sessionId)) return;
+				if (!this.state.sessions.find((s) => s.id === sessionId)) return;
+
+				this.store.set({
+					sessions: this.state.sessions.map((s) => (s.id === sessionId ? { ...s, title: smartTitle } : s)),
+				});
+				if (this.state.currentSessionId === sessionId && this.activeSessionMeta?.id === sessionId) {
+					this.activeSessionMeta = { ...this.activeSessionMeta, title: smartTitle };
+				}
 			});
-			if (this.activeSessionMeta?.id === sessionId) {
-				this.activeSessionMeta = { ...this.activeSessionMeta, title: smartTitle };
-			}
 		} catch (e) {
 			console.error("Failed to auto-generate title", e);
 		}
@@ -638,5 +695,41 @@ export class ChatEngine {
 
 	private dropEmptyAssistantMessages(messages: Message[]): Message[] {
 		return messages.filter((m) => !(m.role === "assistant" && m.blocks.length === 0));
+	}
+
+	private cloneMessages(messages: Message[]): Message[] {
+		return messages.map((message) => {
+			const cloned: Message = {
+				...message,
+				blocks: message.blocks.map((block) => ({ ...block })),
+			};
+			if (message.meta) {
+				cloned.meta = { ...message.meta };
+			}
+			return cloned;
+		});
+	}
+
+	private enqueueSessionWrite<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+		const previous = this.sessionWriteQueues.get(sessionId) ?? Promise.resolve();
+		const queued = previous.catch(() => undefined).then(operation);
+		const tracked = queued.then(
+			() => undefined,
+			() => undefined,
+		);
+
+		this.sessionWriteQueues.set(sessionId, tracked);
+		void tracked.finally(() => {
+			if (this.sessionWriteQueues.get(sessionId) === tracked) {
+				this.sessionWriteQueues.delete(sessionId);
+			}
+		});
+
+		return queued;
+	}
+
+	private withoutDeletedSessions(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
+		if (this.deletedSessionIds.size === 0) return sessions;
+		return sessions.filter((session) => !this.deletedSessionIds.has(session.id));
 	}
 }

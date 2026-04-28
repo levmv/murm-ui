@@ -292,6 +292,289 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(state.sessions[0].id, state.currentSessionId);
 });
 
+test("generation save completion does not disturb a session switched during persistence", async () => {
+	let releaseSave!: () => void;
+	const saveReleased = new Promise<void>((resolve) => {
+		releaseSave = resolve;
+	});
+
+	let saveStarted!: () => void;
+	const saveStartedPromise = new Promise<void>((resolve) => {
+		saveStarted = resolve;
+	});
+
+	const otherSession: ChatSession = {
+		id: "other-session",
+		title: "Other chat",
+		updatedAt: 100,
+		messages: [textMessage("other-user", "user", "other question")],
+	};
+	const storage = new (class extends MemoryStorage {
+		override async save(session: ChatSession): Promise<void> {
+			saveStarted();
+			await saveReleased;
+			await super.save(session);
+		}
+	})([otherSession]);
+
+	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await saveStartedPromise;
+	await waitFor(() => engine.state.generatingMessageId === null, "generation indicator cleared");
+
+	await engine.switchSession(otherSession.id);
+	assert.equal(engine.state.currentSessionId, otherSession.id);
+	assert.equal(getText(engine.state.messages[0]), "other question");
+
+	releaseSave();
+	await waitFor(() => storage.saved.length === 1, "delayed save completion");
+
+	assert.equal(engine.state.currentSessionId, otherSession.id);
+	assert.equal(getText(engine.state.messages[0]), "other question");
+	assert.equal(storage.saved[0].id !== otherSession.id, true);
+	assert.equal(
+		engine.state.sessions.some((session) => session.id === storage.saved[0].id),
+		true,
+	);
+});
+
+test("overlapping same-session saves are persisted in request order", async () => {
+	let releaseFirstSave!: () => void;
+	const firstSaveReleased = new Promise<void>((resolve) => {
+		releaseFirstSave = resolve;
+	});
+
+	let firstSaveStarted!: () => void;
+	const firstSaveStartedPromise = new Promise<void>((resolve) => {
+		firstSaveStarted = resolve;
+	});
+
+	const storage = new (class extends MemoryStorage {
+		private saveCount = 0;
+
+		override async save(session: ChatSession): Promise<void> {
+			this.saveCount++;
+			if (this.saveCount === 1) {
+				firstSaveStarted();
+				await firstSaveReleased;
+			}
+			await super.save(session);
+		}
+	})();
+
+	let replyCount = 0;
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			replyCount++;
+			onEvent({
+				type: "text_delta",
+				messageId: "provider-message",
+				blockId: `reply-${replyCount}`,
+				delta: replyCount === 1 ? "first reply" : "second reply",
+			});
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("first");
+	await firstSaveStartedPromise;
+	await waitFor(() => engine.state.generatingMessageId === null, "first generation indicator cleared");
+
+	assert.equal(engine.sendMessage("second"), true);
+	await waitFor(() => replyCount === 2 && engine.state.generatingMessageId === null, "second generation completed");
+
+	assert.equal(storage.saved.length, 0);
+	releaseFirstSave();
+	await waitFor(() => storage.saved.length === 2, "ordered save completion");
+
+	const finalSaved = storage.saved[1];
+	assert.equal(getText(finalSaved.messages[0]), "first");
+	assert.equal(getText(finalSaved.messages[1]), "first reply");
+	assert.equal(getText(finalSaved.messages[2]), "second");
+	assert.equal(getText(finalSaved.messages[3]), "second reply");
+	assert.deepEqual(storage.sessions.get(finalSaved.id)?.messages, finalSaved.messages);
+});
+
+test("deleting a session prevents pending save completions from reinserting it", async () => {
+	let releaseSave!: () => void;
+	const saveReleased = new Promise<void>((resolve) => {
+		releaseSave = resolve;
+	});
+
+	let saveStarted!: () => void;
+	const saveStartedPromise = new Promise<void>((resolve) => {
+		saveStarted = resolve;
+	});
+
+	const storage = new (class extends MemoryStorage {
+		override async save(session: ChatSession): Promise<void> {
+			saveStarted();
+			await saveReleased;
+			await super.save(session);
+		}
+	})();
+	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	const sessionId = engine.state.currentSessionId;
+	engine.sendMessage("hello");
+	await saveStartedPromise;
+	await waitFor(() => engine.state.generatingMessageId === null, "generation indicator cleared");
+
+	const deletePromise = engine.deleteSession(sessionId);
+	assert.notEqual(engine.state.currentSessionId, sessionId);
+	assert.equal(
+		engine.state.sessions.some((session) => session.id === sessionId),
+		false,
+	);
+
+	releaseSave();
+	await deletePromise;
+
+	assert.equal(storage.deleted.includes(sessionId), true);
+	assert.equal(storage.sessions.has(sessionId), false);
+	assert.equal(
+		engine.state.sessions.some((session) => session.id === sessionId),
+		false,
+	);
+	assert.notEqual(engine.state.currentSessionId, sessionId);
+});
+
+test("auto-title completion is scoped to the generated session after switching away", async () => {
+	let releaseSave!: () => void;
+	const saveReleased = new Promise<void>((resolve) => {
+		releaseSave = resolve;
+	});
+
+	let saveStarted!: () => void;
+	const saveStartedPromise = new Promise<void>((resolve) => {
+		saveStarted = resolve;
+	});
+
+	let titleStarted!: () => void;
+	const titleStartedPromise = new Promise<void>((resolve) => {
+		titleStarted = resolve;
+	});
+
+	let releaseTitle!: () => void;
+	const titleReleased = new Promise<void>((resolve) => {
+		releaseTitle = resolve;
+	});
+
+	const otherSession: ChatSession = {
+		id: "other-session",
+		title: "Other chat",
+		updatedAt: 100,
+		messages: [textMessage("other-user", "user", "other question")],
+	};
+	const storage = new (class extends MemoryStorage {
+		override async save(session: ChatSession): Promise<void> {
+			saveStarted();
+			await saveReleased;
+			await super.save(session);
+		}
+	})([otherSession]);
+
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+		async generateTitle(): Promise<string> {
+			titleStarted();
+			await titleReleased;
+			return "Smart Title";
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	const generatedSessionId = engine.state.currentSessionId;
+	engine.sendMessage("hello");
+	await saveStartedPromise;
+	await waitFor(() => engine.state.generatingMessageId === null, "generation indicator cleared");
+
+	await engine.switchSession(otherSession.id);
+	releaseSave();
+	await titleStartedPromise;
+
+	assert.equal(engine.state.currentSessionId, otherSession.id);
+	assert.equal(getText(engine.state.messages[0]), "other question");
+
+	releaseTitle();
+	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
+
+	assert.deepEqual(storage.metadataUpdates, [{ id: generatedSessionId, meta: { title: "Smart Title" } }]);
+	assert.equal(engine.state.currentSessionId, otherSession.id);
+	assert.equal(getText(engine.state.messages[0]), "other question");
+	assert.equal(engine.state.sessions.find((session) => session.id === generatedSessionId)?.title, "Smart Title");
+});
+
+test("deleting a session prevents pending auto-title completion from recreating it", async () => {
+	let titleStarted!: () => void;
+	const titleStartedPromise = new Promise<void>((resolve) => {
+		titleStarted = resolve;
+	});
+
+	let releaseTitle!: () => void;
+	const titleReleased = new Promise<void>((resolve) => {
+		releaseTitle = resolve;
+	});
+
+	const storage = new MemoryStorage();
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+		async generateTitle(): Promise<string> {
+			titleStarted();
+			await titleReleased;
+			return "Smart Title";
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	const sessionId = engine.state.currentSessionId;
+	engine.sendMessage("hello");
+	await titleStartedPromise;
+
+	const deletePromise = engine.deleteSession(sessionId);
+	assert.notEqual(engine.state.currentSessionId, sessionId);
+
+	await deletePromise;
+	releaseTitle();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.deepEqual(storage.metadataUpdates, []);
+	assert.equal(storage.sessions.has(sessionId), false);
+	assert.equal(
+		engine.state.sessions.some((session) => session.id === sessionId),
+		false,
+	);
+	assert.notEqual(engine.state.currentSessionId, sessionId);
+});
+
 test("sendMessage preserves encrypted reasoning as hidden metadata", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
@@ -872,7 +1155,7 @@ test("auto-title updates session metadata after the first assistant reply", asyn
 	assert.equal(engine.state.sessions.find((session) => session.id === sessionId)?.title, "Smart Title");
 });
 
-test("deleting the active session stops generation before deleting storage", async () => {
+test("deleting the active session lets deletion win over the aborted generation save", async () => {
 	const calls: string[] = [];
 	const storage = new (class extends MemoryStorage {
 		override async save(session: ChatSession): Promise<void> {
@@ -923,13 +1206,15 @@ test("deleting the active session stops generation before deleting storage", asy
 
 	engine.sendMessage("hello");
 	await streamStartedPromise;
-	await engine.deleteSession("active-session");
+	const deletePromise = engine.deleteSession("active-session");
+	await waitFor(() => engine.state.currentSessionId !== "active-session", "active delete local navigation");
+	await deletePromise;
 
 	releaseStream();
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
-	assert.deepEqual(calls, ["save:active-session", "delete:active-session"]);
-	assert.equal(storage.saved.length, 1);
+	assert.deepEqual(calls, ["delete:active-session"]);
+	assert.equal(storage.saved.length, 0);
 	assert.equal(storage.deleted.length, 1);
 	assert.notEqual(engine.state.currentSessionId, "active-session");
 });
