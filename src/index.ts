@@ -3,6 +3,7 @@ export { OpenAIProvider } from "./core/providers/openai";
 export { IndexedDBStorage } from "./core/storage/indexed-db";
 export { RemoteStorage } from "./core/storage/remote";
 export type {
+	ActionButtonDef,
 	ChatPlugin,
 	ChatProvider,
 	ChatRequestPatch,
@@ -10,6 +11,7 @@ export type {
 	ChatState,
 	ChatStorage,
 	Message,
+	MessageActionContext,
 	PluginContext,
 	PluginInputContext,
 	ReadonlyChatRequestParams,
@@ -21,6 +23,7 @@ export {
 	type AttachmentPluginConfig,
 	type FileHandler,
 } from "./plugins/attachment/attachment-plugin";
+export { CopyPlugin } from "./plugins/copy/copy-plugin";
 export { EditPlugin } from "./plugins/edit/edit-plugin";
 export { SettingsPlugin } from "./plugins/settings/settings-plugin";
 export { ThinkingPlugin } from "./plugins/thinking/thinking-plugin";

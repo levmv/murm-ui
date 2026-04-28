@@ -22,6 +22,7 @@ const requiredFiles = [
 const publicExports = [
 	"AttachmentPlugin",
 	"ChatUI",
+	"CopyPlugin",
 	"EditPlugin",
 	"IndexedDBStorage",
 	"OpenAIProvider",

@@ -1,9 +1,7 @@
 import { marked } from "marked";
-import { extractPlainText } from "../core/msg-utils";
-import type { ContentBlock, Message, RenderConfig } from "../core/types";
+import type { ActionButtonDef, ContentBlock, Message, RenderConfig } from "../core/types";
 import { el, syncDOM } from "../utils/dom";
 import { renderSafeHTML } from "../utils/html";
-import { ICON_CHECK, ICON_COPY } from "../utils/icons";
 
 const MARKDOWN_THROTTLE_MS = 70;
 
@@ -27,6 +25,7 @@ export class MessageNode {
 	private cacheError: string | null = null;
 	private cacheIsGenerating: boolean = false;
 	private cacheActionsVisible: boolean = false;
+	private actionsInitialized: boolean = false;
 	private currentMsg: Message | null = null;
 	private isDestroyed = false;
 
@@ -55,7 +54,7 @@ export class MessageNode {
 
 		this.renderBlocks(msg, isGenerating);
 		this.renderLoading(msg, isGenerating, error);
-		this.renderActions(msg);
+		this.renderActions(msg, isGenerating);
 		this.renderError(error);
 
 		for (const plugin of this.config.plugins) {
@@ -246,8 +245,8 @@ export class MessageNode {
 		}
 	}
 
-	private renderActions(msg: Message) {
-		const shouldShow = msg.role === "assistant" && msg.blocks.length > 0;
+	private renderActions(msg: Message, isGenerating: boolean) {
+		const shouldShow = msg.blocks.length > 0;
 
 		if (!shouldShow) {
 			if (this.actionsEl && this.cacheActionsVisible) {
@@ -257,36 +256,53 @@ export class MessageNode {
 			return;
 		}
 
-		if (!this.actionsEl) {
-			const actionButtons: HTMLElement[] = [];
+		if (isGenerating && !this.actionsInitialized) return;
 
-			if (typeof navigator !== "undefined" && navigator.clipboard) {
-				const copyBtn = el("button", "mur-action-icon-btn", {
-					title: "Copy message",
-					innerHTML: ICON_COPY,
-				});
-				copyBtn.addEventListener("click", async () => {
-					try {
-						if (!this.currentMsg) return;
-
-						// Extract all text blocks combined
-						const textToCopy = extractPlainText(this.currentMsg);
-						await navigator.clipboard.writeText(textToCopy);
-						copyBtn.innerHTML = ICON_CHECK;
-						setTimeout(() => (copyBtn.innerHTML = ICON_COPY), 2000);
-					} catch {
-						// Ignore
-					}
-				});
-				actionButtons.push(copyBtn);
+		if (this.actionsInitialized) {
+			if (this.actionsEl && !this.cacheActionsVisible) {
+				this.actionsEl.hidden = false;
+				this.cacheActionsVisible = true;
 			}
-
-			this.actionsEl = el("div", "mur-message-actions", null, actionButtons);
-			this.el.appendChild(this.actionsEl);
-			this.cacheActionsVisible = true;
-		} else if (!this.cacheActionsVisible) {
-			this.actionsEl.hidden = false;
-			this.cacheActionsVisible = true;
+			return;
 		}
+
+		const actionButtons: HTMLElement[] = [];
+
+		for (const plugin of this.config.plugins) {
+			const defs = plugin.getActionButtons?.(msg) ?? [];
+			for (const def of defs) {
+				actionButtons.push(this.createActionButton(plugin.name, def));
+			}
+		}
+
+		this.actionsInitialized = true;
+
+		if (actionButtons.length === 0) return;
+
+		this.actionsEl = el("div", "mur-message-actions", null, actionButtons);
+		this.el.appendChild(this.actionsEl);
+		this.cacheActionsVisible = true;
+	}
+
+	private createActionButton(pluginName: string, def: ActionButtonDef): HTMLButtonElement {
+		const btn = el("button", "mur-action-icon-btn", {
+			title: def.title,
+			innerHTML: def.iconHtml,
+		});
+
+		btn.dataset.actionId = def.id;
+		btn.dataset.pluginName = pluginName;
+		btn.addEventListener("click", () => {
+			if (!this.currentMsg) return;
+			def.onClick({
+				message: this.currentMsg,
+				buttonEl: btn,
+				messageEl: this.el,
+				actionId: def.id,
+				pluginName,
+			});
+		});
+
+		return btn;
 	}
 }

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import type { Message } from "../core/types";
+import type { ChatPlugin, Message, MessageActionContext } from "../core/types";
+import { CopyPlugin } from "../plugins/copy/copy-plugin";
+import { EditPlugin } from "../plugins/edit/edit-plugin";
 import { Feed } from "./feed";
 
 interface FeedHarness {
@@ -21,7 +23,7 @@ function setGlobal(name: string, value: unknown): void {
 	});
 }
 
-function createFeedHarness(options: { resizeObserver?: boolean } = {}): FeedHarness {
+function createFeedHarness(options: { resizeObserver?: boolean; plugins?: ChatPlugin[] } = {}): FeedHarness {
 	const dom = new JSDOM(`
 		<div class="mur-chat-scroll-area">
 			<div class="mur-chat-history"></div>
@@ -65,7 +67,7 @@ function createFeedHarness(options: { resizeObserver?: boolean } = {}): FeedHarn
 		}
 	};
 
-	const feed = new Feed(dom.window.document.body, { plugins: [] });
+	const feed = new Feed(dom.window.document.body, { plugins: options.plugins ?? [] });
 
 	return {
 		feed,
@@ -168,7 +170,7 @@ test("global errors without a message id are ignored by the feed", () => {
 });
 
 test("copy action reads the latest message for a reused node", async () => {
-	const { feed, root } = createFeedHarness();
+	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
 	const copied: string[] = [];
 
 	setGlobal("navigator", {
@@ -216,8 +218,35 @@ test("copy action reads the latest message for a reused node", async () => {
 	feed.destroy();
 });
 
-test("message actions are shown again when they become applicable", () => {
+test("assistant messages do not render copy actions without CopyPlugin", () => {
 	const { feed, root } = createFeedHarness();
+
+	setGlobal("navigator", {
+		clipboard: {
+			writeText: async () => {},
+		},
+	});
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-1", type: "text", text: "Text" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(root.querySelector(".mur-message-actions"), null);
+
+	feed.destroy();
+});
+
+test("message actions are shown again when they become applicable", () => {
+	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
 
 	setGlobal("navigator", {
 		clipboard: {
@@ -258,6 +287,233 @@ test("message actions are shown again when they become applicable", () => {
 	);
 
 	assert.equal(actions.hidden, false);
+
+	feed.destroy();
+});
+
+test("plugin action buttons are initialized once for a message node", () => {
+	let callCount = 0;
+	const plugin: ChatPlugin = {
+		name: "share",
+		getActionButtons: () => {
+			callCount++;
+			return [
+				{
+					id: "share",
+					title: "Share",
+					iconHtml: "<span>S</span>",
+					onClick: () => {},
+				},
+			];
+		},
+	};
+	const { feed, root } = createFeedHarness({ plugins: [plugin] });
+
+	feed.update(
+		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Old text" }] }],
+		null,
+		false,
+		false,
+	);
+	feed.update(
+		[{ id: "user-1", role: "user", blocks: [{ id: "text-2", type: "text", text: "New text" }] }],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(callCount, 1);
+	assert.equal(root.querySelectorAll(".mur-action-icon-btn").length, 1);
+
+	feed.destroy();
+});
+
+test("plugin action buttons wait for generation to finish before initialization", () => {
+	let callCount = 0;
+	const plugin: ChatPlugin = {
+		name: "tool-output",
+		getActionButtons: (msg) => {
+			callCount++;
+			const hasToolCall = msg.blocks.some((block) => block.type === "tool_call");
+			return hasToolCall
+				? [
+						{
+							id: "view-output",
+							title: "View output",
+							iconHtml: "<span>O</span>",
+							onClick: () => {},
+						},
+					]
+				: [];
+		},
+	};
+	const { feed, root } = createFeedHarness({ plugins: [plugin] });
+
+	feed.update(
+		[{ id: "assistant-1", role: "assistant", blocks: [{ id: "text-1", type: "text", text: "Working" }] }],
+		"assistant-1",
+		false,
+		false,
+	);
+
+	assert.equal(callCount, 0);
+	assert.equal(root.querySelector(".mur-message-actions"), null);
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [
+					{ id: "text-1", type: "text", text: "Working" },
+					{
+						id: "tool-1",
+						type: "tool_call",
+						toolCallId: "call-1",
+						name: "render_chart",
+						argsText: "{}",
+						status: "complete",
+					},
+				],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(callCount, 1);
+	assert.equal(root.querySelector<HTMLButtonElement>("[data-action-id='view-output']")?.title, "View output");
+
+	feed.destroy();
+});
+
+test("plugin action clicks receive the latest message and DOM context", () => {
+	const clicks: MessageActionContext[] = [];
+	const plugin: ChatPlugin = {
+		name: "share",
+		getActionButtons: () => [
+			{
+				id: "share",
+				title: "Share",
+				iconHtml: "<span>S</span>",
+				onClick: (ctx) => {
+					clicks.push(ctx);
+				},
+			},
+		],
+	};
+	const { feed, root } = createFeedHarness({ plugins: [plugin] });
+
+	feed.update(
+		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Old text" }] }],
+		null,
+		false,
+		false,
+	);
+	const button = root.querySelector<HTMLButtonElement>(".mur-action-icon-btn");
+	assert.ok(button);
+
+	feed.update(
+		[{ id: "user-1", role: "user", blocks: [{ id: "text-2", type: "text", text: "New text" }] }],
+		null,
+		false,
+		false,
+	);
+
+	button.click();
+
+	assert.equal(clicks.length, 1);
+	assert.equal(clicks[0].message.blocks[0].id, "text-2");
+	assert.equal(clicks[0].buttonEl, button);
+	assert.equal(clicks[0].messageEl, root.querySelector(".mur-message"));
+	assert.equal(clicks[0].actionId, "share");
+	assert.equal(clicks[0].pluginName, "share");
+
+	feed.destroy();
+});
+
+test("plugin action buttons render for user messages", () => {
+	const plugin: ChatPlugin = {
+		name: "thumbs",
+		getActionButtons: (msg) =>
+			msg.role === "user"
+				? [
+						{
+							id: "thumbs-up",
+							title: "Thumbs up",
+							iconHtml: "<span>T</span>",
+							onClick: () => {},
+						},
+					]
+				: [],
+	};
+	const { feed, root } = createFeedHarness({ plugins: [plugin] });
+
+	feed.update(
+		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Hello" }] }],
+		null,
+		false,
+		false,
+	);
+
+	const actions = root.querySelector<HTMLElement>(".mur-message-user .mur-message-actions");
+	assert.ok(actions);
+	assert.equal(actions.querySelector<HTMLButtonElement>("[data-action-id='thumbs-up']")?.title, "Thumbs up");
+
+	feed.destroy();
+});
+
+test("empty plugin action definitions do not create an action bar", () => {
+	const plugin: ChatPlugin = {
+		name: "empty",
+		getActionButtons: () => [],
+	};
+	const { feed, root } = createFeedHarness({ plugins: [plugin] });
+
+	feed.update(
+		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Hello" }] }],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(root.querySelector(".mur-message-actions"), null);
+
+	feed.destroy();
+});
+
+test("edit plugin action opens the editor and saves changes", () => {
+	const saved: { id: string; text: string }[] = [];
+	const { feed, root } = createFeedHarness({
+		plugins: [EditPlugin({ onSave: (id, text) => saved.push({ id, text }) })],
+	});
+
+	feed.update(
+		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Original text" }] }],
+		null,
+		false,
+		false,
+	);
+
+	const editButton = root.querySelector<HTMLButtonElement>("[data-action-id='edit']");
+	assert.ok(editButton);
+	assert.equal(root.querySelector(".mur-edit-container"), null);
+
+	editButton.click();
+
+	assert.ok(root.querySelector(".mur-edit-container"));
+	const textarea = root.querySelector<HTMLTextAreaElement>(".mur-edit-textarea");
+	const saveButton = root.querySelector<HTMLButtonElement>(".mur-save-edit-btn");
+	assert.ok(textarea);
+	assert.ok(saveButton);
+	assert.equal(textarea.value, "Original text");
+
+	textarea.value = "Updated text";
+	saveButton.click();
+
+	assert.deepEqual(saved, [{ id: "user-1", text: "Updated text" }]);
+	assert.equal(root.querySelector(".mur-edit-textarea"), null);
 
 	feed.destroy();
 });

@@ -2,6 +2,7 @@ import "./edit.css";
 import { extractPlainText } from "../../core/msg-utils";
 import type { ChatPlugin, Message } from "../../core/types";
 import { el, replaceNodes } from "../../utils/dom";
+import { ICON_EDIT } from "../../utils/icons";
 
 export interface EditConfig {
 	onSave: (messageId: string, newText: string) => void;
@@ -15,6 +16,25 @@ interface EditState {
 
 export function EditPlugin(config: EditConfig): ChatPlugin {
 	const stateMap = new WeakMap<HTMLElement, EditState>();
+
+	const ensureState = (parentEl: HTMLElement, msg: Message): EditState => {
+		let state = stateMap.get(parentEl);
+
+		if (!state) {
+			const editContainer = el("div", "mur-edit-container");
+			parentEl.appendChild(editContainer);
+
+			state = {
+				isEditing: false,
+				editContainer,
+				currentMsg: msg,
+			};
+			stateMap.set(parentEl, state);
+		}
+
+		state.currentMsg = msg;
+		return state;
+	};
 
 	const enterEditMode = (parentEl: HTMLElement, state: EditState) => {
 		const msg = state.currentMsg;
@@ -82,36 +102,20 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 
 	return {
 		name: "edit",
-		onMessageRender: (msg, parentEl, _isGenerating) => {
-			if (msg.role !== "user") return;
+		getActionButtons: (msg) => {
+			if (msg.role !== "user") return [];
 
-			let state = stateMap.get(parentEl);
-
-			if (!state) {
-				const editBtn = el("button", "mur-action-icon-btn", {
+			return [
+				{
+					id: "edit",
 					title: "Edit message",
-					innerHTML: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 20h9"></path>
-                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                    </svg>`,
-				});
-
-				const actionBar = el("div", "mur-message-actions", null, [editBtn]);
-				const editContainer = el("div", "mur-edit-container");
-
-				parentEl.appendChild(actionBar);
-				parentEl.appendChild(editContainer);
-
-				state = {
-					isEditing: false,
-					editContainer,
-					currentMsg: msg,
-				};
-
-				editBtn.addEventListener("click", () => enterEditMode(parentEl, state!));
-				stateMap.set(parentEl, state);
-			}
-			state.currentMsg = msg;
+					iconHtml: ICON_EDIT,
+					onClick: (ctx) => {
+						const state = ensureState(ctx.messageEl, ctx.message);
+						enterEditMode(ctx.messageEl, state);
+					},
+				},
+			];
 		},
 	};
 }

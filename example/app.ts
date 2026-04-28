@@ -2,6 +2,7 @@ import Prism from "prismjs";
 import {
 	AttachmentPlugin,
 	ChatUI,
+	CopyPlugin,
 	EditPlugin,
 	IndexedDBStorage,
 	OpenAIProvider,
@@ -33,6 +34,7 @@ new ChatUI({
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
 		ThinkingPlugin(),
+		CopyPlugin(),
 		EditPlugin({ onSave: (id, text) => chatApi.editAndResubmit(id, text) }),
 		SettingsPlugin({
 			defaultModel: "auto",

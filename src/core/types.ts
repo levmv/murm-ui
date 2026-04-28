@@ -222,6 +222,21 @@ export interface PluginInputContext {
 	requestSubmitStateSync: () => void;
 }
 
+export interface MessageActionContext {
+	message: Message;
+	buttonEl: HTMLElement;
+	messageEl: HTMLElement;
+	actionId: string;
+	pluginName: string;
+}
+
+export interface ActionButtonDef {
+	id: string;
+	title: string;
+	iconHtml: string;
+	onClick: (ctx: MessageActionContext) => void;
+}
+
 export interface ChatPlugin {
 	name: string;
 
@@ -274,6 +289,12 @@ export interface ChatPlugin {
 	 * @param isGenerating True if the LLM is actively streaming this message.
 	 */
 	onMessageRender?: (msg: Message, parentEl: HTMLElement, isGenerating: boolean) => void;
+
+	/**
+	 * Declaratively registers static icon buttons for a message action bar.
+	 * Called when the action bar is first initialized for a message node.
+	 */
+	getActionButtons?: (msg: Message) => ActionButtonDef[];
 
 	/**
 	 * Intercept the rendering of an individual content block (e.g., text, reasoning, tool_call).

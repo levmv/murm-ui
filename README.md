@@ -22,6 +22,7 @@ Here is a complete example:
 import {
 	AttachmentPlugin,
 	ChatUI,
+	CopyPlugin,
 	EditPlugin,
 	IndexedDBStorage,
 	OpenAIProvider,
@@ -35,6 +36,7 @@ const ui = new ChatUI({
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
 		ThinkingPlugin(),
+		CopyPlugin(),
 		EditPlugin({
 			onSave: (id, text) => chatApi.editAndResubmit(id, text),
 		}),
