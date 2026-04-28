@@ -23,6 +23,12 @@ export interface ChatUIConfig {
 
 	highlighter?: (code: string, language: string) => string;
 	plugins?: (chatApi: ChatEngine) => ChatPlugin[];
+
+	/**
+	 * Updates the browser window title to match the active chat.
+	 * Pass `true` to use the chat title as-is, or a function for custom formatting.
+	 */
+	updateWindowTitle?: boolean | ((title: string) => string);
 }
 
 export class ChatUI {
@@ -322,7 +328,14 @@ export class ChatUI {
 	private updateHeaderTitle() {
 		const state = this.engine.state;
 		const activeSession = state.sessions.find((s) => s.id === state.currentSessionId);
-		this.elements.headerTitle.textContent = activeSession ? activeSession.title : "New Chat";
+		const titleText = activeSession ? activeSession.title : "New Chat";
+
+		this.elements.headerTitle.textContent = titleText;
+
+		if (this.config.updateWindowTitle) {
+			document.title =
+				typeof this.config.updateWindowTitle === "function" ? this.config.updateWindowTitle(titleText) : titleText;
+		}
 	}
 
 	private syncRouterToState() {
