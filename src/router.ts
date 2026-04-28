@@ -60,18 +60,24 @@ export class AppRouter {
 	public listen(onNavigate: (id: string | null) => void) {
 		if (this.type === "none") return;
 
-		const eventType = this.type === "path" ? "popstate" : "hashchange";
-
 		this.handleNavigate = () => {
 			onNavigate(this.getId());
 		};
 
-		window.addEventListener(eventType, this.handleNavigate);
+		for (const eventType of this.eventTypes()) {
+			window.addEventListener(eventType, this.handleNavigate);
+		}
 	}
 
 	public destroy() {
 		if (this.type === "none" || !this.handleNavigate) return;
-		const eventType = this.type === "path" ? "popstate" : "hashchange";
-		window.removeEventListener(eventType, this.handleNavigate);
+		for (const eventType of this.eventTypes()) {
+			window.removeEventListener(eventType, this.handleNavigate);
+		}
+		this.handleNavigate = undefined;
+	}
+
+	private eventTypes(): ("hashchange" | "popstate")[] {
+		return this.type === "hash" ? ["hashchange", "popstate"] : ["popstate"];
 	}
 }

@@ -54,7 +54,10 @@ function mountAttachment(plugin: ChatPlugin): {
 	const inputComponent = new Input(
 		{
 			container,
-			onSubmit: (text) => submissions.push(text),
+			onSubmit: (text) => {
+				submissions.push(text);
+				return true;
+			},
 			onStop: () => {},
 		},
 		[plugin],

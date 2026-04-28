@@ -4,7 +4,7 @@ import { queryOrThrow } from "../utils/dom";
 
 export interface InputProps {
 	container: HTMLElement;
-	onSubmit: (text: string) => void;
+	onSubmit: (text: string) => boolean;
 	onStop: () => void;
 }
 
@@ -15,6 +15,7 @@ export class Input {
 	private isGenerating = false;
 	private hasSubmittableText = false;
 	private shouldRestoreFocus = false;
+	private focusTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	private supportsFieldSizing = typeof CSS !== "undefined" && CSS.supports("field-sizing", "content");
 
@@ -50,7 +51,9 @@ export class Input {
 		if (!IS_TOUCH_DEVICE) {
 			// Timeout ensures focus works correctly after DOM reflows
 			// or when transitioning state (e.g., stopping generation)
-			setTimeout(() => {
+			this.clearPendingFocus();
+			this.focusTimeout = setTimeout(() => {
+				this.focusTimeout = null;
 				if (!this.input.disabled) {
 					this.input.focus({ preventScroll: true });
 				}
@@ -84,9 +87,16 @@ export class Input {
 	}
 
 	public destroy() {
+		this.clearPendingFocus();
 		this.input.removeEventListener("input", this.onInputBound);
 		this.input.removeEventListener("keydown", this.onKeydownBound);
 		this.form.removeEventListener("submit", this.onSubmitBound);
+	}
+
+	private clearPendingFocus() {
+		if (this.focusTimeout === null) return;
+		clearTimeout(this.focusTimeout);
+		this.focusTimeout = null;
 	}
 
 	private bindEvents() {
@@ -141,14 +151,20 @@ export class Input {
 
 		this.shouldRestoreFocus = true;
 
+		if (!this.props.onSubmit(text)) {
+			// Submission rejected, keep text and sync state
+			this.syncSubmitState();
+			return;
+		}
+
 		this.input.value = "";
+
 		this.refreshTextState();
 		if (!this.supportsFieldSizing) {
 			this.adjustHeight();
 		}
 
 		this.syncSubmitState();
-		this.props.onSubmit(text);
 	}
 
 	private syncSubmitState(isLoadingSession = this.input.disabled && !this.isGenerating) {

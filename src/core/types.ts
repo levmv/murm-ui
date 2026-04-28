@@ -188,6 +188,11 @@ export interface ChatProvider {
 }
 
 export interface RenderConfig {
+	/**
+	 * Receives code text from a sanitized code block and returns trusted HTML.
+	 * The returned HTML is injected directly, so custom highlighters must escape
+	 * any interpolated code text and must not use untrusted highlighter output.
+	 */
 	highlighter?: (code: string, lang: string) => string;
 	plugins: ChatPlugin[];
 }

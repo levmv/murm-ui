@@ -183,10 +183,10 @@ export class ChatEngine {
 		}
 	}
 
-	public sendMessage(content: string) {
-		if (this.isBusy || this.state.isLoadingSession) return;
+	public sendMessage(content: string): boolean {
+		if (this.isBusy || this.state.isLoadingSession) return false;
 
-		const currentMessages = this.cleanDeadMessages(this.state.messages);
+		const currentMessages = this.dropEmptyAssistantMessages(this.state.messages);
 
 		const userMsg: Message = {
 			id: uuidv7(),
@@ -195,21 +195,27 @@ export class ChatEngine {
 		};
 
 		for (const plugin of this.plugins) {
-			if (plugin.onUserSubmit) {
-				plugin.onUserSubmit(userMsg);
+			try {
+				plugin.onUserSubmit?.(userMsg);
+			} catch (error) {
+				console.error(`Plugin "${plugin.name}" failed during onUserSubmit`, error);
 			}
 		}
 
+		if (userMsg.blocks.length === 0) return false;
+
 		void this.startGeneration([...currentMessages, userMsg]);
+		return true;
 	}
 
-	public editAndResubmit(messageId: string, newContent: string) {
-		if (this.isBusy) return;
+	public editAndResubmit(messageId: string, newContent: string): boolean {
+		if (this.isBusy) return false;
 
-		const currentMessages = this.cleanDeadMessages(this.state.messages);
+		const currentMessages = this.dropEmptyAssistantMessages(this.state.messages);
 		const targetIndex = currentMessages.findIndex((m) => m.id === messageId);
 
-		if (targetIndex === -1) return;
+		if (targetIndex === -1) return false;
+		if (currentMessages[targetIndex].role !== "user") return false;
 
 		// Truncate history to remove everything AFTER the edited message
 		// and update the edited message itself
@@ -218,13 +224,17 @@ export class ChatEngine {
 		// Preserve non-text blocks (like images/files) and append the edited text
 		const preservedBlocks = updatedMessages[targetIndex].blocks.filter((b) => b.type !== "text");
 		const newTextBlock = newContent ? [{ id: uuidv7(), type: "text" as const, text: newContent }] : [];
+		const finalBlocks = [...preservedBlocks, ...newTextBlock];
+
+		if (finalBlocks.length === 0) return false;
 
 		updatedMessages[targetIndex] = {
 			...updatedMessages[targetIndex],
-			blocks: [...preservedBlocks, ...newTextBlock],
+			blocks: finalBlocks,
 		};
 
 		void this.startGeneration(updatedMessages);
+		return true;
 	}
 
 	/**
@@ -449,6 +459,7 @@ export class ChatEngine {
 				case "tool_call_delta": {
 					const tcb = msg.blocks.find((b) => b.id === event.blockId) as Extract<ContentBlock, { type: "tool_call" }>;
 					if (tcb) {
+						if (event.name !== undefined) tcb.name = event.name;
 						if (event.argsDelta) tcb.argsText += event.argsDelta;
 						if (event.status) tcb.status = event.status;
 					}
@@ -572,7 +583,7 @@ export class ChatEngine {
 
 		const updatedAt = Date.now();
 
-		const messagesToSave = this.cleanDeadMessages(messages);
+		const messagesToSave = this.dropEmptyAssistantMessages(messages);
 		const sessionToSave: ChatSession = {
 			id: currentSessionId,
 			title,
@@ -625,8 +636,7 @@ export class ChatEngine {
 		}
 	}
 
-	private cleanDeadMessages(messages: Message[]): Message[] {
-		// Remove any assistant message that has 0 blocks (it failed before generating anything)
+	private dropEmptyAssistantMessages(messages: Message[]): Message[] {
 		return messages.filter((m) => !(m.role === "assistant" && m.blocks.length === 0));
 	}
 }

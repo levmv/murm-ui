@@ -152,9 +152,7 @@ export class ChatUI {
 		this.inputComponent = new Input(
 			{
 				container: this.container,
-				onSubmit: (text) => {
-					this.engine.sendMessage(text);
-				},
+				onSubmit: (text) => this.engine.sendMessage(text),
 				onStop: () => {
 					void this.engine.stopGeneration();
 				},

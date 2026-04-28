@@ -35,10 +35,16 @@ test("hash router reads, writes, and stops listening after destroy", () => {
 	window.dispatchEvent(new window.HashChangeEvent("hashchange"));
 	assert.deepEqual(navigations, ["from-event"]);
 
+	window.history.pushState(null, "", "#/chat/from-popstate");
+	window.dispatchEvent(new window.PopStateEvent("popstate"));
+	assert.deepEqual(navigations, ["from-event", "from-popstate"]);
+
 	router.destroy();
 	window.location.hash = "#/chat/ignored";
 	window.dispatchEvent(new window.HashChangeEvent("hashchange"));
-	assert.deepEqual(navigations, ["from-event"]);
+	window.history.pushState(null, "", "#/chat/also-ignored");
+	window.dispatchEvent(new window.PopStateEvent("popstate"));
+	assert.deepEqual(navigations, ["from-event", "from-popstate"]);
 });
 
 test("path router reads, writes, and reports popstate navigation", () => {

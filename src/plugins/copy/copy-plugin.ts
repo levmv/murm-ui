@@ -19,7 +19,11 @@ export function CopyPlugin(): ChatPlugin {
 							const textToCopy = extractPlainText(message);
 							await navigator.clipboard.writeText(textToCopy);
 							buttonEl.innerHTML = ICON_CHECK;
-							setTimeout(() => (buttonEl.innerHTML = ICON_COPY), 2000);
+							setTimeout(() => {
+								if (buttonEl.isConnected) {
+									buttonEl.innerHTML = ICON_COPY;
+								}
+							}, 2000);
 						} catch {
 							// Ignore
 						}

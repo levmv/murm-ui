@@ -620,9 +620,10 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.setMessages([userMessage, textMessage("assistant-1", "assistant", "old response")]);
-	engine.editAndResubmit("user-1", "new text");
+	const accepted = engine.editAndResubmit("user-1", "new text");
 	await waitFor(() => engine.state.generatingMessageId === null && providerMessages.length > 0, "edited stream");
 
+	assert.equal(accepted, true);
 	assert.equal(providerMessages.length, 1);
 	assert.equal(getText(providerMessages[0]), "new text");
 	assert.ok(providerMessages[0].blocks.some((block) => block.type === "file" && block.name === "notes.txt"));
@@ -632,6 +633,138 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 	assert.equal(state.messages[0].id, "user-1");
 	assert.equal(getText(state.messages[0]), "new text");
 	assert.equal(getText(state.messages[1]), "edited response");
+});
+
+test("editAndResubmit rejects edits that would leave a user message empty", async () => {
+	let providerCalled = false;
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(): Promise<void> {
+				providerCalled = true;
+			},
+		},
+		storage: new MemoryStorage(),
+	});
+	const userMessage: Message = {
+		id: "user-1",
+		role: "user",
+		blocks: [{ id: "old-text", type: "text", text: "old text" }],
+	};
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	await engine.setMessages([userMessage]);
+	const accepted = engine.editAndResubmit("user-1", "");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.equal(accepted, false);
+	assert.equal(providerCalled, false);
+	assert.equal(engine.state.generatingMessageId, null);
+	assert.deepEqual(engine.state.messages, [userMessage]);
+});
+
+test("tool call deltas update streamed tool names", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(
+				_messages: Message[],
+				_options: RequestOptions,
+				_signal: AbortSignal,
+				onEvent: (event: StreamEvent) => void,
+			): Promise<void> {
+				onEvent({
+					type: "tool_call_start",
+					messageId: "assistant-1",
+					block: {
+						id: "tool-1",
+						type: "tool_call",
+						toolCallId: "call-1",
+						name: "",
+						argsText: "",
+						status: "streaming",
+					},
+				});
+				onEvent({
+					type: "tool_call_delta",
+					messageId: "assistant-1",
+					blockId: "tool-1",
+					name: "lookup_weather",
+					argsDelta: '{"q":"weather"}',
+				});
+				onEvent({ type: "finish", reason: "tool_use" });
+			},
+		},
+		storage,
+	});
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	assert.equal(engine.sendMessage("hello"), true);
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "tool stream");
+
+	const toolCall = engine.state.messages[1].blocks.find(
+		(block): block is Extract<ContentBlock, { type: "tool_call" }> => block.type === "tool_call",
+	);
+
+	assert.ok(toolCall);
+	assert.equal(toolCall.name, "lookup_weather");
+	assert.equal(toolCall.argsText, '{"q":"weather"}');
+	assert.equal(toolCall.status, "complete");
+});
+
+test("sendMessage catches plugin onUserSubmit failures and continues", async () => {
+	let providerMessages: Message[] = [];
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(
+				messages: Message[],
+				_options: RequestOptions,
+				_signal: AbortSignal,
+				onEvent: (event: StreamEvent) => void,
+			): Promise<void> {
+				providerMessages = messages;
+				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		storage,
+	});
+	const originalConsoleError = console.error;
+	const loggedErrors: unknown[][] = [];
+	console.error = (...args: unknown[]) => {
+		loggedErrors.push(args);
+	};
+
+	try {
+		engine.registerPlugins([
+			{
+				name: "broken-submit",
+				onUserSubmit: () => {
+					throw new Error("plugin failed");
+				},
+			},
+			{
+				name: "still-runs",
+				onUserSubmit: (message) => {
+					message.meta = { pluginContinued: true };
+				},
+			},
+		]);
+
+		await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+		assert.equal(engine.sendMessage("hello"), true);
+		await waitFor(
+			() => engine.state.generatingMessageId === null && storage.saved.length === 1,
+			"plugin failure stream",
+		);
+	} finally {
+		console.error = originalConsoleError;
+	}
+
+	assert.equal(loggedErrors.length, 1);
+	assert.match(String(loggedErrors[0][0]), /broken-submit/);
+	assert.equal(providerMessages[0].meta?.pluginContinued, true);
+	assert.equal(getText(providerMessages[0]), "hello");
 });
 
 test("setMessages can persist an empty current session", async () => {

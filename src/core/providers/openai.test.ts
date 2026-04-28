@@ -63,7 +63,9 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 		],
 	});
 	const toolDeltaChunk = JSON.stringify({
-		choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: ':"weather"}' } }] } }],
+		choices: [
+			{ delta: { tool_calls: [{ index: 0, function: { name: "lookup_weather", arguments: ':"weather"}' } }] } },
+		],
 	});
 	const usageChunk = JSON.stringify({
 		usage: { prompt_tokens: 10, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 3 } },
@@ -105,6 +107,7 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 	assert.equal(toolStart.block.argsText, '{"q"');
 
 	const toolDelta = findEvent(events, "tool_call_delta");
+	assert.equal(toolDelta.name, "lookup_weather");
 	assert.equal(toolDelta.argsDelta, ':"weather"}');
 
 	assert.deepEqual(findEvent(events, "usage"), { type: "usage", input: 10, output: 4, cacheRead: 3 });

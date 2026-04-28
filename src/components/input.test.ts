@@ -37,11 +37,15 @@ function installDom(): HTMLElement {
 	return dom.window.document.querySelector(".mur-app") as HTMLElement;
 }
 
-function mountInput(plugins: ChatPlugin[] = []): {
+function mountInput(
+	plugins: ChatPlugin[] = [],
+	onSubmit?: (text: string, submissions: string[]) => boolean,
+): {
 	form: HTMLFormElement;
 	input: HTMLTextAreaElement;
 	sendBtn: HTMLButtonElement;
 	submissions: string[];
+	focus: () => void;
 	destroy: () => void;
 } {
 	const container = installDom();
@@ -49,7 +53,11 @@ function mountInput(plugins: ChatPlugin[] = []): {
 	const inputComponent = new Input(
 		{
 			container,
-			onSubmit: (text) => submissions.push(text),
+			onSubmit: (text) => {
+				if (onSubmit) return onSubmit(text, submissions);
+				submissions.push(text);
+				return true;
+			},
 			onStop: () => {},
 		},
 		plugins,
@@ -60,6 +68,7 @@ function mountInput(plugins: ChatPlugin[] = []): {
 		input: container.querySelector(".mur-chat-input") as HTMLTextAreaElement,
 		sendBtn: container.querySelector(".mur-send-btn") as HTMLButtonElement,
 		submissions,
+		focus: () => inputComponent.focus(),
 		destroy: () => inputComponent.destroy(),
 	};
 }
@@ -173,4 +182,55 @@ test("submit refreshes stale text state from programmatic value changes", () => 
 	assert.equal(harness.sendBtn.disabled, true);
 
 	harness.destroy();
+});
+
+test("rejected submissions keep the input text and enabled state", () => {
+	const harness = mountInput([], (text, submissions) => {
+		submissions.push(text);
+		return false;
+	});
+
+	setInputValue(harness.input, "keep me");
+	submit(harness.form);
+
+	assert.deepEqual(harness.submissions, ["keep me"]);
+	assert.equal(harness.input.value, "keep me");
+	assert.equal(harness.sendBtn.disabled, false);
+
+	harness.destroy();
+});
+
+test("destroy cancels a pending focus timeout", () => {
+	const originalSetTimeout = globalThis.setTimeout;
+	const originalClearTimeout = globalThis.clearTimeout;
+	const timeoutId = {} as ReturnType<typeof setTimeout>;
+	let pendingFocus: (() => void) | null = null;
+	let clearedTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	setGlobal("setTimeout", ((handler: TimerHandler) => {
+		pendingFocus = typeof handler === "function" ? handler : () => {};
+		return timeoutId;
+	}) as typeof setTimeout);
+	setGlobal("clearTimeout", ((id?: ReturnType<typeof setTimeout>) => {
+		clearedTimeout = id ?? null;
+		pendingFocus = null;
+	}) as typeof clearTimeout);
+
+	try {
+		const harness = mountInput();
+		let focusCalls = 0;
+		harness.input.focus = () => {
+			focusCalls++;
+		};
+
+		harness.focus();
+		harness.destroy();
+		pendingFocus?.();
+
+		assert.equal(clearedTimeout, timeoutId);
+		assert.equal(focusCalls, 0);
+	} finally {
+		setGlobal("setTimeout", originalSetTimeout);
+		setGlobal("clearTimeout", originalClearTimeout);
+	}
 });

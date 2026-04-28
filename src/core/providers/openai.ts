@@ -178,6 +178,7 @@ export class OpenAIProvider implements ChatProvider {
 								type: "tool_call_delta",
 								messageId: currentMessageId,
 								blockId: activeToolCalls.get(index)!,
+								name: tc.function?.name,
 								argsDelta: tc.function?.arguments || "",
 							});
 						}
