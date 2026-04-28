@@ -1,5 +1,6 @@
 export { ChatEngine, type ChatEngineConfig } from "./core/chat-engine";
 export { OpenAIProvider } from "./core/providers/openai";
+export type { ChatSessions } from "./core/session-manager";
 export { IndexedDBStorage } from "./core/storage/indexed-db";
 export { RemoteStorage, type RemoteStorageOptions } from "./core/storage/remote";
 export type {

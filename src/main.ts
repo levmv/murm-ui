@@ -172,25 +172,25 @@ export class ChatUI {
 			this.sidebarComponent = new Sidebar({
 				container: this.container,
 				onNewChat: () => {
-					void this.engine.createNewSession();
+					void this.engine.sessions.create();
 					this.closeSidebar(true);
 				},
 				onSelectSession: (id) => {
-					void this.engine.switchSession(id);
+					void this.engine.sessions.switch(id);
 					this.closeSidebar(true);
 				},
 				onDeleteSession: (id) => {
-					void this.engine.deleteSession(id);
+					void this.engine.sessions.delete(id);
 				},
 				onLoadMore: () => {
-					void this.engine.loadMoreSessions();
+					void this.engine.sessions.loadMore();
 				},
 				onClose: () => {
 					this.closeSidebar(false);
 				},
 				getSessionHref: (id) => this.router.hrefFor(id),
 			});
-			void this.engine.loadSessionHistory();
+			void this.engine.sessions.loadHistory();
 		}
 	}
 
@@ -215,9 +215,9 @@ export class ChatUI {
 
 		this.router.listen((id) => {
 			if (id) {
-				void this.engine.switchSession(id);
+				void this.engine.sessions.switch(id);
 			} else {
-				void this.engine.createNewSession();
+				void this.engine.sessions.create();
 			}
 		});
 

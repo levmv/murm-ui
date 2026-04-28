@@ -1,16 +1,14 @@
 import { uuidv7 } from "../utils/uuid";
-import { extractPlainText } from "./msg-utils";
+import { cloneMessages, dropEmptyAssistantMessages } from "./msg-utils";
+import { type ChatSessions, SessionManager } from "./session-manager";
 import { Store } from "./store";
 import { applyStreamEventToState } from "./stream-reducer";
 import type {
 	ChatPlugin,
 	ChatProvider,
 	ChatRequestParams,
-	ChatSession,
-	ChatSessionMeta,
 	ChatState,
 	ChatStorage,
-	ContentBlock,
 	Message,
 	ReadonlyChatRequestParams,
 	RequestOptions,
@@ -33,23 +31,16 @@ interface ActiveGeneration {
 
 export class ChatEngine {
 	private store: Store<ChatState>;
+	private readonly sessionManager: SessionManager;
+	public readonly sessions: ChatSessions;
 
 	private provider: ChatProvider;
-	private storage: ChatStorage;
 	private plugins: ChatPlugin[] = [];
 	private requestDefaults: Partial<RequestOptions> = {};
 	private activeGeneration: ActiveGeneration | null = null;
-	private activeSessionMeta: ChatSessionMeta | null = null;
-	private sessionWriteQueues = new Map<string, Promise<void>>();
-	private deletedSessionIds = new Set<string>();
-
-	private isFetchingSessions = false;
-
-	private switchSeq = 0;
 
 	constructor(config: ChatEngineConfig) {
 		this.provider = config.provider;
-		this.storage = config.storage;
 
 		const startingId = config.initialSessionId || uuidv7();
 
@@ -63,9 +54,16 @@ export class ChatEngine {
 			isLoadingSessions: false,
 			error: null,
 		});
+		this.sessionManager = new SessionManager({
+			store: this.store,
+			storage: config.storage,
+			isGenerationActive: () => this.isBusy,
+			stopActiveGeneration: () => this.stopGeneration(),
+		});
+		this.sessions = this.sessionManager;
 
 		if (config.initialSessionId) {
-			void this.loadSession(startingId, "Chat not found. Started a new one.");
+			void this.sessionManager.loadInitial(startingId);
 		}
 	}
 
@@ -102,105 +100,10 @@ export class ChatEngine {
 		this.store.set({ error: null });
 	}
 
-	public async loadSessionHistory() {
-		await this.fetchSessionsPage(false);
-	}
-
-	// Call this when the user scrolls to the bottom of the sidebar
-	public async loadMoreSessions() {
-		await this.fetchSessionsPage(true);
-	}
-
-	public async createNewSession() {
-		if (this.isBusy) await this.stopGeneration();
-		this.activeSessionMeta = null;
-
-		this.store.set({
-			currentSessionId: uuidv7(),
-			messages: [],
-			isLoadingSession: false,
-			error: null,
-		});
-	}
-
-	public async switchSession(id: string) {
-		await this.loadSession(id, "Failed to load chat. Started a new one.");
-	}
-
-	private async loadSession(id: string, failureMessage: string) {
-		if (this.state.currentSessionId === id && !this.state.isLoadingSession) return;
-		if (this.isBusy) await this.stopGeneration();
-
-		const seq = ++this.switchSeq;
-		this.activeSessionMeta = null;
-
-		this.store.set({
-			currentSessionId: id,
-			messages: [],
-			isLoadingSession: true,
-			error: null,
-		});
-
-		try {
-			const session = await this.storage.loadOne(id);
-			if (seq !== this.switchSeq) return; // stale
-
-			// User may have navigated again while this one was loading
-			if (this.state.currentSessionId !== id) return;
-			if (this.deletedSessionIds.has(id)) throw new Error("Chat not found");
-
-			if (!session) throw new Error("Chat not found");
-
-			this.activeSessionMeta = this.toSessionMeta(session);
-			this.store.set({
-				sessions: this.withActiveSessionMeta(this.state.sessions),
-				messages: session ? session.messages : [],
-				isLoadingSession: false,
-			});
-		} catch (error) {
-			console.error(`Failed to load session "${id}"`, error);
-			if (seq !== this.switchSeq) return;
-			if (this.state.currentSessionId !== id) return;
-
-			this.activeSessionMeta = null;
-			this.store.set({
-				messages: [],
-				currentSessionId: uuidv7(),
-				isLoadingSession: false,
-				error: { message: failureMessage },
-			});
-		}
-	}
-
-	public async deleteSession(id: string) {
-		const isCurrent = this.state.currentSessionId === id;
-		this.deletedSessionIds.add(id);
-		this.activeSessionMeta = this.activeSessionMeta?.id === id ? null : this.activeSessionMeta;
-		this.store.set({
-			sessions: this.state.sessions.filter((s) => s.id !== id),
-		});
-
-		try {
-			if (isCurrent && this.isBusy) {
-				await this.stopGeneration();
-			}
-
-			if (isCurrent && this.state.currentSessionId === id) {
-				await this.createNewSession();
-			}
-
-			await this.enqueueSessionWrite(id, async () => {
-				await this.storage.delete(id);
-			});
-		} catch (error) {
-			console.error(`Failed to delete session "${id}"`, error);
-		}
-	}
-
 	public sendMessage(content: string): boolean {
 		if (this.isBusy || this.state.isLoadingSession) return false;
 
-		const currentMessages = this.dropEmptyAssistantMessages(this.state.messages);
+		const currentMessages = dropEmptyAssistantMessages(this.state.messages);
 
 		const userMsg: Message = {
 			id: uuidv7(),
@@ -225,7 +128,7 @@ export class ChatEngine {
 	public editAndResubmit(messageId: string, newContent: string): boolean {
 		if (this.isBusy) return false;
 
-		const currentMessages = this.dropEmptyAssistantMessages(this.state.messages);
+		const currentMessages = dropEmptyAssistantMessages(this.state.messages);
 		const targetIndex = currentMessages.findIndex((m) => m.id === messageId);
 
 		if (targetIndex === -1) return false;
@@ -285,62 +188,8 @@ export class ChatEngine {
 
 	public async destroy() {
 		await this.stopGeneration();
-		if (this.storage.close) {
-			await this.storage.close();
-		}
+		await this.sessionManager.close();
 		this.store.clearAllListeners();
-	}
-
-	private async fetchSessionsPage(append: boolean) {
-		if (this.isFetchingSessions || (append && !this.state.hasMoreSessions)) return;
-
-		this.isFetchingSessions = true;
-		this.store.set({ isLoadingSessions: true });
-
-		try {
-			const sessions = this.state.sessions;
-			const cursor =
-				append && sessions.length > 0
-					? { updatedAt: sessions[sessions.length - 1].updatedAt, id: sessions[sessions.length - 1].id }
-					: undefined;
-
-			const result = await this.storage.loadSessions(20, cursor);
-			const resultItems = this.withoutDeletedSessions(result.items);
-			const nextSessions = append ? [...this.state.sessions, ...resultItems] : resultItems;
-
-			this.store.set({
-				sessions: this.withActiveSessionMeta(nextSessions),
-				hasMoreSessions: result.items.length > 0 ? result.hasMore : false,
-				isLoadingSessions: false,
-			});
-		} catch (error) {
-			console.error("Failed to load sessions", error);
-			this.store.set(
-				this.state.error
-					? { isLoadingSessions: false }
-					: { isLoadingSessions: false, error: { message: "Failed to load chat history." } },
-			);
-		} finally {
-			this.isFetchingSessions = false;
-		}
-	}
-
-	private toSessionMeta(session: ChatSession): ChatSessionMeta {
-		return { id: session.id, title: session.title, updatedAt: session.updatedAt };
-	}
-
-	private withActiveSessionMeta(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
-		sessions = this.withoutDeletedSessions(sessions);
-		const seen = new Set<string>();
-		const deduped = sessions.filter((s) => {
-			if (seen.has(s.id)) return false;
-			seen.add(s.id);
-			return true;
-		});
-
-		if (!this.activeSessionMeta || this.deletedSessionIds.has(this.activeSessionMeta.id)) return deduped;
-		if (deduped.some((session) => session.id === this.activeSessionMeta?.id)) return deduped;
-		return [this.activeSessionMeta, ...deduped];
 	}
 
 	private async startGeneration(contextMessages: Message[]) {
@@ -486,9 +335,9 @@ export class ChatEngine {
 		}
 
 		try {
-			const finalMessages = this.cloneMessages(this.state.messages);
+			const finalMessages = cloneMessages(this.state.messages);
 			const hasError = this.state.error !== null;
-			const saved = await this.persistSessionSnapshot(generation.sessionId, finalMessages);
+			const saved = await this.sessionManager.persistSessionSnapshot(generation.sessionId, finalMessages);
 
 			if (!saved) return;
 
@@ -521,63 +370,7 @@ export class ChatEngine {
 
 	private async persistCurrentSession(): Promise<boolean> {
 		const { currentSessionId, messages } = this.store.get();
-		return await this.persistSessionSnapshot(currentSessionId, this.cloneMessages(messages));
-	}
-
-	private async persistSessionSnapshot(sessionId: string, messages: Message[]): Promise<boolean> {
-		if (this.deletedSessionIds.has(sessionId)) return false;
-
-		const existingMeta = this.state.sessions.find((s) => s.id === sessionId);
-		let title = existingMeta?.title;
-
-		if (!title) {
-			const firstMsg = messages[0];
-			if (firstMsg) {
-				const text = extractPlainText(firstMsg);
-				if (text.trim().length > 0) {
-					title = text.length > 30 ? text.slice(0, 30) + "..." : text;
-				} else if (firstMsg.blocks.some((b) => b.type === "file")) {
-					const fileBlock = firstMsg.blocks.find((b) => b.type === "file") as Extract<ContentBlock, { type: "file" }>;
-					title = `File: ${fileBlock.name || "Upload"}`;
-				} else {
-					title = "New Chat";
-				}
-			} else {
-				title = "Empty Chat";
-			}
-		}
-
-		const updatedAt = Date.now();
-
-		const messagesToSave = this.dropEmptyAssistantMessages(messages);
-		const sessionToSave: ChatSession = {
-			id: sessionId,
-			title,
-			updatedAt,
-			messages: messagesToSave,
-		};
-
-		try {
-			return await this.enqueueSessionWrite(sessionId, async () => {
-				if (this.deletedSessionIds.has(sessionId)) return false;
-				await this.storage.save(sessionToSave);
-
-				if (this.deletedSessionIds.has(sessionId)) return false;
-
-				const sessionMeta = { id: sessionId, title, updatedAt };
-				if (this.state.currentSessionId === sessionId) {
-					this.activeSessionMeta = sessionMeta;
-				}
-				this.store.set({
-					sessions: [sessionMeta, ...this.state.sessions.filter((s) => s.id !== sessionId)],
-				});
-
-				return true;
-			});
-		} catch (error) {
-			console.error(`Failed to persist session "${sessionId}"`, error);
-			return false;
-		}
+		return await this.sessionManager.persistSessionSnapshot(currentSessionId, cloneMessages(messages));
 	}
 
 	private async triggerAutoTitle(
@@ -586,7 +379,7 @@ export class ChatEngine {
 		provider: ChatProvider,
 		requestDefaults: Partial<RequestOptions>,
 	) {
-		if (this.deletedSessionIds.has(sessionId)) return;
+		if (this.sessionManager.isDeleted(sessionId)) return;
 
 		try {
 			const controller = new AbortController();
@@ -598,67 +391,11 @@ export class ChatEngine {
 				controller.signal,
 			);
 			if (!smartTitle) return;
-			if (this.deletedSessionIds.has(sessionId)) return;
+			if (this.sessionManager.isDeleted(sessionId)) return;
 
-			await this.enqueueSessionWrite(sessionId, async () => {
-				if (this.deletedSessionIds.has(sessionId)) return;
-
-				if (this.storage.updateMetadata) {
-					await this.storage.updateMetadata(sessionId, { title: smartTitle });
-				}
-
-				if (this.deletedSessionIds.has(sessionId)) return;
-				if (!this.state.sessions.find((s) => s.id === sessionId)) return;
-
-				this.store.set({
-					sessions: this.state.sessions.map((s) => (s.id === sessionId ? { ...s, title: smartTitle } : s)),
-				});
-				if (this.state.currentSessionId === sessionId && this.activeSessionMeta?.id === sessionId) {
-					this.activeSessionMeta = { ...this.activeSessionMeta, title: smartTitle };
-				}
-			});
+			await this.sessionManager.updateTitle(sessionId, smartTitle);
 		} catch (e) {
 			console.error("Failed to auto-generate title", e);
 		}
-	}
-
-	private dropEmptyAssistantMessages(messages: Message[]): Message[] {
-		return messages.filter((m) => !(m.role === "assistant" && m.blocks.length === 0));
-	}
-
-	private cloneMessages(messages: Message[]): Message[] {
-		return messages.map((message) => {
-			const cloned: Message = {
-				...message,
-				blocks: message.blocks.map((block) => ({ ...block })),
-			};
-			if (message.meta) {
-				cloned.meta = { ...message.meta };
-			}
-			return cloned;
-		});
-	}
-
-	private enqueueSessionWrite<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-		const previous = this.sessionWriteQueues.get(sessionId) ?? Promise.resolve();
-		const queued = previous.catch(() => undefined).then(operation);
-		const tracked = queued.then(
-			() => undefined,
-			() => undefined,
-		);
-
-		this.sessionWriteQueues.set(sessionId, tracked);
-		void tracked.finally(() => {
-			if (this.sessionWriteQueues.get(sessionId) === tracked) {
-				this.sessionWriteQueues.delete(sessionId);
-			}
-		});
-
-		return queued;
-	}
-
-	private withoutDeletedSessions(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
-		if (this.deletedSessionIds.size === 0) return sessions;
-		return sessions.filter((session) => !this.deletedSessionIds.has(session.id));
 	}
 }

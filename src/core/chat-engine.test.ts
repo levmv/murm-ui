@@ -115,7 +115,7 @@ function replyingProvider(reply: string): ChatProvider {
 	};
 }
 
-test("loadSessionHistory lists stored sessions while a clean URL starts a blank chat", async () => {
+test("sessions.loadHistory lists stored sessions while a clean URL starts a blank chat", async () => {
 	const older = {
 		id: "older",
 		title: "Older chat",
@@ -136,7 +136,7 @@ test("loadSessionHistory lists stored sessions while a clean URL starts a blank 
 	assert.equal(engine.state.isLoadingSessions, false);
 	assert.equal(engine.state.sessions.length, 0);
 
-	void engine.loadSessionHistory();
+	void engine.sessions.loadHistory();
 	assert.equal(engine.state.isLoadingSessions, true);
 	await waitFor(() => !engine.state.isLoadingSessions, "session history load");
 
@@ -180,7 +180,7 @@ test("initial load can open a session that is not in the first sidebar page", as
 		["deep-linked"],
 	);
 
-	void engine.loadSessionHistory();
+	void engine.sessions.loadHistory();
 	await waitFor(() => !engine.state.isLoadingSessions, "deep-linked sidebar load");
 	assert.deepEqual(
 		engine.state.sessions.map((session) => session.id),
@@ -227,7 +227,7 @@ test("failed session switch starts a blank chat with a fresh internal id", async
 	const storage = new MemoryStorage([latest]);
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
-	await engine.switchSession("missing-chat");
+	await engine.sessions.switch("missing-chat");
 
 	const fallbackId = engine.state.currentSessionId;
 	assert.notEqual(fallbackId, "missing-chat");
@@ -259,7 +259,7 @@ test("history loading failure does not block a routed session", async () => {
 
 	try {
 		const engine = new ChatEngine({ provider: replyingProvider("unused"), storage, initialSessionId: "url-chat" });
-		void engine.loadSessionHistory();
+		void engine.sessions.loadHistory();
 
 		await waitFor(
 			() => !engine.state.isLoadingSession && !engine.state.isLoadingSessions,
@@ -324,7 +324,7 @@ test("generation save completion does not disturb a session switched during pers
 	await saveStartedPromise;
 	await waitFor(() => engine.state.generatingMessageId === null, "generation indicator cleared");
 
-	await engine.switchSession(otherSession.id);
+	await engine.sessions.switch(otherSession.id);
 	assert.equal(engine.state.currentSessionId, otherSession.id);
 	assert.equal(getText(engine.state.messages[0]), "other question");
 
@@ -430,7 +430,7 @@ test("deleting a session prevents pending save completions from reinserting it",
 	await saveStartedPromise;
 	await waitFor(() => engine.state.generatingMessageId === null, "generation indicator cleared");
 
-	const deletePromise = engine.deleteSession(sessionId);
+	const deletePromise = engine.sessions.delete(sessionId);
 	assert.notEqual(engine.state.currentSessionId, sessionId);
 	assert.equal(
 		engine.state.sessions.some((session) => session.id === sessionId),
@@ -508,7 +508,7 @@ test("auto-title completion is scoped to the generated session after switching a
 	await saveStartedPromise;
 	await waitFor(() => engine.state.generatingMessageId === null, "generation indicator cleared");
 
-	await engine.switchSession(otherSession.id);
+	await engine.sessions.switch(otherSession.id);
 	releaseSave();
 	await titleStartedPromise;
 
@@ -559,7 +559,7 @@ test("deleting a session prevents pending auto-title completion from recreating 
 	engine.sendMessage("hello");
 	await titleStartedPromise;
 
-	const deletePromise = engine.deleteSession(sessionId);
+	const deletePromise = engine.sessions.delete(sessionId);
 	assert.notEqual(engine.state.currentSessionId, sessionId);
 
 	await deletePromise;
@@ -692,7 +692,7 @@ test("sendMessage works while initial history is loading", async () => {
 		},
 		storage,
 	});
-	void engine.loadSessionHistory();
+	void engine.sessions.loadHistory();
 	engine.registerPlugins([
 		{
 			name: "submit-spy",
@@ -1206,7 +1206,7 @@ test("deleting the active session lets deletion win over the aborted generation 
 
 	engine.sendMessage("hello");
 	await streamStartedPromise;
-	const deletePromise = engine.deleteSession("active-session");
+	const deletePromise = engine.sessions.delete("active-session");
 	await waitFor(() => engine.state.currentSessionId !== "active-session", "active delete local navigation");
 	await deletePromise;
 
