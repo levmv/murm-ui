@@ -1,12 +1,22 @@
 import type { ChatSession, ChatSessionMeta, ChatStorage, PaginatedSessions } from "../types";
 
+export interface RemoteStorageOptions {
+	/**
+	 * Limits the number of messages sent during a save() operation.
+	 * WARNING: If you use this, your backend must upsert messages rather than
+	 * overwrite the entire chat record when the partial save header is present.
+	 */
+	saveLimit?: number;
+}
+
 export class RemoteStorage implements ChatStorage {
 	constructor(
 		private baseUrl: string,
 		private getToken: () => string | null,
+		private options?: RemoteStorageOptions,
 	) {}
 
-	private get headers() {
+	private get headers(): Record<string, string> {
 		const token = this.getToken();
 		return {
 			"Content-Type": "application/json",
@@ -41,12 +51,32 @@ export class RemoteStorage implements ChatStorage {
 	}
 
 	async save(session: ChatSession): Promise<void> {
+		const limit = this.getSaveLimit();
+		let payload = session;
+		const headers = this.headers;
+
+		if (limit && session.messages.length > limit) {
+			payload = {
+				...session,
+				messages: session.messages.slice(-limit),
+			};
+			headers["X-Murm-Save-Mode"] = "partial";
+		}
+
 		const res = await fetch(this.getPath(`/${encodeURIComponent(session.id)}`), {
 			method: "PUT",
-			headers: this.headers,
-			body: JSON.stringify(session),
+			headers,
+			body: JSON.stringify(payload),
 		});
 		if (!res.ok) throw new Error("Failed to save chat");
+	}
+
+	private getSaveLimit(): number | null {
+		const limit = this.options?.saveLimit;
+		if (typeof limit !== "number" || !Number.isFinite(limit)) return null;
+
+		const wholeLimit = Math.floor(limit);
+		return wholeLimit > 0 ? wholeLimit : null;
 	}
 
 	async updateMetadata(id: string, meta: Partial<ChatSessionMeta>): Promise<void> {

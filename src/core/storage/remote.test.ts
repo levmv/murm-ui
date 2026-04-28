@@ -29,6 +29,17 @@ function session(): ChatSession {
 	};
 }
 
+function sessionWithMessages(count: number): ChatSession {
+	return {
+		...session(),
+		messages: Array.from({ length: count }, (_, index) => ({
+			id: `msg-${index + 1}`,
+			role: "user",
+			blocks: [{ id: `text-${index + 1}`, type: "text", text: `message ${index + 1}` }],
+		})),
+	};
+}
+
 test("loadSessions sends pagination params and auth header", async () => {
 	const { calls } = mockJsonFetch({ items: [], hasMore: false });
 	const storage = new RemoteStorage("https://example.test", () => "token-1");
@@ -91,6 +102,7 @@ test("save, updateMetadata, and delete use the expected endpoints and methods", 
 	assert.equal(calls[0].url, "https://example.test/api/chats/chat-1");
 	assert.equal(calls[0].init.method, "PUT");
 	assert.deepEqual(JSON.parse(calls[0].init.body as string), chat);
+	assert.equal((calls[0].init.headers as Record<string, string>)["X-Murm-Save-Mode"], undefined);
 
 	assert.equal(calls[1].url, "https://example.test/api/chats/chat-1/meta");
 	assert.equal(calls[1].init.method, "POST");
@@ -98,6 +110,50 @@ test("save, updateMetadata, and delete use the expected endpoints and methods", 
 
 	assert.equal(calls[2].url, "https://example.test/api/chats/chat-1");
 	assert.equal(calls[2].init.method, "DELETE");
+});
+
+test("saveLimit sends only the latest messages with a partial save header", async () => {
+	const { calls } = mockJsonFetch({ success: true });
+	const storage = new RemoteStorage("https://example.test", () => "token-1", { saveLimit: 2 });
+	const chat = sessionWithMessages(4);
+
+	await storage.save(chat);
+
+	assert.equal(calls[0].init.method, "PUT");
+	assert.deepEqual(
+		JSON.parse(calls[0].init.body as string).messages.map((message: { id: string }) => message.id),
+		["msg-3", "msg-4"],
+	);
+	assert.deepEqual(calls[0].init.headers, {
+		"Content-Type": "application/json",
+		Authorization: "Bearer token-1",
+		"X-Murm-Save-Mode": "partial",
+	});
+});
+
+test("saveLimit does not slice or add partial header when the session is within the limit", async () => {
+	const { calls } = mockJsonFetch({ success: true });
+	const storage = new RemoteStorage("https://example.test", () => null, { saveLimit: 2 });
+	const chat = sessionWithMessages(2);
+
+	await storage.save(chat);
+
+	assert.deepEqual(JSON.parse(calls[0].init.body as string), chat);
+	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
+});
+
+test("invalid saveLimit values are disabled", async () => {
+	const { calls } = mockJsonFetch({ success: true });
+	const chat = sessionWithMessages(3);
+
+	await new RemoteStorage("https://example.test", () => null, { saveLimit: 0 }).save(chat);
+	await new RemoteStorage("https://example.test", () => null, { saveLimit: -1 }).save(chat);
+	await new RemoteStorage("https://example.test", () => null, { saveLimit: Number.POSITIVE_INFINITY }).save(chat);
+
+	for (const call of calls) {
+		assert.deepEqual(JSON.parse(call.init.body as string), chat);
+		assert.deepEqual(call.init.headers, { "Content-Type": "application/json" });
+	}
 });
 
 test("encodes chat ids as remote URL path segments", async () => {

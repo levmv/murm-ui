@@ -1,7 +1,7 @@
 export { ChatEngine, type ChatEngineConfig } from "./core/chat-engine";
 export { OpenAIProvider } from "./core/providers/openai";
 export { IndexedDBStorage } from "./core/storage/indexed-db";
-export { RemoteStorage } from "./core/storage/remote";
+export { RemoteStorage, type RemoteStorageOptions } from "./core/storage/remote";
 export type {
 	ActionButtonDef,
 	ChatPlugin,

@@ -109,6 +109,23 @@ Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-th
 *   **Body:** Same JSON shape as the Get A Chat response.
 *   **Response (200 OK):** `{ "success": true }`
 
+> **Optimization: `saveLimit`**
+> By default, `RemoteStorage` sends the entire message array every time the chat is saved. This works well for simple backends that store a whole chat document:
+> ```ts
+> new RemoteStorage("/api", getToken)
+> ```
+>
+> For long chats or slower connections, you can limit saves to the most recent messages:
+> ```ts
+> new RemoteStorage("/api", getToken, { saveLimit: 20 })
+> ```
+>
+> When messages are sliced, `RemoteStorage` still sends the same JSON shape, but adds `X-Murm-Save-Mode: partial`. If that header is absent, treat the request as a complete chat replacement.
+>
+> If you use partial saves, your backend must not blindly overwrite the stored chat. Instead:
+> 1. Look at the `id` of the first message in the incoming payload.
+> 2. Upsert all incoming messages.
+> 3. Delete stored messages for this chat that have an `id` newer than the first payload message, but are not present in the payload. This cleans up edited or aborted response tails.
 
 **4. Delete A Chat**
 *   **DELETE** `/api/chats/:id`
