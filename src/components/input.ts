@@ -13,11 +13,12 @@ export class Input {
 	private input: HTMLTextAreaElement;
 	private sendBtn: HTMLButtonElement;
 	private isGenerating = false;
+	private hasSubmittableText = false;
 	private shouldRestoreFocus = false;
 
 	private supportsFieldSizing = typeof CSS !== "undefined" && CSS.supports("field-sizing", "content");
 
-	private onInputBound = this.adjustHeight.bind(this);
+	private onInputBound = this.handleInput.bind(this);
 	private onKeydownBound = this.handleKeydown.bind(this);
 	private onSubmitBound = this.handleFormSubmit.bind(this);
 
@@ -41,6 +42,8 @@ export class Input {
 		}
 
 		this.bindEvents();
+		this.refreshTextState();
+		this.syncSubmitState();
 	}
 
 	public focus() {
@@ -75,6 +78,9 @@ export class Input {
 		if (!this.supportsFieldSizing) {
 			this.adjustHeight();
 		}
+		if (this.refreshTextState()) {
+			this.syncSubmitState();
+		}
 	}
 
 	public destroy() {
@@ -84,11 +90,18 @@ export class Input {
 	}
 
 	private bindEvents() {
-		if (!this.supportsFieldSizing) {
-			this.input.addEventListener("input", this.onInputBound);
-		}
+		this.input.addEventListener("input", this.onInputBound);
 		this.input.addEventListener("keydown", this.onKeydownBound);
 		this.form.addEventListener("submit", this.onSubmitBound);
+	}
+
+	private handleInput() {
+		if (!this.supportsFieldSizing) {
+			this.adjustHeight();
+		}
+		if (this.refreshTextState()) {
+			this.syncSubmitState();
+		}
 	}
 
 	private handleKeydown(e: KeyboardEvent) {
@@ -116,28 +129,59 @@ export class Input {
 			return;
 		}
 
-		if (this.isSubmitBlocked()) return;
-
+		const textStateChanged = this.refreshTextState();
 		const text = this.input.value.trim();
-		const hasPluginData = this.plugins.some((p) => p.hasPendingData?.());
 
-		if (!text && !hasPluginData) return;
+		if (!this.canSubmit()) {
+			if (textStateChanged) {
+				this.syncSubmitState();
+			}
+			return;
+		}
 
 		this.shouldRestoreFocus = true;
 
 		this.input.value = "";
+		this.refreshTextState();
 		if (!this.supportsFieldSizing) {
 			this.adjustHeight();
 		}
 
+		this.syncSubmitState();
 		this.props.onSubmit(text);
 	}
 
 	private syncSubmitState(isLoadingSession = this.input.disabled && !this.isGenerating) {
-		this.sendBtn.disabled = isLoadingSession || (!this.isGenerating && this.isSubmitBlocked());
+		if (isLoadingSession) {
+			this.sendBtn.disabled = true;
+			return;
+		}
+
+		if (this.isGenerating) {
+			this.sendBtn.disabled = false;
+			return;
+		}
+
+		this.sendBtn.disabled = !this.canSubmit();
+	}
+
+	private canSubmit(): boolean {
+		return !this.isSubmitBlocked() && (this.hasSubmittableText || this.hasPendingPluginData());
 	}
 
 	private isSubmitBlocked(): boolean {
 		return this.plugins.some((p) => p.isSubmitBlocked?.());
+	}
+
+	private hasPendingPluginData(): boolean {
+		return this.plugins.some((p) => p.hasPendingData?.());
+	}
+
+	private refreshTextState(): boolean {
+		const hasSubmittableText = /\S/.test(this.input.value);
+		if (hasSubmittableText === this.hasSubmittableText) return false;
+
+		this.hasSubmittableText = hasSubmittableText;
+		return true;
 	}
 }
