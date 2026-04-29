@@ -17,7 +17,12 @@ function stateWith(messages: Message[]): ChatState {
 }
 
 test("applyStreamEventToState appends text and reasoning deltas to the pending message", () => {
-	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [] };
+	const assistant: Message = {
+		id: "assistant-1",
+		role: "assistant",
+		blocks: [],
+		meta: { ephemeral: true, local: true },
+	};
 	const state = stateWith([assistant]);
 
 	applyStreamEventToState(state, assistant.id, {
@@ -50,6 +55,39 @@ test("applyStreamEventToState appends text and reasoning deltas to the pending m
 			encryptedText: "hidden",
 		},
 	]);
+	assert.deepEqual(state.messages[0].meta, { local: true });
+});
+
+test("applyStreamEventToState keeps pending messages ephemeral for empty deltas", () => {
+	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], meta: { ephemeral: true } };
+	const state = stateWith([assistant]);
+
+	applyStreamEventToState(state, assistant.id, {
+		type: "reasoning_delta",
+		messageId: assistant.id,
+		blockId: "reasoning-1",
+		delta: "",
+		encrypted: true,
+	});
+
+	assert.equal(state.messages[0].meta?.ephemeral, true);
+});
+
+test("applyStreamEventToState preserves ephemeral during message_start metadata merge", () => {
+	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], meta: { ephemeral: true } };
+	const state = stateWith([assistant]);
+
+	applyStreamEventToState(state, assistant.id, {
+		type: "message_start",
+		message: {
+			id: "provider-message",
+			role: "assistant",
+			blocks: [],
+			meta: { ephemeral: false, providerMessage: true },
+		},
+	});
+
+	assert.deepEqual(state.messages[0].meta, { ephemeral: true, providerMessage: true });
 });
 
 test("applyStreamEventToState updates tool calls and finalizes streaming statuses", () => {

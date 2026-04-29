@@ -1,5 +1,5 @@
 import { uuidv7 } from "../utils/uuid";
-import { cloneMessages, dropEmptyAssistantMessages } from "./msg-utils";
+import { cloneMessages, dropEphemeralMessages } from "./msg-utils";
 import { type ChatSessions, SessionManager } from "./session-manager";
 import { Store } from "./store";
 import { applyStreamEventToState } from "./stream-reducer";
@@ -103,7 +103,7 @@ export class ChatEngine {
 	public sendMessage(content: string): boolean {
 		if (this.isBusy || this.state.isLoadingSession) return false;
 
-		const currentMessages = dropEmptyAssistantMessages(this.state.messages);
+		const currentMessages = dropEphemeralMessages(this.state.messages);
 
 		const userMsg: Message = {
 			id: uuidv7(),
@@ -128,7 +128,7 @@ export class ChatEngine {
 	public editAndResubmit(messageId: string, newContent: string): boolean {
 		if (this.isBusy) return false;
 
-		const currentMessages = dropEmptyAssistantMessages(this.state.messages);
+		const currentMessages = dropEphemeralMessages(this.state.messages);
 		const targetIndex = currentMessages.findIndex((m) => m.id === messageId);
 
 		if (targetIndex === -1) return false;
@@ -211,6 +211,7 @@ export class ChatEngine {
 			id: pendingId,
 			role: "assistant",
 			blocks: [],
+			meta: { ephemeral: true },
 		};
 
 		const updatedMessages = [...contextMessages, assistantMsg];
@@ -221,16 +222,9 @@ export class ChatEngine {
 			error: null,
 		});
 
-		// Strip out dead UI messages and ephemeral local messages
-		const validContext = contextMessages.filter((msg) => {
-			if (msg.meta?.ephemeral) return false;
-			if (msg.role === "assistant" && msg.blocks.length === 0) return false;
-			return true;
-		});
-
 		let wasAborted = false;
 		try {
-			const payloadParams = await this.prepareRequestParams(validContext, signal);
+			const payloadParams = await this.prepareRequestParams(contextMessages, signal);
 			if (signal.aborted) {
 				wasAborted = true;
 				return;
@@ -313,6 +307,8 @@ export class ChatEngine {
 			}
 		}
 
+		payloadParams.messages = dropEphemeralMessages(payloadParams.messages);
+
 		return payloadParams;
 	}
 
@@ -322,7 +318,7 @@ export class ChatEngine {
 		this.activeGeneration = null;
 
 		if (wasAborted) {
-			this.removeEmptyAbortedMessage(pendingId);
+			this.removeAbortedEphemeralMessage(pendingId);
 		}
 
 		if (this.state.generatingMessageId === pendingId) {
@@ -331,6 +327,7 @@ export class ChatEngine {
 
 		try {
 			const finalMessages = cloneMessages(this.state.messages);
+			const persistentMessages = dropEphemeralMessages(finalMessages);
 			const hasError = this.state.error !== null;
 			const saved = await this.sessionManager.persistSessionSnapshot(generation.sessionId, finalMessages);
 
@@ -338,12 +335,14 @@ export class ChatEngine {
 
 			// Auto-title trigger
 			if (!hasError && !wasAborted && generation.provider.generateTitle) {
-				const assistantRepliesCount = finalMessages.filter((m) => m.role === "assistant" && m.blocks.length > 0).length;
+				const assistantRepliesCount = persistentMessages.filter(
+					(m) => m.role === "assistant" && m.blocks.length > 0,
+				).length;
 
 				if (assistantRepliesCount === 1) {
 					void this.triggerAutoTitle(
 						generation.sessionId,
-						finalMessages,
+						persistentMessages,
 						generation.provider,
 						generation.requestDefaults,
 					);
@@ -354,9 +353,9 @@ export class ChatEngine {
 		}
 	}
 
-	private removeEmptyAbortedMessage(pendingId: string): void {
+	private removeAbortedEphemeralMessage(pendingId: string): void {
 		const pendingMessage = this.state.messages.find((m) => m.id === pendingId);
-		if (!pendingMessage || pendingMessage.blocks.length > 0) return;
+		if (!pendingMessage?.meta?.ephemeral) return;
 
 		this.store.set({
 			messages: this.state.messages.filter((m) => m.id !== pendingId),

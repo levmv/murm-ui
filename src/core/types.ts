@@ -53,7 +53,7 @@ export interface Message {
 	role: Role;
 	blocks: ContentBlock[];
 	meta?: {
-		// Used to prevent this message from being sent to the LLM
+		// Used to prevent this message from being sent to the LLM or persisted
 		ephemeral?: boolean;
 		// Escape hatch for plugin developers to store custom state
 		[key: string]: unknown;

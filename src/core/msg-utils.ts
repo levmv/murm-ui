@@ -8,8 +8,8 @@ export function extractPlainText(msg: Message): string {
 		.join("\n\n");
 }
 
-export function dropEmptyAssistantMessages(messages: Message[]): Message[] {
-	return messages.filter((m) => !(m.role === "assistant" && m.blocks.length === 0));
+export function dropEphemeralMessages(messages: Message[]): Message[] {
+	return messages.filter((m) => !m.meta?.ephemeral);
 }
 
 export function cloneMessages(messages: Message[]): Message[] {

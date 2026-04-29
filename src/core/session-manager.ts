@@ -1,5 +1,5 @@
 import { uuidv7 } from "../utils/uuid";
-import { dropEmptyAssistantMessages, extractPlainText } from "./msg-utils";
+import { dropEphemeralMessages, extractPlainText } from "./msg-utils";
 import type { Store } from "./store";
 import type { ChatSession, ChatSessionMeta, ChatState, ChatStorage, ContentBlock, Message } from "./types";
 
@@ -93,15 +93,16 @@ export class SessionManager implements ChatSessions {
 	public async persistSessionSnapshot(sessionId: string, messages: Message[]): Promise<boolean> {
 		if (this.deletedSessionIds.has(sessionId)) return false;
 
+		const messagesToSave = dropEphemeralMessages(messages);
 		const existingMeta = this.state.sessions.find((s) => s.id === sessionId);
-		const title = existingMeta?.title ?? this.createFallbackTitle(messages);
+		const title = existingMeta?.title ?? this.createFallbackTitle(messagesToSave);
 		const updatedAt = Date.now();
 
 		const sessionToSave: ChatSession = {
 			id: sessionId,
 			title,
 			updatedAt,
-			messages: dropEmptyAssistantMessages(messages),
+			messages: messagesToSave,
 		};
 
 		try {

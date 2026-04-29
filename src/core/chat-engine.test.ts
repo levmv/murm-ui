@@ -288,6 +288,7 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(getText(state.messages[0]), "hello");
 	assert.equal(state.messages[1].role, "assistant");
 	assert.equal(getText(state.messages[1]), "hello back");
+	assert.equal(state.messages[1].meta?.ephemeral, undefined);
 	assert.equal(storage.saved[0].title, "hello");
 	assert.equal(state.sessions[0].id, state.currentSessionId);
 });
@@ -635,6 +636,8 @@ test("sendMessage skips empty encrypted reasoning payloads", async () => {
 	assert.equal(reasoningBlock.encrypted, true);
 	assert.equal(reasoningBlock.text, "");
 	assert.equal(reasoningBlock.encryptedText, undefined);
+	assert.equal(engine.state.messages[1].meta?.ephemeral, true);
+	assert.equal(storage.saved[0].messages.length, 1);
 });
 
 test("failed generation keeps empty assistant message in state but omits it from storage", async () => {
@@ -656,6 +659,7 @@ test("failed generation keeps empty assistant message in state but omits it from
 	assert.equal(state.messages.length, 2);
 	assert.equal(state.messages[1].role, "assistant");
 	assert.deepEqual(state.messages[1].blocks, []);
+	assert.equal(state.messages[1].meta?.ephemeral, true);
 	assert.deepEqual(state.error, { message: "Provider failed", id: state.messages[1].id });
 	assert.deepEqual(storage.saved[0].messages, [state.messages[0]]);
 });
@@ -1066,7 +1070,21 @@ test("setMessages can persist an empty current session", async () => {
 	assert.equal(engine.state.sessions[0].title, "Empty Chat");
 });
 
-test("setMessages omits empty assistant messages when saving", async () => {
+test("setMessages omits ephemeral messages when saving", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	const ephemeralAssistant: Message = { id: "assistant-1", role: "assistant", blocks: [], meta: { ephemeral: true } };
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+
+	const saved = await engine.setMessages([ephemeralAssistant]);
+
+	assert.equal(saved, true);
+	assert.equal(storage.saved.length, 1);
+	assert.deepEqual(storage.saved[0].messages, []);
+});
+
+test("setMessages preserves non-ephemeral empty assistant messages when saving", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
 	const emptyAssistant: Message = { id: "assistant-1", role: "assistant", blocks: [] };
@@ -1077,7 +1095,7 @@ test("setMessages omits empty assistant messages when saving", async () => {
 
 	assert.equal(saved, true);
 	assert.equal(storage.saved.length, 1);
-	assert.deepEqual(storage.saved[0].messages, []);
+	assert.deepEqual(storage.saved[0].messages, [emptyAssistant]);
 });
 
 test("plugins can add user message data and patch request options", async () => {
@@ -1085,6 +1103,12 @@ test("plugins can add user message data and patch request options", async () => 
 	let providerOptions: RequestOptions = {};
 	let pluginInputMessageFrozen = true;
 	let pluginInputBlocksFrozen = true;
+	const pluginEphemeral: Message = {
+		id: "plugin-ephemeral",
+		role: "assistant",
+		blocks: [],
+		meta: { ephemeral: true },
+	};
 	const plugin: ChatPlugin = {
 		name: "request-shaper",
 		onUserSubmit: (message) => {
@@ -1094,7 +1118,13 @@ test("plugins can add user message data and patch request options", async () => 
 			assert.equal(params.messages[0].role, "user");
 			pluginInputMessageFrozen = Object.isFrozen(params.messages[0]);
 			pluginInputBlocksFrozen = Object.isFrozen(params.messages[0].blocks);
-			return { options: { temperature: 0.2 } };
+			const messages: Message[] = params.messages.map((message) => ({
+				id: message.id,
+				role: message.role,
+				blocks: message.blocks.map((block) => ({ ...block })) as Message["blocks"],
+				...(message.meta ? { meta: { ...message.meta } } : {}),
+			}));
+			return { messages: [...messages, pluginEphemeral], options: { temperature: 0.2 } };
 		},
 	};
 	const provider: ChatProvider = {
@@ -1122,6 +1152,10 @@ test("plugins can add user message data and patch request options", async () => 
 	assert.equal(providerOptions.temperature, 0.2);
 	assert.equal(getText(providerMessages[0]), "hello");
 	assert.ok(providerMessages[0].blocks.some((block) => block.type === "file" && block.id === "plugin-file"));
+	assert.equal(
+		providerMessages.some((message) => message.id === pluginEphemeral.id),
+		false,
+	);
 	assert.equal(pluginInputMessageFrozen, false);
 	assert.equal(pluginInputBlocksFrozen, false);
 	assert.equal(Object.isFrozen(engine.state.messages[0]), false);

@@ -1,5 +1,13 @@
 import type { ChatState, ContentBlock, Message, StreamEvent } from "./types";
 
+function clearEphemeralFlag(msg: Message): void {
+	if (!msg.meta?.ephemeral) return;
+
+	const meta = { ...msg.meta };
+	delete meta.ephemeral;
+	msg.meta = Object.keys(meta).length > 0 ? meta : undefined;
+}
+
 export function applyStreamEventToState(state: ChatState, pendingId: string, event: StreamEvent): void {
 	let msg: Message | undefined = state.messages[state.messages.length - 1];
 	if (msg?.id !== pendingId) {
@@ -11,7 +19,11 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 		case "message_start":
 			// We already pushed a placeholder. We can optionally merge metadata.
 			if (event.message.meta) {
+				const keepEphemeral = msg.meta?.ephemeral === true;
 				msg.meta = { ...msg.meta, ...event.message.meta };
+				if (keepEphemeral) {
+					msg.meta.ephemeral = true;
+				}
 			}
 			break;
 
@@ -22,6 +34,7 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 				msg.blocks.push(tb);
 			}
 			tb.text += event.delta;
+			if (event.delta.length > 0) clearEphemeralFlag(msg);
 			break;
 		}
 
@@ -39,11 +52,13 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 			} else {
 				rb.text += event.delta;
 			}
+			if (event.delta.length > 0) clearEphemeralFlag(msg);
 			break;
 		}
 
 		case "tool_call_start":
 			msg.blocks.push(event.block);
+			clearEphemeralFlag(msg);
 			break;
 
 		case "tool_call_delta": {
@@ -52,6 +67,7 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 				if (event.name !== undefined) tcb.name = event.name;
 				if (event.argsDelta) tcb.argsText += event.argsDelta;
 				if (event.status) tcb.status = event.status;
+				if (event.name !== undefined || event.argsDelta || event.status) clearEphemeralFlag(msg);
 			}
 			break;
 		}
@@ -59,6 +75,7 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 		case "tool_result":
 		case "artifact":
 			msg.blocks.push(event.block);
+			clearEphemeralFlag(msg);
 			break;
 		case "finish": {
 			const finalStatus = event.reason === "error" || event.reason === "aborted" ? "error" : "complete";
