@@ -64,7 +64,7 @@ Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-th
 
 ### Remote Storage API
 
-`RemoteStorage` expects these endpoints. It sends `Authorization: Bearer <token>` when the token callback returns a value.
+`RemoteStorage` takes the API root as its first argument. For the endpoints below, use `new RemoteStorage("/api", getToken)`. It sends `Authorization: Bearer <token>` when the token callback returns a value.
 
 **1. List Chats - Cursor Paginated**
 * **GET** `/api/chats?limit=20&cursor=1710629000000&cursorId=chat-5`

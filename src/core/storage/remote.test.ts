@@ -42,7 +42,7 @@ function sessionWithMessages(count: number): ChatSession {
 
 test("loadSessions sends pagination params and auth header", async () => {
 	const { calls } = mockJsonFetch({ items: [], hasMore: false });
-	const storage = new RemoteStorage("https://example.test", () => "token-1");
+	const storage = new RemoteStorage("https://example.test/api", () => "token-1");
 
 	const result = await storage.loadSessions(20, { updatedAt: 123, id: "chat-1" });
 
@@ -59,21 +59,23 @@ test("loadSessions sends pagination params and auth header", async () => {
 	});
 });
 
-test("supports empty and relative base URLs", async () => {
+test("supports empty and relative API root URLs", async () => {
 	const { calls } = mockJsonFetch({ items: [], hasMore: false });
 
 	await new RemoteStorage("", () => null).loadSessions(5);
-	await new RemoteStorage("/storage", () => null).loadSessions(5);
-	await new RemoteStorage("storage", () => null).loadSessions(5);
+	await new RemoteStorage("/api", () => null).loadSessions(5);
+	await new RemoteStorage("api", () => null).loadSessions(5);
+	await new RemoteStorage("/api/", () => null).loadSessions(5);
 
-	assert.equal(calls[0].url, "/api/chats?limit=5");
-	assert.equal(calls[1].url, "/storage/api/chats?limit=5");
-	assert.equal(calls[2].url, "storage/api/chats?limit=5");
+	assert.equal(calls[0].url, "/chats?limit=5");
+	assert.equal(calls[1].url, "/api/chats?limit=5");
+	assert.equal(calls[2].url, "api/chats?limit=5");
+	assert.equal(calls[3].url, "/api/chats?limit=5");
 });
 
 test("requests omit Authorization when no token is available", async () => {
 	const { calls } = mockJsonFetch({ items: [], hasMore: false });
-	const storage = new RemoteStorage("https://example.test", () => null);
+	const storage = new RemoteStorage("https://example.test/api", () => null);
 
 	await storage.loadSessions(10);
 
@@ -81,7 +83,7 @@ test("requests omit Authorization when no token is available", async () => {
 });
 
 test("loadOne returns null for missing chats and throws on other failures", async () => {
-	const storage = new RemoteStorage("https://example.test", () => null);
+	const storage = new RemoteStorage("https://example.test/api", () => null);
 
 	globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
 	assert.equal(await storage.loadOne("missing"), null);
@@ -92,7 +94,7 @@ test("loadOne returns null for missing chats and throws on other failures", asyn
 
 test("save, updateMetadata, and delete use the expected endpoints and methods", async () => {
 	const { calls } = mockJsonFetch({ success: true });
-	const storage = new RemoteStorage("https://example.test", () => "token-1");
+	const storage = new RemoteStorage("https://example.test/api", () => "token-1");
 	const chat = session();
 
 	await storage.save(chat);
@@ -114,7 +116,7 @@ test("save, updateMetadata, and delete use the expected endpoints and methods", 
 
 test("saveLimit sends only the latest messages with a partial save header", async () => {
 	const { calls } = mockJsonFetch({ success: true });
-	const storage = new RemoteStorage("https://example.test", () => "token-1", { saveLimit: 2 });
+	const storage = new RemoteStorage("https://example.test/api", () => "token-1", { saveLimit: 2 });
 	const chat = sessionWithMessages(4);
 
 	await storage.save(chat);
@@ -133,7 +135,7 @@ test("saveLimit sends only the latest messages with a partial save header", asyn
 
 test("saveLimit does not slice or add partial header when the session is within the limit", async () => {
 	const { calls } = mockJsonFetch({ success: true });
-	const storage = new RemoteStorage("https://example.test", () => null, { saveLimit: 2 });
+	const storage = new RemoteStorage("https://example.test/api", () => null, { saveLimit: 2 });
 	const chat = sessionWithMessages(2);
 
 	await storage.save(chat);
@@ -146,9 +148,11 @@ test("invalid saveLimit values are disabled", async () => {
 	const { calls } = mockJsonFetch({ success: true });
 	const chat = sessionWithMessages(3);
 
-	await new RemoteStorage("https://example.test", () => null, { saveLimit: 0 }).save(chat);
-	await new RemoteStorage("https://example.test", () => null, { saveLimit: -1 }).save(chat);
-	await new RemoteStorage("https://example.test", () => null, { saveLimit: Number.POSITIVE_INFINITY }).save(chat);
+	await new RemoteStorage("https://example.test/api", () => null, { saveLimit: 0 }).save(chat);
+	await new RemoteStorage("https://example.test/api", () => null, { saveLimit: -1 }).save(chat);
+	await new RemoteStorage("https://example.test/api", () => null, {
+		saveLimit: Number.POSITIVE_INFINITY,
+	}).save(chat);
 
 	for (const call of calls) {
 		assert.deepEqual(JSON.parse(call.init.body as string), chat);
@@ -158,7 +162,7 @@ test("invalid saveLimit values are disabled", async () => {
 
 test("encodes chat ids as remote URL path segments", async () => {
 	const { calls } = mockJsonFetch({ id: "chat/with spaces", title: "A chat", updatedAt: 123, messages: [] });
-	const storage = new RemoteStorage("https://example.test", () => null);
+	const storage = new RemoteStorage("https://example.test/api", () => null);
 
 	await storage.loadOne("chat/with spaces");
 
@@ -166,7 +170,7 @@ test("encodes chat ids as remote URL path segments", async () => {
 });
 
 test("write methods throw on non-OK responses", async () => {
-	const storage = new RemoteStorage("https://example.test", () => null);
+	const storage = new RemoteStorage("https://example.test/api", () => null);
 
 	globalThis.fetch = (async () => new Response(null, { status: 500 })) as typeof fetch;
 

@@ -26,7 +26,7 @@ export class RemoteStorage implements ChatStorage {
 
 	private getPath(suffix = ""): string {
 		const base = this.baseUrl.replace(/\/+$/, "");
-		return `${base}/api/chats${suffix}`;
+		return `${base}/chats${suffix}`;
 	}
 
 	async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
