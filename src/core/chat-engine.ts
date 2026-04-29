@@ -247,11 +247,6 @@ export class ChatEngine {
 				];
 			}
 
-			if (signal.aborted) {
-				wasAborted = true;
-				return;
-			}
-
 			await provider.streamChat(payloadParams.messages, payloadParams.options, signal, (event) => {
 				if (signal.aborted) return;
 				if (event.type === "finish" && event.reason === "aborted") {
