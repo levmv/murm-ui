@@ -111,12 +111,6 @@ export type StreamEvent =
 			cacheWrite?: number;
 	  }
 	| {
-			type: "error";
-			message: string;
-			code?: string;
-			retryable?: boolean;
-	  }
-	| {
 			type: "finish";
 			reason: FinishReason;
 	  };
@@ -177,6 +171,10 @@ export interface ChatRequestParams {
 }
 
 export interface ChatProvider {
+	/**
+	 * Streams successful provider events to the engine. Provider/API failures should reject
+	 * this promise; ChatEngine converts those failures into UI error state.
+	 */
 	streamChat(
 		messages: Message[],
 		options: RequestOptions,

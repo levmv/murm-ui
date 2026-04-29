@@ -121,15 +121,47 @@ test("applyStreamEventToState updates tool calls and finalizes streaming statuse
 	assert.equal(toolCall.status, "complete");
 });
 
-test("applyStreamEventToState records stream errors on state", () => {
-	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [] };
+test("applyStreamEventToState records stream errors and finalizes streaming tool calls", () => {
+	const assistant: Message = {
+		id: "assistant-1",
+		role: "assistant",
+		blocks: [
+			{
+				id: "tool-streaming",
+				type: "tool_call",
+				toolCallId: "call-streaming",
+				name: "lookup",
+				argsText: "{}",
+				status: "streaming",
+			},
+			{
+				id: "tool-pending",
+				type: "tool_call",
+				toolCallId: "call-pending",
+				name: "queued",
+				argsText: "{}",
+				status: "pending",
+			},
+			{
+				id: "tool-complete",
+				type: "tool_call",
+				toolCallId: "call-complete",
+				name: "done",
+				argsText: "{}",
+				status: "complete",
+			},
+		],
+	};
 	const state = stateWith([assistant]);
 
 	applyStreamEventToState(state, assistant.id, {
 		type: "error",
 		message: "Provider failed",
-		code: "provider_error",
 	});
 
 	assert.deepEqual(state.error, { message: "Provider failed", id: assistant.id });
+	assert.deepEqual(
+		state.messages[0].blocks.map((block) => (block.type === "tool_call" ? block.status : null)),
+		["error", "pending", "complete"],
+	);
 });

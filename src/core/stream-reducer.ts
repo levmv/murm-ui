@@ -1,5 +1,12 @@
 import type { ChatState, ContentBlock, Message, StreamEvent } from "./types";
 
+type StreamErrorEvent = {
+	type: "error";
+	message: string;
+};
+
+export type StreamReducerEvent = StreamEvent | StreamErrorEvent;
+
 function clearEphemeralFlag(msg: Message): void {
 	if (!msg.meta?.ephemeral) return;
 
@@ -8,7 +15,7 @@ function clearEphemeralFlag(msg: Message): void {
 	msg.meta = Object.keys(meta).length > 0 ? meta : undefined;
 }
 
-export function applyStreamEventToState(state: ChatState, pendingId: string, event: StreamEvent): void {
+export function applyStreamEventToState(state: ChatState, pendingId: string, event: StreamReducerEvent): void {
 	let msg: Message | undefined = state.messages[state.messages.length - 1];
 	if (msg?.id !== pendingId) {
 		msg = state.messages.find((m) => m.id === pendingId);
@@ -86,9 +93,13 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 			}
 			break;
 		}
-		// Usage, finish, error handled mostly outside mutation or discarded
 		case "error":
 			state.error = { message: event.message, id: pendingId };
+			for (const b of msg.blocks) {
+				if (b.type === "tool_call" && b.status === "streaming") {
+					b.status = "error";
+				}
+			}
 			break;
 	}
 }

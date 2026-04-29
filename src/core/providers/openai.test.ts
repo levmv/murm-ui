@@ -210,20 +210,105 @@ test("streamChat formats mixed message blocks for OpenAI-compatible requests", a
 	assert.deepEqual(body.messages[3], { role: "tool", tool_call_id: "call-1", content: "sunny" });
 });
 
-test("streamChat emits an error event for non-OK API responses", async () => {
+test("streamChat omits incomplete tool calls from OpenAI-compatible requests", async () => {
+	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
+	const { calls } = mockFetch(sse("[DONE]"));
+	const messages: Message[] = [
+		textMessage("user-1", "user", "hello"),
+		{
+			id: "assistant-error-only",
+			role: "assistant",
+			blocks: [
+				{
+					id: "tool-error-only",
+					type: "tool_call",
+					toolCallId: "call-error-only",
+					name: "lookup",
+					argsText: '{"q":"bad"}',
+					status: "error",
+				},
+			],
+		},
+		{
+			id: "assistant-text-error",
+			role: "assistant",
+			blocks: [
+				{ id: "assistant-text", type: "text", text: "Partial answer" },
+				{
+					id: "tool-error",
+					type: "tool_call",
+					toolCallId: "call-error",
+					name: "lookup",
+					argsText: '{"q":"bad"}',
+					status: "error",
+				},
+			],
+		},
+		{
+			id: "tool-error-result",
+			role: "tool",
+			blocks: [{ id: "tool-error-result-block", type: "tool_result", toolCallId: "call-error", outputText: "bad" }],
+		},
+		{
+			id: "assistant-complete",
+			role: "assistant",
+			blocks: [
+				{
+					id: "tool-complete",
+					type: "tool_call",
+					toolCallId: "call-complete",
+					name: "lookup",
+					argsText: '{"q":"ok"}',
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-complete-result",
+			role: "tool",
+			blocks: [
+				{ id: "tool-complete-result-block", type: "tool_result", toolCallId: "call-complete", outputText: "ok" },
+			],
+		},
+	];
+
+	await provider.streamChat(messages, {}, new AbortController().signal, () => {});
+
+	const body = JSON.parse(calls[0].init.body as string);
+	assert.deepEqual(body.messages, [
+		{ role: "user", content: "hello" },
+		{ role: "assistant", content: "Partial answer" },
+		{
+			role: "assistant",
+			tool_calls: [
+				{
+					id: "call-complete",
+					type: "function",
+					function: { name: "lookup", arguments: '{"q":"ok"}' },
+				},
+			],
+			content: null,
+		},
+		{ role: "tool", tool_call_id: "call-complete", content: "ok" },
+	]);
+});
+
+test("streamChat rejects for non-OK API responses", async () => {
 	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
 	mockFetch(new Response(JSON.stringify({ error: { message: "bad key" } }), { status: 401 }));
 	const events: StreamEvent[] = [];
 
-	await provider.streamChat([textMessage("user-1", "user", "hello")], {}, new AbortController().signal, (event) =>
-		events.push(event),
+	await assert.rejects(
+		provider.streamChat([textMessage("user-1", "user", "hello")], {}, new AbortController().signal, (event) =>
+			events.push(event),
+		),
+		/API Error 401: bad key/,
 	);
 
-	assert.equal(events.length, 1);
-	assert.match(findEvent(events, "error").message, /API Error 401: bad key/);
+	assert.deepEqual(events, []);
 });
 
-test("streamChat emits aborted finish when fetch is aborted", async () => {
+test("streamChat rejects without events when fetch is aborted", async () => {
 	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
 	const controller = new AbortController();
 	controller.abort();
@@ -232,9 +317,10 @@ test("streamChat emits aborted finish when fetch is aborted", async () => {
 	}) as typeof fetch;
 	const events: StreamEvent[] = [];
 
-	await provider.streamChat([textMessage("user-1", "user", "hello")], {}, controller.signal, (event) =>
-		events.push(event),
+	await assert.rejects(
+		provider.streamChat([textMessage("user-1", "user", "hello")], {}, controller.signal, (event) => events.push(event)),
+		(error: unknown) => error instanceof Error && error.name === "AbortError",
 	);
 
-	assert.deepEqual(events, [{ type: "finish", reason: "aborted" }]);
+	assert.deepEqual(events, []);
 });

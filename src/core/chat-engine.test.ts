@@ -664,6 +664,48 @@ test("failed generation keeps empty assistant message in state but omits it from
 	assert.deepEqual(storage.saved[0].messages, [state.messages[0]]);
 });
 
+test("failed generation marks streaming tool calls as errored", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({
+		provider: {
+			async streamChat(
+				_messages: Message[],
+				_options: RequestOptions,
+				_signal: AbortSignal,
+				onEvent: (event: StreamEvent) => void,
+			): Promise<void> {
+				onEvent({
+					type: "tool_call_start",
+					messageId: "provider-message",
+					block: {
+						id: "tool-1",
+						type: "tool_call",
+						toolCallId: "call-1",
+						name: "lookup_weather",
+						argsText: '{"q":"weather"}',
+						status: "streaming",
+					},
+				});
+				throw new Error("Provider failed");
+			},
+		},
+		storage,
+	});
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "failure finalization");
+
+	const assistant = engine.state.messages[1];
+	const toolCall = assistant.blocks.find(
+		(block): block is Extract<ContentBlock, { type: "tool_call" }> => block.type === "tool_call",
+	);
+
+	assert.ok(toolCall);
+	assert.equal(toolCall.status, "error");
+	assert.deepEqual(engine.state.error, { message: "Provider failed", id: assistant.id });
+});
+
 test("sendMessage works while initial history is loading", async () => {
 	let releaseLoad!: () => void;
 	const loadReleased = new Promise<void>((resolve) => {

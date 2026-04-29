@@ -52,174 +52,163 @@ export class OpenAIProvider implements ChatProvider {
 		signal: AbortSignal,
 		onEvent: (event: StreamEvent) => void,
 	): Promise<void> {
-		try {
-			const { model = this.model, systemPrompt, ...restOptions } = options;
+		const { model = this.model, systemPrompt, ...restOptions } = options;
 
-			const response = await fetch(this.endpoint, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${this.apiKey}`,
+		const response = await fetch(this.endpoint, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${this.apiKey}`,
+			},
+			body: JSON.stringify({
+				model: model,
+				messages: this.formatMessages(messages),
+				stream: true,
+				...restOptions,
+				stream_options: {
+					include_usage: true,
+					...((restOptions.stream_options as object) || {}),
 				},
-				body: JSON.stringify({
-					model: model,
-					messages: this.formatMessages(messages),
-					stream: true,
-					...restOptions,
-					stream_options: {
-						include_usage: true,
-						...((restOptions.stream_options as object) || {}),
-					},
-				}),
-				signal,
-			});
+			}),
+			signal,
+		});
 
-			if (!response.ok) {
-				const errorMsg = await this.extractErrorMessage(response);
-				throw new Error(`API Error ${response.status}: ${errorMsg}`);
+		if (!response.ok) {
+			const errorMsg = await this.extractErrorMessage(response);
+			throw new Error(`API Error ${response.status}: ${errorMsg}`);
+		}
+
+		let messageStarted = false;
+		let currentMessageId = uuidv7();
+		let currentTextBlockId: string | null = null;
+		let currentReasoningBlockId: string | null = null;
+
+		// Map OpenAI's tool call index to our block IDs
+		const activeToolCalls = new Map<number, string>();
+
+		let finishEmitted = false;
+
+		await parseSSE(response, (data) => {
+			if (data === "[DONE]") return true;
+
+			// Flat try/catch: Just parse and exit early if it's a broken chunk
+			let parsed: OpenAIStreamChunk;
+			try {
+				parsed = JSON.parse(data);
+			} catch {
+				return; // Ignore partial/broken JSON payload
+			}
+			if (parsed.usage) {
+				onEvent({
+					type: "usage",
+					input: parsed.usage.prompt_tokens || 0,
+					output: parsed.usage.completion_tokens || 0,
+					cacheRead: parsed.usage.prompt_tokens_details?.cached_tokens || 0,
+				});
 			}
 
-			let messageStarted = false;
-			let currentMessageId = uuidv7();
-			let currentTextBlockId: string | null = null;
-			let currentReasoningBlockId: string | null = null;
+			const choice = parsed.choices?.[0];
+			if (!choice) return;
 
-			// Map OpenAI's tool call index to our block IDs
-			const activeToolCalls = new Map<number, string>();
-
-			let finishEmitted = false;
-
-			await parseSSE(response, (data) => {
-				if (data === "[DONE]") return true;
-
-				// Flat try/catch: Just parse and exit early if it's a broken chunk
-				let parsed: OpenAIStreamChunk;
-				try {
-					parsed = JSON.parse(data);
-				} catch {
-					return; // Ignore partial/broken JSON payload
-				}
-				if (parsed.usage) {
-					onEvent({
-						type: "usage",
-						input: parsed.usage.prompt_tokens || 0,
-						output: parsed.usage.completion_tokens || 0,
-						cacheRead: parsed.usage.prompt_tokens_details?.cached_tokens || 0,
-					});
-				}
-
-				const choice = parsed.choices?.[0];
-				if (!choice) return;
-
-				// 1. Emit start event on first chunk
-				if (!messageStarted) {
-					currentMessageId = parsed.id || currentMessageId;
-					onEvent({
-						type: "message_start",
-						message: { id: currentMessageId, role: "assistant", blocks: [] },
-					});
-					messageStarted = true;
-				}
-
-				const delta: OpenAIStreamDelta = choice.delta ?? {};
-
-				// 2. Handle Reasoning
-				const reasoningData = this.extractReasoning(delta);
-				if (reasoningData) {
-					if (!currentReasoningBlockId) currentReasoningBlockId = uuidv7();
-					currentTextBlockId = null;
-
-					onEvent({
-						type: "reasoning_delta",
-						messageId: currentMessageId,
-						blockId: currentReasoningBlockId,
-						delta: reasoningData.text,
-						encrypted: reasoningData.encrypted,
-					});
-				}
-
-				// 3. Handle Text Content
-				if (delta.content) {
-					if (!currentTextBlockId) currentTextBlockId = uuidv7();
-					onEvent({
-						type: "text_delta",
-						messageId: currentMessageId,
-						blockId: currentTextBlockId,
-						delta: delta.content,
-					});
-				}
-
-				// 4. Handle Tool Calls
-				if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
-					for (const tc of delta.tool_calls) {
-						const index = tc.index;
-						// If it has an ID, it's a new tool call
-						if (tc.id) {
-							currentTextBlockId = null;
-
-							const blockId = uuidv7();
-							activeToolCalls.set(index, blockId);
-							onEvent({
-								type: "tool_call_start",
-								messageId: currentMessageId,
-								block: {
-									id: blockId,
-									type: "tool_call",
-									toolCallId: tc.id,
-									name: tc.function?.name || "",
-									argsText: tc.function?.arguments || "",
-									status: "streaming",
-								},
-							});
-						}
-						// Otherwise, it's appending arguments to an existing tool call
-						else if (activeToolCalls.has(index)) {
-							onEvent({
-								type: "tool_call_delta",
-								messageId: currentMessageId,
-								blockId: activeToolCalls.get(index)!,
-								name: tc.function?.name,
-								argsDelta: tc.function?.arguments || "",
-							});
-						}
-					}
-				}
-
-				// 5. Handle Finish Reason
-				if (choice.finish_reason) {
-					if (choice.finish_reason === "content_filter") {
-						throw new Error("Generation stopped by provider content filter.");
-					}
-					if (choice.finish_reason === "network_error") {
-						throw new Error("Generation stopped due to a provider network error.");
-					}
-
-					const reasonMap: Record<string, FinishReason> = {
-						stop: "stop",
-						length: "length",
-						tool_calls: "tool_use",
-					};
-					onEvent({
-						type: "finish",
-						reason: reasonMap[choice.finish_reason] || "stop",
-					});
-					finishEmitted = true;
-				}
-			});
-
-			// If it finishes normally but didn't emit a finish reason (some providers do this)
-			if (!finishEmitted) {
-				onEvent({ type: "finish", reason: "stop" });
+			// 1. Emit start event on first chunk
+			if (!messageStarted) {
+				currentMessageId = parsed.id || currentMessageId;
+				onEvent({
+					type: "message_start",
+					message: { id: currentMessageId, role: "assistant", blocks: [] },
+				});
+				messageStarted = true;
 			}
-		} catch (err: unknown) {
-			const isAbort = err instanceof Error && err.name === "AbortError";
-			if (isAbort || signal.aborted) {
-				onEvent({ type: "finish", reason: "aborted" });
-			} else {
-				// Safer fallback stringification for unknown thrown objects
-				const errorMessage = err instanceof Error ? err.message : JSON.stringify(err);
-				onEvent({ type: "error", message: errorMessage });
+
+			const delta: OpenAIStreamDelta = choice.delta ?? {};
+
+			// 2. Handle Reasoning
+			const reasoningData = this.extractReasoning(delta);
+			if (reasoningData) {
+				if (!currentReasoningBlockId) currentReasoningBlockId = uuidv7();
+				currentTextBlockId = null;
+
+				onEvent({
+					type: "reasoning_delta",
+					messageId: currentMessageId,
+					blockId: currentReasoningBlockId,
+					delta: reasoningData.text,
+					encrypted: reasoningData.encrypted,
+				});
 			}
+
+			// 3. Handle Text Content
+			if (delta.content) {
+				if (!currentTextBlockId) currentTextBlockId = uuidv7();
+				onEvent({
+					type: "text_delta",
+					messageId: currentMessageId,
+					blockId: currentTextBlockId,
+					delta: delta.content,
+				});
+			}
+
+			// 4. Handle Tool Calls
+			if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
+				for (const tc of delta.tool_calls) {
+					const index = tc.index;
+					// If it has an ID, it's a new tool call
+					if (tc.id) {
+						currentTextBlockId = null;
+
+						const blockId = uuidv7();
+						activeToolCalls.set(index, blockId);
+						onEvent({
+							type: "tool_call_start",
+							messageId: currentMessageId,
+							block: {
+								id: blockId,
+								type: "tool_call",
+								toolCallId: tc.id,
+								name: tc.function?.name || "",
+								argsText: tc.function?.arguments || "",
+								status: "streaming",
+							},
+						});
+					}
+					// Otherwise, it's appending arguments to an existing tool call
+					else if (activeToolCalls.has(index)) {
+						onEvent({
+							type: "tool_call_delta",
+							messageId: currentMessageId,
+							blockId: activeToolCalls.get(index)!,
+							name: tc.function?.name,
+							argsDelta: tc.function?.arguments || "",
+						});
+					}
+				}
+			}
+
+			// 5. Handle Finish Reason
+			if (choice.finish_reason) {
+				if (choice.finish_reason === "content_filter") {
+					throw new Error("Generation stopped by provider content filter.");
+				}
+				if (choice.finish_reason === "network_error") {
+					throw new Error("Generation stopped due to a provider network error.");
+				}
+
+				const reasonMap: Record<string, FinishReason> = {
+					stop: "stop",
+					length: "length",
+					tool_calls: "tool_use",
+				};
+				onEvent({
+					type: "finish",
+					reason: reasonMap[choice.finish_reason] || "stop",
+				});
+				finishEmitted = true;
+			}
+		});
+
+		// If it finishes normally but didn't emit a finish reason (some providers do this)
+		if (!finishEmitted) {
+			onEvent({ type: "finish", reason: "stop" });
 		}
 	}
 
@@ -275,13 +264,14 @@ export class OpenAIProvider implements ChatProvider {
 
 	private formatMessages(messages: Message[]): Record<string, unknown>[] {
 		const result: Record<string, unknown>[] = [];
+		const serializedToolCallIds = new Set<string>();
 
 		for (const msg of messages) {
 			// Tool messages map 1:1 to API tool responses.
 			// They contain only the execution output, so we bypass standard processing.
 			if (msg.role === "tool") {
 				for (const block of msg.blocks) {
-					if (block.type === "tool_result") {
+					if (block.type === "tool_result" && serializedToolCallIds.has(block.toolCallId)) {
 						result.push({
 							role: "tool",
 							tool_call_id: block.toolCallId,
@@ -299,11 +289,14 @@ export class OpenAIProvider implements ChatProvider {
 			for (const block of msg.blocks) {
 				switch (block.type) {
 					case "tool_call":
-						toolCalls.push({
-							id: block.toolCallId,
-							type: "function",
-							function: { name: block.name, arguments: block.argsText },
-						});
+						if (block.status === "complete") {
+							toolCalls.push({
+								id: block.toolCallId,
+								type: "function",
+								function: { name: block.name, arguments: block.argsText },
+							});
+							serializedToolCallIds.add(block.toolCallId);
+						}
 						break;
 
 					case "text":
@@ -327,6 +320,10 @@ export class OpenAIProvider implements ChatProvider {
 						// Reasoning tokens and internal UI artifacts are not sent back in context.
 						break;
 				}
+			}
+
+			if (msg.role === "assistant" && contentArray.length === 0 && toolCalls.length === 0) {
+				continue;
 			}
 
 			if (toolCalls.length > 0) {

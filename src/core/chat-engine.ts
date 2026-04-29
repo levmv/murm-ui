@@ -2,7 +2,7 @@ import { uuidv7 } from "../utils/uuid";
 import { cloneMessages, dropEphemeralMessages } from "./msg-utils";
 import { type ChatSessions, SessionManager } from "./session-manager";
 import { Store } from "./store";
-import { applyStreamEventToState } from "./stream-reducer";
+import { applyStreamEventToState, type StreamReducerEvent } from "./stream-reducer";
 import type {
 	ChatPlugin,
 	ChatProvider,
@@ -12,7 +12,6 @@ import type {
 	Message,
 	ReadonlyChatRequestParams,
 	RequestOptions,
-	StreamEvent,
 } from "./types";
 
 export interface ChatEngineConfig {
@@ -261,17 +260,17 @@ export class ChatEngine {
 						? JSON.stringify(err)
 						: String(err);
 
-			this.store.set({ error: { message: errorMessage, id: pendingId } });
+			this.applyStreamEvent(pendingId, { type: "error", message: errorMessage });
 		} finally {
 			await this.finalizeGeneration(pendingId, wasAborted || signal.aborted);
 		}
 	}
 
 	/**
-	 * High-performance state reducer. Bypasses cloning by mutating the active blocks.
+	 * Applies reducer events without cloning active stream blocks.
 	 * @param pendingId The ID we generated locally to track the active response.
 	 */
-	private applyStreamEvent(pendingId: string, event: StreamEvent) {
+	private applyStreamEvent(pendingId: string, event: StreamReducerEvent) {
 		this.store.mutateHot((state) => {
 			applyStreamEventToState(state, pendingId, event);
 		});
