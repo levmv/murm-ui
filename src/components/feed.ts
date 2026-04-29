@@ -53,6 +53,8 @@ export class Feed {
 		this.spinnerEl.hidden = !isLoadingSession;
 
 		if (isLoadingSession) {
+			this.isStickyToBottom = true;
+			this.lastScrollTop = 0;
 			this.clearAllNodes();
 			this.lastMessagesRef = null;
 			return;

@@ -66,6 +66,7 @@ function installDom(url = "https://example.test/"): HTMLElement {
 		configurable: true,
 		value: () => ({ matches: false }),
 	});
+	delete (dom.window as unknown as Window & { ontouchstart?: unknown }).ontouchstart;
 
 	class MockIntersectionObserver {
 		observe(): void {}
@@ -286,6 +287,65 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.state.currentSessionId, previousSessionId);
+
+	await ui.destroy();
+});
+
+test("ChatUI focuses the input after switching to a loaded chat", async () => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+
+	let releaseLoad!: () => void;
+	const loadReleased = new Promise<void>((resolve) => {
+		releaseLoad = resolve;
+	});
+
+	const storage = new (class extends MemoryStorage {
+		override async loadOne(id: string): Promise<ChatSession | null> {
+			await loadReleased;
+			return super.loadOne(id);
+		}
+	})([
+		{
+			id: "chat-1",
+			title: "Stored Chat",
+			updatedAt: 100,
+			messages: [textMessage("msg-1", "user", "stored")],
+		},
+	]);
+
+	const provider: ChatProvider = {
+		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+
+	const ui = new ChatUI({
+		container,
+		provider,
+		routing: false,
+		storage,
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
+
+	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
+	let focusCalls = 0;
+	input.focus = (() => {
+		focusCalls++;
+	}) as HTMLTextAreaElement["focus"];
+
+	(container.querySelector(".mur-sidebar-item-link") as HTMLAnchorElement).click();
+	await waitFor(() => ui.engine.state.isLoadingSession, "stored session load start");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.equal(input.disabled, true);
+	assert.equal(focusCalls, 0);
+
+	releaseLoad();
+
+	await waitFor(() => !ui.engine.state.isLoadingSession, "stored session load");
+	await waitFor(() => focusCalls === 1, "input focus after session load");
 
 	await ui.destroy();
 });

@@ -101,6 +101,17 @@ function messages(): Message[] {
 	];
 }
 
+function setScrollMetrics(
+	scrollArea: HTMLElement,
+	metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+): void {
+	Object.defineProperties(scrollArea, {
+		scrollTop: { configurable: true, value: metrics.scrollTop, writable: true },
+		scrollHeight: { configurable: true, value: metrics.scrollHeight },
+		clientHeight: { configurable: true, value: metrics.clientHeight },
+	});
+}
+
 async function flushMicrotasks(): Promise<void> {
 	await Promise.resolve();
 	await Promise.resolve();
@@ -153,6 +164,44 @@ test("resize observer does not replace a pending render scroll", () => {
 
 	assert.equal(frameCount(), 1);
 	assert.deepEqual(scrollCalls, []);
+	flushFrames();
+	assert.deepEqual(scrollCalls, ["smooth"]);
+
+	feed.destroy();
+});
+
+test("loading a session resets sticky bottom intent", () => {
+	const { feed, root, frameCount, flushFrames, scrollCalls } = createFeedHarness();
+	const scrollArea = root.querySelector<HTMLElement>(".mur-chat-scroll-area");
+	assert.ok(scrollArea);
+
+	feed.update(messages(), null, false, false);
+	flushFrames();
+	scrollCalls.length = 0;
+
+	setScrollMetrics(scrollArea, { scrollTop: 400, scrollHeight: 500, clientHeight: 100 });
+	scrollArea.dispatchEvent(new window.Event("scroll"));
+	setScrollMetrics(scrollArea, { scrollTop: 100, scrollHeight: 500, clientHeight: 100 });
+	scrollArea.dispatchEvent(new window.Event("scroll"));
+
+	feed.update(messages(), null, false, false);
+	assert.equal(frameCount(), 0);
+
+	feed.update([], null, true, false);
+	feed.update(
+		[
+			{
+				id: "new-user-1",
+				role: "user",
+				blocks: [{ id: "new-user-1-text", type: "text", text: "New chat" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(frameCount(), 1);
 	flushFrames();
 	assert.deepEqual(scrollCalls, ["smooth"]);
 

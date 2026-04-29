@@ -14,7 +14,7 @@ export class Input {
 	private sendBtn: HTMLButtonElement;
 	private isGenerating = false;
 	private hasSubmittableText = false;
-	private shouldRestoreFocus = false;
+	private shouldFocusWhenEnabled = false;
 	private focusTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	private supportsFieldSizing = typeof CSS !== "undefined" && CSS.supports("field-sizing", "content");
@@ -48,31 +48,29 @@ export class Input {
 	}
 
 	public focus() {
+		this.shouldFocusWhenEnabled = false;
+		this.scheduleFocus();
+	}
+
+	public focusWhenEnabled() {
 		if (!IS_TOUCH_DEVICE) {
-			// Timeout ensures focus works correctly after DOM reflows
-			// or when transitioning state (e.g., stopping generation)
-			this.clearPendingFocus();
-			this.focusTimeout = setTimeout(() => {
-				this.focusTimeout = null;
-				if (!this.input.disabled) {
-					this.input.focus({ preventScroll: true });
-				}
-			}, 0);
+			this.shouldFocusWhenEnabled = true;
+			if (!this.input.disabled) {
+				this.scheduleFocus();
+			}
 		}
 	}
 
 	public setGeneratingState(isGenerating: boolean, isLoadingSession: boolean) {
 		const disabled = isGenerating || isLoadingSession;
-		const endedGeneration = this.isGenerating && !isGenerating;
 
 		this.isGenerating = isGenerating;
 		this.input.disabled = disabled;
 		this.sendBtn.classList.toggle("mur-generating", isGenerating);
 		this.syncSubmitState(isLoadingSession);
 
-		if (endedGeneration && !disabled && this.shouldRestoreFocus) {
-			this.focus();
-			this.shouldRestoreFocus = false;
+		if (!disabled && this.shouldFocusWhenEnabled) {
+			this.scheduleFocus();
 		}
 	}
 
@@ -87,6 +85,7 @@ export class Input {
 	}
 
 	public destroy() {
+		this.shouldFocusWhenEnabled = false;
 		this.clearPendingFocus();
 		this.input.removeEventListener("input", this.onInputBound);
 		this.input.removeEventListener("keydown", this.onKeydownBound);
@@ -97,6 +96,21 @@ export class Input {
 		if (this.focusTimeout === null) return;
 		clearTimeout(this.focusTimeout);
 		this.focusTimeout = null;
+	}
+
+	private scheduleFocus() {
+		if (IS_TOUCH_DEVICE) return;
+
+		// Timeout ensures focus works correctly after DOM reflows
+		// or when transitioning state (e.g., stopping generation)
+		this.clearPendingFocus();
+		this.focusTimeout = setTimeout(() => {
+			this.focusTimeout = null;
+			if (!this.input.disabled) {
+				this.shouldFocusWhenEnabled = false;
+				this.input.focus({ preventScroll: true });
+			}
+		}, 0);
 	}
 
 	private bindEvents() {
@@ -149,14 +163,13 @@ export class Input {
 			return;
 		}
 
-		this.shouldRestoreFocus = true;
-
 		if (!this.props.onSubmit(text)) {
 			// Submission rejected, keep text and sync state
 			this.syncSubmitState();
 			return;
 		}
 
+		this.focusWhenEnabled();
 		this.input.value = "";
 
 		this.refreshTextState();

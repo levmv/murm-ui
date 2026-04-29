@@ -46,6 +46,8 @@ function mountInput(
 	sendBtn: HTMLButtonElement;
 	submissions: string[];
 	focus: () => void;
+	focusWhenEnabled: () => void;
+	setGeneratingState: (isGenerating: boolean, isLoadingSession: boolean) => void;
 	destroy: () => void;
 } {
 	const container = installDom();
@@ -69,6 +71,9 @@ function mountInput(
 		sendBtn: container.querySelector(".mur-send-btn") as HTMLButtonElement,
 		submissions,
 		focus: () => inputComponent.focus(),
+		focusWhenEnabled: () => inputComponent.focusWhenEnabled(),
+		setGeneratingState: (isGenerating, isLoadingSession) =>
+			inputComponent.setGeneratingState(isGenerating, isLoadingSession),
 		destroy: () => inputComponent.destroy(),
 	};
 }
@@ -103,11 +108,11 @@ test("send button is disabled without text or pending plugin data", () => {
 
 test("pending plugin data enables empty submissions", () => {
 	let pending = false;
-	let inputContext: PluginInputContext | null = null;
+	const inputContext: { current?: PluginInputContext } = {};
 	const plugin: ChatPlugin = {
 		name: "pending-data",
 		onInputMount: (ctx) => {
-			inputContext = ctx;
+			inputContext.current = ctx;
 		},
 		hasPendingData: () => pending,
 	};
@@ -116,11 +121,11 @@ test("pending plugin data enables empty submissions", () => {
 	assert.equal(harness.sendBtn.disabled, true);
 
 	pending = true;
-	inputContext?.requestSubmitStateSync();
+	inputContext.current?.requestSubmitStateSync();
 	assert.equal(harness.sendBtn.disabled, false);
 
 	pending = false;
-	inputContext?.requestSubmitStateSync();
+	inputContext.current?.requestSubmitStateSync();
 	assert.equal(harness.sendBtn.disabled, true);
 
 	harness.destroy();
@@ -200,21 +205,68 @@ test("rejected submissions keep the input text and enabled state", () => {
 	harness.destroy();
 });
 
+test("focusWhenEnabled restores focus after loading finishes", () => {
+	const originalSetTimeout = globalThis.setTimeout;
+	const originalClearTimeout = globalThis.clearTimeout;
+	const timeoutId = {} as ReturnType<typeof setTimeout>;
+	let pendingFocus: (() => void) | null = null;
+	const runPendingFocus = () => {
+		const callback = pendingFocus;
+		if (callback) callback();
+	};
+
+	setGlobal("setTimeout", ((handler: TimerHandler) => {
+		pendingFocus = typeof handler === "function" ? (handler as () => void) : () => {};
+		return timeoutId;
+	}) as unknown as typeof setTimeout);
+	setGlobal("clearTimeout", (() => {
+		pendingFocus = null;
+	}) as unknown as typeof clearTimeout);
+
+	try {
+		const harness = mountInput();
+		let focusCalls = 0;
+		harness.input.focus = () => {
+			focusCalls++;
+		};
+
+		harness.focusWhenEnabled();
+		harness.setGeneratingState(false, true);
+		runPendingFocus();
+
+		assert.equal(focusCalls, 0);
+
+		harness.setGeneratingState(false, false);
+		runPendingFocus();
+
+		assert.equal(focusCalls, 1);
+
+		harness.destroy();
+	} finally {
+		setGlobal("setTimeout", originalSetTimeout);
+		setGlobal("clearTimeout", originalClearTimeout);
+	}
+});
+
 test("destroy cancels a pending focus timeout", () => {
 	const originalSetTimeout = globalThis.setTimeout;
 	const originalClearTimeout = globalThis.clearTimeout;
 	const timeoutId = {} as ReturnType<typeof setTimeout>;
 	let pendingFocus: (() => void) | null = null;
 	let clearedTimeout: ReturnType<typeof setTimeout> | null = null;
+	const runPendingFocus = () => {
+		const callback = pendingFocus;
+		if (callback) callback();
+	};
 
 	setGlobal("setTimeout", ((handler: TimerHandler) => {
-		pendingFocus = typeof handler === "function" ? handler : () => {};
+		pendingFocus = typeof handler === "function" ? (handler as () => void) : () => {};
 		return timeoutId;
-	}) as typeof setTimeout);
+	}) as unknown as typeof setTimeout);
 	setGlobal("clearTimeout", ((id?: ReturnType<typeof setTimeout>) => {
 		clearedTimeout = id ?? null;
 		pendingFocus = null;
-	}) as typeof clearTimeout);
+	}) as unknown as typeof clearTimeout);
 
 	try {
 		const harness = mountInput();
@@ -225,7 +277,7 @@ test("destroy cancels a pending focus timeout", () => {
 
 		harness.focus();
 		harness.destroy();
-		pendingFocus?.();
+		runPendingFocus();
 
 		assert.equal(clearedTimeout, timeoutId);
 		assert.equal(focusCalls, 0);
