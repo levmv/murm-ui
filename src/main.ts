@@ -1,5 +1,5 @@
 import { ChatEngine } from "./core/chat-engine";
-import type { ChatPlugin, ChatProvider, ChatStorage } from "./core/types";
+import type { ChatPlugin, ChatProvider, ChatStorage, RequestOptions } from "./core/types";
 import { AppRouter, type RouterConfig } from "./router";
 import { el, queryOrThrow } from "./utils/dom";
 
@@ -17,6 +17,7 @@ export interface ChatUIConfig {
 	provider: ChatProvider;
 	storage: ChatStorage;
 	routing?: RouterConfig | boolean;
+	titleOptions?: Partial<RequestOptions>;
 
 	enableSidebar?: boolean;
 	initialSessionId?: string;
@@ -86,6 +87,7 @@ export class ChatUI {
 			provider: this.config.provider,
 			storage: this.config.storage,
 			initialSessionId,
+			titleOptions: this.config.titleOptions,
 		});
 
 		this.initComponents();

@@ -8,6 +8,7 @@ import type {
 	ChatStorage,
 	Message,
 	PaginatedSessions,
+	RequestOptions,
 	StreamEvent,
 } from "./core/types";
 
@@ -236,6 +237,40 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	submit(form);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	assert.equal(providerCalls, 2);
+});
+
+test("ChatUI passes titleOptions into auto-title generation", async () => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+	let titleOptions: RequestOptions = {};
+	const provider: ChatProvider = {
+		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "text_delta", messageId: "assistant-1", blockId: "reply", delta: "hello back" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+		async generateTitle(_messages, options): Promise<string> {
+			titleOptions = options ?? {};
+			return "Smart Title";
+		},
+	};
+	const ui = new ChatUI({
+		container,
+		enableSidebar: false,
+		provider,
+		routing: false,
+		storage: new MemoryStorage(),
+		titleOptions: { model: "title-model", temperature: 0.1 },
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
+	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
+	const form = container.querySelector(".mur-chat-form") as HTMLFormElement;
+	input.value = "hello";
+	submit(form);
+	await waitFor(() => titleOptions.model === "title-model", "auto-title options");
+
+	assert.equal(titleOptions.temperature, 0.1);
+	await ui.destroy();
 });
 
 test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {

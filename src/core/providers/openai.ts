@@ -38,6 +38,8 @@ interface OpenAIStreamChunk {
 type OpenAIContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 
 const REASONING_FIELDS = ["reasoning_content", "reasoning", "reasoning_text"] as const;
+const DEFAULT_TITLE_SYSTEM_PROMPT =
+	"You generate concise chat titles. Reply only with the title, without quotes or extra text.";
 
 export class OpenAIProvider implements ChatProvider {
 	constructor(
@@ -224,10 +226,24 @@ export class OpenAIProvider implements ChatProvider {
 
 	async generateTitle(messages: Message[], options?: RequestOptions, signal?: AbortSignal): Promise<string> {
 		try {
+			const { model = this.model, systemPrompt, ...restOptions } = options ?? {};
+			delete restOptions.stream_options;
+			const titleSystemPrompt =
+				typeof systemPrompt === "string" && systemPrompt.trim().length > 0 ? systemPrompt : DEFAULT_TITLE_SYSTEM_PROMPT;
+
 			let endIndex = messages.findIndex((m) => m.role === "assistant" && m.blocks.length > 0);
 			if (endIndex === -1) endIndex = Math.min(messages.length - 1, 3);
 
 			const contextMessages = messages.slice(0, endIndex + 1);
+			const formattedMessages = [
+				{ role: "system", content: titleSystemPrompt },
+				...this.formatMessages(contextMessages),
+				{
+					role: "user",
+					content:
+						"Summarize the above conversation in 3-5 words. Reply ONLY with the title, no quotes, no extra text.",
+				},
+			];
 
 			const response = await fetch(this.endpoint, {
 				method: "POST",
@@ -236,15 +252,9 @@ export class OpenAIProvider implements ChatProvider {
 					Authorization: `Bearer ${this.apiKey}`,
 				},
 				body: JSON.stringify({
-					model: options?.model || this.model,
-					messages: [
-						...this.formatMessages(contextMessages),
-						{
-							role: "user",
-							content:
-								"Summarize the above conversation in 3-5 words. Reply ONLY with the title, no quotes, no extra text.",
-						},
-					],
+					model,
+					messages: formattedMessages,
+					...restOptions,
 					stream: false,
 				}),
 				signal,

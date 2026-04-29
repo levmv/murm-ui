@@ -324,3 +324,49 @@ test("streamChat rejects without events when fetch is aborted", async () => {
 
 	assert.deepEqual(events, []);
 });
+
+test("generateTitle sends non-streaming title request options", async () => {
+	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
+	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
+
+	const title = await provider.generateTitle(
+		[textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")],
+		{
+			model: "title-model",
+			systemPrompt: "Name chats plainly.",
+			temperature: 0.2,
+			max_tokens: 8,
+			stream_options: { include_usage: true },
+		},
+		new AbortController().signal,
+	);
+
+	assert.equal(title, "Useful Title");
+	const body = JSON.parse(calls[0].init.body as string);
+	assert.equal(body.model, "title-model");
+	assert.equal(body.temperature, 0.2);
+	assert.equal(body.max_tokens, 8);
+	assert.equal(body.stream, false);
+	assert.equal(body.stream_options, undefined);
+	assert.equal(body.systemPrompt, undefined);
+	assert.deepEqual(body.messages[0], { role: "system", content: "Name chats plainly." });
+	assert.equal(body.messages.at(-1).role, "user");
+	assert.match(body.messages.at(-1).content, /Summarize the above conversation/);
+});
+
+test("generateTitle uses a default title system prompt", async () => {
+	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
+	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
+
+	await provider.generateTitle(
+		[textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")],
+		{ model: "title-model" },
+		new AbortController().signal,
+	);
+
+	const body = JSON.parse(calls[0].init.body as string);
+	assert.deepEqual(body.messages[0], {
+		role: "system",
+		content: "You generate concise chat titles. Reply only with the title, without quotes or extra text.",
+	});
+});

@@ -16,6 +16,7 @@ export type {
 	PluginContext,
 	PluginInputContext,
 	ReadonlyChatRequestParams,
+	RequestOptions,
 } from "./core/types";
 export { ChatUI, type ChatUIConfig } from "./main";
 
@@ -26,5 +27,5 @@ export {
 } from "./plugins/attachment/attachment-plugin";
 export { CopyPlugin } from "./plugins/copy/copy-plugin";
 export { EditPlugin } from "./plugins/edit/edit-plugin";
-export { SettingsPlugin } from "./plugins/settings/settings-plugin";
+export { SettingsPlugin, type SettingsPluginConfig, type SettingsState } from "./plugins/settings/settings-plugin";
 export { ThinkingPlugin } from "./plugins/thinking/thinking-plugin";

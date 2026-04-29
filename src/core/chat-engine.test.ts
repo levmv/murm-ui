@@ -1231,6 +1231,99 @@ test("auto-title updates session metadata after the first assistant reply", asyn
 	assert.equal(engine.state.sessions.find((session) => session.id === sessionId)?.title, "Smart Title");
 });
 
+test("auto-title bypasses beforeSubmit hooks", async () => {
+	const storage = new MemoryStorage();
+	let beforeSubmitCalls = 0;
+	let chatOptions: RequestOptions = {};
+	let titleOptions: RequestOptions = {};
+
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			chatOptions = options;
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+		async generateTitle(_messages: Message[], options?: RequestOptions): Promise<string> {
+			titleOptions = options ?? {};
+			return "Smart Title";
+		},
+	};
+	const plugin: ChatPlugin = {
+		name: "request-shaper",
+		beforeSubmit: () => {
+			beforeSubmitCalls++;
+			return { options: { temperature: 0.2 } };
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+	engine.registerPlugins([plugin]);
+	engine.setRequestDefaults({ model: "base-model" });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
+
+	assert.equal(beforeSubmitCalls, 1);
+	assert.equal(chatOptions.temperature, 0.2);
+	assert.equal(titleOptions.model, "base-model");
+	assert.equal(titleOptions.temperature, undefined);
+});
+
+test("auto-title merges request defaults with live title options", async () => {
+	const storage = new MemoryStorage();
+	let titleOptions: RequestOptions = {};
+	let releaseStream!: () => void;
+	const streamReleased = new Promise<void>((resolve) => {
+		releaseStream = resolve;
+	});
+	let streamStarted!: () => void;
+	const streamStartedPromise = new Promise<void>((resolve) => {
+		streamStarted = resolve;
+	});
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			streamStarted();
+			await streamReleased;
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+		async generateTitle(_messages: Message[], options?: RequestOptions): Promise<string> {
+			titleOptions = options ?? {};
+			return "Smart Title";
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+	engine.setRequestDefaults({
+		model: "base-model",
+		systemPrompt: "chat instructions",
+		temperature: 0.7,
+		max_tokens: 100,
+	});
+	engine.setTitleOptions({ model: "stale-title-model", max_tokens: 12 });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await streamStartedPromise;
+	engine.setTitleOptions({ model: "title-model", max_tokens: undefined });
+	releaseStream();
+	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
+
+	assert.equal(titleOptions.model, "title-model");
+	assert.equal(titleOptions.systemPrompt, undefined);
+	assert.equal(titleOptions.temperature, 0.7);
+	assert.equal(titleOptions.max_tokens, 100);
+});
+
 test("deleting the active session lets deletion win over the aborted generation save", async () => {
 	const calls: string[] = [];
 	const storage = new (class extends MemoryStorage {

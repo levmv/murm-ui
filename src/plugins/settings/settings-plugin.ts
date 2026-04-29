@@ -8,12 +8,14 @@ export interface SettingsState {
 	endpoint: string;
 	apiKey: string;
 	model: string;
+	titleModel: string;
 	systemPrompt: string;
 }
 
 export interface SettingsPluginConfig {
 	defaultEndpoint?: string;
 	defaultModel?: string;
+	defaultTitleModel?: string;
 	defaultSystemPrompt?: string;
 
 	/**
@@ -37,6 +39,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		endpoint: config?.defaultEndpoint || "https://api.openai.com/v1/chat/completions",
 		apiKey: "",
 		model: config?.defaultModel || "gpt-4o-mini",
+		titleModel: config?.defaultTitleModel || "",
 		systemPrompt: config?.defaultSystemPrompt || "",
 	};
 
@@ -55,6 +58,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 	let modalOverlay: HTMLElement | null = null;
 	let mountedTriggerEl: Element | null = null;
 	let mountedTriggerHandler: (() => void) | null = null;
+	let appliedProviderSettings: Pick<SettingsState, "apiKey" | "endpoint" | "model"> | null = null;
 
 	const buildProvider = config?.createProvider ?? ((s) => new OpenAIProvider(s.apiKey, s.endpoint, s.model));
 
@@ -66,10 +70,27 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 			console.warn("SettingsPlugin: Could not save settings to localStorage.", error);
 		}
 
-		ctx.engine.setProvider(buildProvider(settings));
+		const providerSettings = {
+			endpoint: settings.endpoint,
+			apiKey: settings.apiKey,
+			model: settings.model,
+		};
+
+		if (
+			!appliedProviderSettings ||
+			appliedProviderSettings.endpoint !== providerSettings.endpoint ||
+			appliedProviderSettings.apiKey !== providerSettings.apiKey ||
+			appliedProviderSettings.model !== providerSettings.model
+		) {
+			ctx.engine.setProvider(buildProvider(settings));
+			appliedProviderSettings = providerSettings;
+		}
 
 		ctx.engine.setRequestDefaults({
 			systemPrompt: settings.systemPrompt || undefined,
+		});
+		ctx.engine.setTitleOptions({
+			model: settings.titleModel || undefined,
 		});
 	}
 
@@ -97,6 +118,10 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 						<input type="text" class="mur-set-model" placeholder="gpt-4o-mini" />
 					</div>
 					<div class="mur-settings-group">
+						<label>Title Model</label>
+						<input type="text" class="mur-set-title-model" placeholder="Use chat model" />
+					</div>
+					<div class="mur-settings-group">
 						<label>System Prompt</label>
 						<textarea class="mur-set-sysprompt" rows="3" placeholder="You are a helpful assistant..."></textarea>
 					</div>
@@ -112,6 +137,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		(modal.querySelector(".mur-set-endpoint") as HTMLInputElement).value = currentSettings.endpoint;
 		(modal.querySelector(".mur-set-apikey") as HTMLInputElement).value = currentSettings.apiKey;
 		(modal.querySelector(".mur-set-model") as HTMLInputElement).value = currentSettings.model;
+		(modal.querySelector(".mur-set-title-model") as HTMLInputElement).value = currentSettings.titleModel;
 		(modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value = currentSettings.systemPrompt;
 
 		const close = () => {
@@ -129,6 +155,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 				endpoint: (modal.querySelector(".mur-set-endpoint") as HTMLInputElement).value.trim(),
 				apiKey: (modal.querySelector(".mur-set-apikey") as HTMLInputElement).value.trim(),
 				model: (modal.querySelector(".mur-set-model") as HTMLInputElement).value.trim(),
+				titleModel: (modal.querySelector(".mur-set-title-model") as HTMLInputElement).value.trim(),
 				systemPrompt: (modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value.trim(),
 			};
 			applySettings(ctx, newSettings);

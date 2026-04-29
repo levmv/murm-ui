@@ -18,6 +18,7 @@ export interface ChatEngineConfig {
 	provider: ChatProvider;
 	storage: ChatStorage;
 	initialSessionId?: string | null;
+	titleOptions?: Partial<RequestOptions>;
 }
 
 interface ActiveGeneration {
@@ -36,10 +37,12 @@ export class ChatEngine {
 	private provider: ChatProvider;
 	private plugins: ChatPlugin[] = [];
 	private requestDefaults: Partial<RequestOptions> = {};
+	private titleOptions: Partial<RequestOptions> = {};
 	private activeGeneration: ActiveGeneration | null = null;
 
 	constructor(config: ChatEngineConfig) {
 		this.provider = config.provider;
+		this.titleOptions = this.withoutUndefinedOptions(config.titleOptions ?? {});
 
 		const startingId = config.initialSessionId || uuidv7();
 
@@ -172,6 +175,10 @@ export class ChatEngine {
 	 */
 	public setRequestDefaults(defaults: Partial<RequestOptions>) {
 		this.requestDefaults = { ...this.requestDefaults, ...defaults };
+	}
+
+	public setTitleOptions(options: Partial<RequestOptions>) {
+		this.titleOptions = this.mergeDefinedOptions(this.titleOptions, options);
 	}
 
 	public async stopGeneration() {
@@ -376,13 +383,12 @@ export class ChatEngine {
 
 		try {
 			const controller = new AbortController();
-			const payloadParams = await this.prepareRequestParams(messages, controller.signal, requestDefaults);
+			const payloadMessages = dropEphemeralMessages(messages);
+			const titleRequestDefaults = { ...requestDefaults };
+			delete titleRequestDefaults.systemPrompt;
+			const payloadOptions = { ...titleRequestDefaults, ...this.titleOptions };
 
-			const smartTitle = await provider.generateTitle!(
-				payloadParams.messages,
-				payloadParams.options,
-				controller.signal,
-			);
+			const smartTitle = await provider.generateTitle!(payloadMessages, payloadOptions, controller.signal);
 			if (!smartTitle) return;
 			if (this.sessionManager.isDeleted(sessionId)) return;
 
@@ -390,5 +396,21 @@ export class ChatEngine {
 		} catch (e) {
 			console.error("Failed to auto-generate title", e);
 		}
+	}
+
+	private mergeDefinedOptions(base: Partial<RequestOptions>, patch: Partial<RequestOptions>): Partial<RequestOptions> {
+		const next: Partial<RequestOptions> = { ...base };
+		for (const [key, value] of Object.entries(patch)) {
+			if (value === undefined) {
+				delete next[key];
+			} else {
+				next[key] = value;
+			}
+		}
+		return next;
+	}
+
+	private withoutUndefinedOptions(options: Partial<RequestOptions>): Partial<RequestOptions> {
+		return this.mergeDefinedOptions({}, options);
 	}
 }
