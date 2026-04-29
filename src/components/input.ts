@@ -13,8 +13,8 @@ export class Input {
 	private input: HTMLTextAreaElement;
 	private sendBtn: HTMLButtonElement;
 	private isGenerating = false;
+	private isLoadingSession = false;
 	private hasSubmittableText = false;
-	private shouldFocusWhenEnabled = false;
 	private focusTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	private supportsFieldSizing = typeof CSS !== "undefined" && CSS.supports("field-sizing", "content");
@@ -48,30 +48,14 @@ export class Input {
 	}
 
 	public focus() {
-		this.shouldFocusWhenEnabled = false;
 		this.scheduleFocus();
 	}
 
-	public focusWhenEnabled() {
-		if (!IS_TOUCH_DEVICE) {
-			this.shouldFocusWhenEnabled = true;
-			if (!this.input.disabled) {
-				this.scheduleFocus();
-			}
-		}
-	}
-
 	public setGeneratingState(isGenerating: boolean, isLoadingSession: boolean) {
-		const disabled = isGenerating || isLoadingSession;
-
 		this.isGenerating = isGenerating;
-		this.input.disabled = disabled;
+		this.isLoadingSession = isLoadingSession;
 		this.sendBtn.classList.toggle("mur-generating", isGenerating);
-		this.syncSubmitState(isLoadingSession);
-
-		if (!disabled && this.shouldFocusWhenEnabled) {
-			this.scheduleFocus();
-		}
+		this.syncSubmitState();
 	}
 
 	public setText(text: string) {
@@ -85,7 +69,6 @@ export class Input {
 	}
 
 	public destroy() {
-		this.shouldFocusWhenEnabled = false;
 		this.clearPendingFocus();
 		this.input.removeEventListener("input", this.onInputBound);
 		this.input.removeEventListener("keydown", this.onKeydownBound);
@@ -106,10 +89,7 @@ export class Input {
 		this.clearPendingFocus();
 		this.focusTimeout = setTimeout(() => {
 			this.focusTimeout = null;
-			if (!this.input.disabled) {
-				this.shouldFocusWhenEnabled = false;
-				this.input.focus({ preventScroll: true });
-			}
+			this.input.focus({ preventScroll: true });
 		}, 0);
 	}
 
@@ -153,6 +133,11 @@ export class Input {
 			return;
 		}
 
+		if (this.isLoadingSession) {
+			this.syncSubmitState();
+			return;
+		}
+
 		const textStateChanged = this.refreshTextState();
 		const text = this.input.value.trim();
 
@@ -169,7 +154,7 @@ export class Input {
 			return;
 		}
 
-		this.focusWhenEnabled();
+		this.focus();
 		this.input.value = "";
 
 		this.refreshTextState();
@@ -180,12 +165,7 @@ export class Input {
 		this.syncSubmitState();
 	}
 
-	private syncSubmitState(isLoadingSession = this.input.disabled && !this.isGenerating) {
-		if (isLoadingSession) {
-			this.sendBtn.disabled = true;
-			return;
-		}
-
+	private syncSubmitState() {
 		if (this.isGenerating) {
 			this.sendBtn.disabled = false;
 			return;
@@ -195,7 +175,9 @@ export class Input {
 	}
 
 	private canSubmit(): boolean {
-		return !this.isSubmitBlocked() && (this.hasSubmittableText || this.hasPendingPluginData());
+		return (
+			!this.isLoadingSession && !this.isSubmitBlocked() && (this.hasSubmittableText || this.hasPendingPluginData())
+		);
 	}
 
 	private isSubmitBlocked(): boolean {

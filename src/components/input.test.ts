@@ -40,13 +40,13 @@ function installDom(): HTMLElement {
 function mountInput(
 	plugins: ChatPlugin[] = [],
 	onSubmit?: (text: string, submissions: string[]) => boolean,
+	onStop: () => void = () => {},
 ): {
 	form: HTMLFormElement;
 	input: HTMLTextAreaElement;
 	sendBtn: HTMLButtonElement;
 	submissions: string[];
 	focus: () => void;
-	focusWhenEnabled: () => void;
 	setGeneratingState: (isGenerating: boolean, isLoadingSession: boolean) => void;
 	destroy: () => void;
 } {
@@ -60,7 +60,7 @@ function mountInput(
 				submissions.push(text);
 				return true;
 			},
-			onStop: () => {},
+			onStop,
 		},
 		plugins,
 	);
@@ -71,7 +71,6 @@ function mountInput(
 		sendBtn: container.querySelector(".mur-send-btn") as HTMLButtonElement,
 		submissions,
 		focus: () => inputComponent.focus(),
-		focusWhenEnabled: () => inputComponent.focusWhenEnabled(),
 		setGeneratingState: (isGenerating, isLoadingSession) =>
 			inputComponent.setGeneratingState(isGenerating, isLoadingSession),
 		destroy: () => inputComponent.destroy(),
@@ -205,7 +204,68 @@ test("rejected submissions keep the input text and enabled state", () => {
 	harness.destroy();
 });
 
-test("focusWhenEnabled restores focus after loading finishes", () => {
+test("textarea stays editable while generating and draft submits afterward", () => {
+	let stopCalls = 0;
+	const harness = mountInput([], undefined, () => {
+		stopCalls++;
+	});
+
+	harness.setGeneratingState(true, false);
+
+	assert.equal(harness.input.disabled, false);
+	assert.equal(harness.sendBtn.disabled, false);
+
+	setInputValue(harness.input, "draft");
+	assert.equal(harness.input.value, "draft");
+
+	submit(harness.form);
+
+	assert.equal(stopCalls, 1);
+	assert.deepEqual(harness.submissions, []);
+	assert.equal(harness.input.value, "draft");
+
+	harness.setGeneratingState(false, false);
+
+	assert.equal(harness.sendBtn.disabled, false);
+
+	submit(harness.form);
+
+	assert.deepEqual(harness.submissions, ["draft"]);
+	assert.equal(harness.input.value, "");
+
+	harness.destroy();
+});
+
+test("textarea stays editable while loading a session but submit stays disabled", () => {
+	const harness = mountInput();
+
+	harness.setGeneratingState(false, true);
+
+	assert.equal(harness.input.disabled, false);
+	assert.equal(harness.sendBtn.disabled, true);
+
+	setInputValue(harness.input, "draft");
+	assert.equal(harness.input.value, "draft");
+	assert.equal(harness.sendBtn.disabled, true);
+
+	submit(harness.form);
+
+	assert.deepEqual(harness.submissions, []);
+	assert.equal(harness.input.value, "draft");
+
+	harness.setGeneratingState(false, false);
+
+	assert.equal(harness.sendBtn.disabled, false);
+
+	submit(harness.form);
+
+	assert.deepEqual(harness.submissions, ["draft"]);
+	assert.equal(harness.input.value, "");
+
+	harness.destroy();
+});
+
+test("focus schedules focus without requiring an enabled state", () => {
 	const originalSetTimeout = globalThis.setTimeout;
 	const originalClearTimeout = globalThis.clearTimeout;
 	const timeoutId = {} as ReturnType<typeof setTimeout>;
@@ -230,13 +290,8 @@ test("focusWhenEnabled restores focus after loading finishes", () => {
 			focusCalls++;
 		};
 
-		harness.focusWhenEnabled();
+		harness.focus();
 		harness.setGeneratingState(false, true);
-		runPendingFocus();
-
-		assert.equal(focusCalls, 0);
-
-		harness.setGeneratingState(false, false);
 		runPendingFocus();
 
 		assert.equal(focusCalls, 1);

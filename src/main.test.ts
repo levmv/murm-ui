@@ -291,7 +291,7 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	await ui.destroy();
 });
 
-test("ChatUI focuses the input after switching to a loaded chat", async () => {
+test("ChatUI keeps the input available while switching chats", async () => {
 	const container = installDom();
 	const { ChatUI } = await import("./main");
 
@@ -339,8 +339,8 @@ test("ChatUI focuses the input after switching to a loaded chat", async () => {
 	await waitFor(() => ui.engine.state.isLoadingSession, "stored session load start");
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
-	assert.equal(input.disabled, true);
-	assert.equal(focusCalls, 0);
+	assert.equal(input.disabled, false);
+	assert.equal(focusCalls, 1);
 
 	releaseLoad();
 

@@ -291,7 +291,7 @@ export class ChatUI {
 			(state) => state.currentSessionId,
 			() => {
 				this.inputComponent.setText("");
-				this.inputComponent.focusWhenEnabled();
+				this.inputComponent.focus();
 			},
 		);
 
