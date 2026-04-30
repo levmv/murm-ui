@@ -8,11 +8,8 @@ type StreamErrorEvent = {
 export type StreamReducerEvent = StreamEvent | StreamErrorEvent;
 
 function clearEphemeralFlag(msg: Message): void {
-	if (!msg.meta?.ephemeral) return;
-
-	const meta = { ...msg.meta };
-	delete meta.ephemeral;
-	msg.meta = Object.keys(meta).length > 0 ? meta : undefined;
+	if (!msg.ephemeral) return;
+	delete msg.ephemeral;
 }
 
 export function applyStreamEventToState(state: ChatState, pendingId: string, event: StreamReducerEvent): void {
@@ -26,11 +23,7 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 		case "message_start":
 			// We already pushed a placeholder. We can optionally merge metadata.
 			if (event.message.meta) {
-				const keepEphemeral = msg.meta?.ephemeral === true;
 				msg.meta = { ...msg.meta, ...event.message.meta };
-				if (keepEphemeral) {
-					msg.meta.ephemeral = true;
-				}
 			}
 			break;
 
@@ -83,6 +76,16 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 		case "artifact":
 			msg.blocks.push(event.block);
 			clearEphemeralFlag(msg);
+			break;
+		case "usage":
+			msg.usage = {
+				input: event.input,
+				output: event.output,
+				total: event.total ?? event.input + event.output,
+				...(event.cacheRead !== undefined ? { cacheRead: event.cacheRead } : {}),
+				...(event.cacheWrite !== undefined ? { cacheWrite: event.cacheWrite } : {}),
+				...(event.details !== undefined ? { details: event.details } : {}),
+			};
 			break;
 		case "finish": {
 			const finalStatus = event.reason === "error" || event.reason === "aborted" ? "error" : "complete";

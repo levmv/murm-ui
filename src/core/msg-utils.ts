@@ -9,7 +9,7 @@ export function extractPlainText(msg: Message): string {
 }
 
 export function dropEphemeralMessages(messages: Message[]): Message[] {
-	return messages.filter((m) => !m.meta?.ephemeral);
+	return messages.filter((m) => !m.ephemeral);
 }
 
 export function cloneMessages(messages: Message[]): Message[] {

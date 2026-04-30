@@ -217,7 +217,7 @@ export class ChatEngine {
 			id: pendingId,
 			role: "assistant",
 			blocks: [],
-			meta: { ephemeral: true },
+			ephemeral: true,
 		};
 
 		const updatedMessages = [...contextMessages, assistantMsg];
@@ -298,11 +298,11 @@ export class ChatEngine {
 			if (signal.aborted) return payloadParams;
 
 			if (plugin.beforeSubmit) {
-				const params = {
+				const params: ReadonlyChatRequestParams = {
 					messages: [...payloadParams.messages],
 					options: { ...payloadParams.options },
 					signal,
-				} as ReadonlyChatRequestParams;
+				};
 				const patch = await plugin.beforeSubmit(params);
 				if (signal.aborted) return payloadParams;
 
@@ -361,7 +361,7 @@ export class ChatEngine {
 
 	private removeAbortedEphemeralMessage(pendingId: string): void {
 		const pendingMessage = this.state.messages.find((m) => m.id === pendingId);
-		if (!pendingMessage?.meta?.ephemeral) return;
+		if (!pendingMessage?.ephemeral) return;
 
 		this.store.set({
 			messages: this.state.messages.filter((m) => m.id !== pendingId),

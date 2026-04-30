@@ -21,7 +21,8 @@ test("applyStreamEventToState appends text and reasoning deltas to the pending m
 		id: "assistant-1",
 		role: "assistant",
 		blocks: [],
-		meta: { ephemeral: true, local: true },
+		ephemeral: true,
+		meta: { local: true },
 	};
 	const state = stateWith([assistant]);
 
@@ -55,11 +56,12 @@ test("applyStreamEventToState appends text and reasoning deltas to the pending m
 			encryptedText: "hidden",
 		},
 	]);
+	assert.equal(state.messages[0].ephemeral, undefined);
 	assert.deepEqual(state.messages[0].meta, { local: true });
 });
 
 test("applyStreamEventToState keeps pending messages ephemeral for empty deltas", () => {
-	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], meta: { ephemeral: true } };
+	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], ephemeral: true };
 	const state = stateWith([assistant]);
 
 	applyStreamEventToState(state, assistant.id, {
@@ -70,11 +72,11 @@ test("applyStreamEventToState keeps pending messages ephemeral for empty deltas"
 		encrypted: true,
 	});
 
-	assert.equal(state.messages[0].meta?.ephemeral, true);
+	assert.equal(state.messages[0].ephemeral, true);
 });
 
 test("applyStreamEventToState preserves ephemeral during message_start metadata merge", () => {
-	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], meta: { ephemeral: true } };
+	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], ephemeral: true };
 	const state = stateWith([assistant]);
 
 	applyStreamEventToState(state, assistant.id, {
@@ -83,11 +85,43 @@ test("applyStreamEventToState preserves ephemeral during message_start metadata 
 			id: "provider-message",
 			role: "assistant",
 			blocks: [],
-			meta: { ephemeral: false, providerMessage: true },
+			meta: { providerMessage: true },
 		},
 	});
 
-	assert.deepEqual(state.messages[0].meta, { ephemeral: true, providerMessage: true });
+	assert.equal(state.messages[0].ephemeral, true);
+	assert.deepEqual(state.messages[0].meta, { providerMessage: true });
+});
+
+test("applyStreamEventToState stores usage metadata without clearing ephemeral state", () => {
+	const assistant: Message = {
+		id: "assistant-1",
+		role: "assistant",
+		blocks: [],
+		ephemeral: true,
+		meta: { local: true },
+	};
+	const state = stateWith([assistant]);
+
+	applyStreamEventToState(state, assistant.id, {
+		type: "usage",
+		input: 10,
+		output: 4,
+		cacheRead: 3,
+		cacheWrite: 2,
+		details: { provider: "test" },
+	});
+
+	assert.equal(state.messages[0].ephemeral, true);
+	assert.deepEqual(state.messages[0].meta, { local: true });
+	assert.deepEqual(state.messages[0].usage, {
+		input: 10,
+		output: 4,
+		total: 14,
+		cacheRead: 3,
+		cacheWrite: 2,
+		details: { provider: "test" },
+	});
 });
 
 test("applyStreamEventToState updates tool calls and finalizes streaming statuses", () => {

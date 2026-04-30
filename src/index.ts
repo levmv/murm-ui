@@ -11,12 +11,14 @@ export type {
 	ChatSession,
 	ChatState,
 	ChatStorage,
+	JsonValue,
 	Message,
 	MessageActionContext,
 	PluginContext,
 	PluginInputContext,
 	ReadonlyChatRequestParams,
 	RequestOptions,
+	TokenUsage,
 } from "./core/types";
 export { ChatUI, type ChatUIConfig } from "./main";
 

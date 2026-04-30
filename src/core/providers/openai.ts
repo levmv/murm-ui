@@ -29,6 +29,7 @@ interface OpenAIStreamChunk {
 	usage?: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
+		total_tokens?: number;
 		prompt_tokens_details?: {
 			cached_tokens?: number;
 		};
@@ -101,11 +102,14 @@ export class OpenAIProvider implements ChatProvider {
 				return; // Ignore partial/broken JSON payload
 			}
 			if (parsed.usage) {
+				const input = parsed.usage.prompt_tokens ?? 0;
+				const output = parsed.usage.completion_tokens ?? 0;
 				onEvent({
 					type: "usage",
-					input: parsed.usage.prompt_tokens || 0,
-					output: parsed.usage.completion_tokens || 0,
-					cacheRead: parsed.usage.prompt_tokens_details?.cached_tokens || 0,
+					input,
+					output,
+					total: parsed.usage.total_tokens ?? input + output,
+					cacheRead: parsed.usage.prompt_tokens_details?.cached_tokens ?? 0,
 				});
 			}
 

@@ -48,16 +48,24 @@ export type ContentBlock =
 
 export type Role = "system" | "user" | "assistant" | "tool";
 
+export interface TokenUsage {
+	input: number;
+	output: number;
+	total: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	details?: JsonValue;
+}
+
 export interface Message {
 	id: string;
 	role: Role;
 	blocks: ContentBlock[];
-	meta?: {
-		// Used to prevent this message from being sent to the LLM or persisted
-		ephemeral?: boolean;
-		// Escape hatch for plugin developers to store custom state
-		[key: string]: unknown;
-	};
+	// Used to prevent this message from being sent to the LLM or persisted
+	ephemeral?: boolean;
+	usage?: TokenUsage;
+	// Escape hatch for plugin developers to store custom state
+	meta?: Record<string, unknown>;
 }
 
 export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "error" | "aborted";
@@ -65,7 +73,7 @@ export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "
 export type StreamEvent =
 	| {
 			type: "message_start";
-			message: Message;
+			message: Pick<Message, "id" | "role" | "blocks" | "meta">;
 	  }
 	| {
 			type: "text_delta";
@@ -107,8 +115,10 @@ export type StreamEvent =
 			type: "usage";
 			input: number;
 			output: number;
+			total?: number;
 			cacheRead?: number;
 			cacheWrite?: number;
+			details?: JsonValue;
 	  }
 	| {
 			type: "finish";
@@ -196,12 +206,17 @@ export interface RenderConfig {
 }
 
 type AnyFn = (...args: never[]) => unknown;
+type DeepReadonlyDepth = [never, 0, 1, 2, 3, 4, 5];
 
-export type DeepReadonly<T> = T extends AnyFn
+export type DeepReadonly<T, Depth extends number = 5> = [Depth] extends [never]
 	? T
-	: T extends object
-		? { readonly [K in keyof T]: DeepReadonly<T[K]> }
-		: T;
+	: T extends AnyFn
+		? T
+		: T extends readonly (infer Item)[]
+			? readonly DeepReadonly<Item, DeepReadonlyDepth[Depth]>[]
+			: T extends object
+				? { readonly [K in keyof T]: DeepReadonly<T[K], DeepReadonlyDepth[Depth]> }
+				: T;
 
 export interface ReadonlyChatRequestParams {
 	readonly messages: readonly DeepReadonly<Message>[];
