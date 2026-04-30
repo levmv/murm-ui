@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal LLM Chat</title>
+    <link rel="stylesheet" href="bundle.css">
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+        }
+
+        body {
+            overflow: hidden;
+        }
+
+        .mur-brand {
+            align-items: center;
+            background-color: var(--mur-primary);
+            border-radius: 4px;
+            color: var(--mur-inverse-text);
+            display: flex;
+            font-size: 0.8rem;
+            font-weight: 700;
+            height: 23px;
+            justify-content: center;
+            width: 23px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="mur-app">
+        <!-- Sidebar -->
+        <aside class="mur-sidebar">
+            <div class="mur-sidebar-header">
+                <div class="mur-brand">M</div>
+
+                <button type="button" class="mur-close-sidebar-btn" title="Close Sidebar">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" stroke="currentColor"
+                        stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                        <path d="m11 17-5-5 5-5M18 17l-5-5 5-5" />
+                    </svg>
+                </button>
+            </div>
+            <div class="mur-sidebar-actions">
+                <button type="button" class="mur-new-chat-btn mur-btn-primary">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14m-7-7h14" />
+                    </svg>
+                    New Chat
+                </button>
+            </div>
+            <div class="mur-sidebar-content">
+                <p class="mur-sidebar-status">No past chats yet.</p>
+            </div>
+            <div class="mur-sidebar-footer">
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="mur-main-area">
+            <header class="mur-main-header">
+                <button type="button" class="mur-open-sidebar-btn" title="Open Sidebar">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12h18M3 6h18M3 18h18" />
+                    </svg>
+                </button>
+                <h2 class="mur-header-title">New Chat</h2>
+            </header>
+
+            <div class="mur-chat-layout-wrapper">
+                <div class="mur-chat-scroll-area">
+                    <div class="mur-chat-history" role="log" aria-live="polite" aria-atomic="false"></div>
+                </div>
+                <!-- Form Container -->
+                <div class="mur-chat-form-container">
+                    <form class="mur-chat-form">
+                        <textarea class="mur-chat-input" placeholder="Message AI..." rows="1"></textarea>
+                        <div class="mur-form-footer-right">
+                            <button type="submit" class="mur-send-btn mur-form-icon-btn mur-action-btn">
+                                <svg class="mur-send-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                                    <polyline points="5 12 12 5 19 12"></polyline>
+                                </svg>
+                                <svg class="mur-stop-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+                                </svg>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="bundle.js"></script>
+</body>
+
+</html>

@@ -1,6 +1,6 @@
 {
 	"files": {
-		"includes": ["**", "!!**/dist"]
+		"includes": ["**", "!!**/dist", "!!docs/dist", "!!docs/demo/bundle.css", "!!docs/demo/bundle.js"]
 	},
 	"linter": {
 		"rules": {

@@ -6,7 +6,7 @@
 	"scripts": {
 		"lint": "biome check .",
 		"format": "biome format --write .",
-		"check": "biome check . && tsc --noEmit",
+		"check": "biome check . && tsc --noEmit && tsc -p tsconfig.docs.json",
 		"dev": "esbuild example/app.ts --bundle --outfile=example/bundle.js --servedir=example",
 		"clean": "rm -rf dist",
 		"build": "npm run build:lib",
@@ -15,7 +15,9 @@
 		"test": "node --import ./scripts/register-test-loaders.js --import tsx --test \"src/**/*.test.ts\"",
 		"pack:dry": "node scripts/pack-dry-run.js",
 		"verify": "npm run check && npm test && npm run build && node scripts/verify-package.js && npm run pack:dry",
-		"build:example": "esbuild example/app.ts --bundle --outfile=example/index.js --minify --target=es2018"
+		"build:example": "esbuild example/app.ts --bundle --outfile=example/index.js --minify --target=es2018",
+		"build:docs": "node scripts/build-docs.js",
+		"build:demo": "npm run build && npm run build:docs && node scripts/build-demo.js"
 	},
 	"exports": {
 		".": {
@@ -49,7 +51,7 @@
 	"bugs": {
 		"url": "https://github.com/levmv/murm-ui/issues"
 	},
-	"homepage": "https://github.com/levmv/murm-ui#readme",
+	"homepage": "https://levmv.github.io/murm-ui/",
 	"devDependencies": {
 		"@biomejs/biome": "2.4.11",
 		"@types/jsdom": "^28.0.1",
