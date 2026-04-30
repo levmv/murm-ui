@@ -279,16 +279,17 @@
 
 			<section class="notes" aria-label="Documentation summary">
 				<div>
-					<h2>Small README, fuller docs</h2>
+					<h2>Conservative browser target</h2>
 					<p>
-						The README stays short. The docs page covers install, HTML structure, CSS imports, providers, plugins,
-						storage, and browser support in one place.
+						Murm UI emits ES2018 JavaScript and relies on standard browser APIs for streaming, cancellation,
+						IndexedDB, and secure random IDs.
 					</p>
 				</div>
 				<div>
-					<h2>Static demo</h2>
+					<h2>Lightweight by default</h2>
 					<p>
-						The demo is built into the Pages artifact with a mock provider, so it works without a backend or API key.
+						Murm UI keeps rendering work small with fewer DOM nodes, incremental updates, and throttled markdown
+						rendering. It is designed to stay comfortable as chats get long.
 					</p>
 				</div>
 			</section>
