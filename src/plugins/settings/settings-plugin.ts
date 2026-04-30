@@ -12,11 +12,17 @@ export interface SettingsState {
 	systemPrompt: string;
 }
 
+export interface SettingsStorage {
+	get: () => Promise<Partial<SettingsState> | null>;
+	set: (state: SettingsState) => Promise<void>;
+}
+
 export interface SettingsPluginConfig {
 	defaultEndpoint?: string;
 	defaultModel?: string;
 	defaultTitleModel?: string;
 	defaultSystemPrompt?: string;
+	storage?: SettingsStorage;
 
 	/**
 	 * Optional. A CSS selector for an existing button in your custom HTML.
@@ -31,11 +37,20 @@ export interface SettingsPluginConfig {
 	createProvider?: (settings: SettingsState) => ChatProvider;
 }
 
-export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
-	const STORAGE_KEY = "mur_chat_settings";
+const STORAGE_KEY = "mur_chat_settings";
 
+const defaultLocalStorageSettingsStorage: SettingsStorage = {
+	async get() {
+		return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") as Partial<SettingsState> | null;
+	},
+	async set(state) {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+	},
+};
+
+export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 	// Default fallback values
-	const defaults = {
+	const defaults: SettingsState = {
 		endpoint: config?.defaultEndpoint || "https://api.openai.com/v1/chat/completions",
 		apiKey: "",
 		model: config?.defaultModel || "gpt-4o-mini",
@@ -45,29 +60,34 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 
 	let currentSettings = { ...defaults };
 
-	// Load from local storage
-	try {
-		const saved = localStorage.getItem(STORAGE_KEY);
-		if (saved) {
-			currentSettings = { ...defaults, ...JSON.parse(saved) };
-		}
-	} catch (error) {
-		console.warn("SettingsPlugin: Could not read settings from localStorage.", error);
-	}
-
 	let modalOverlay: HTMLElement | null = null;
 	let mountedTriggerEl: Element | null = null;
 	let mountedTriggerHandler: (() => void) | null = null;
 	let appliedProviderSettings: Pick<SettingsState, "apiKey" | "endpoint" | "model"> | null = null;
 
+	const storage = config?.storage ?? defaultLocalStorageSettingsStorage;
 	const buildProvider = config?.createProvider ?? ((s) => new OpenAIProvider(s.apiKey, s.endpoint, s.model));
 
-	function applySettings(ctx: PluginContext, settings: typeof currentSettings) {
-		currentSettings = settings;
+	async function loadInitialSettings(ctx: PluginContext) {
 		try {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+			const saved = await storage.get();
+			applySettings(ctx, { ...defaults, ...(saved ?? {}) }, false);
 		} catch (error) {
-			console.warn("SettingsPlugin: Could not save settings to localStorage.", error);
+			console.warn("SettingsPlugin: Could not read settings from storage.", error);
+			applySettings(ctx, { ...defaults }, false);
+		}
+	}
+
+	function applySettings(ctx: PluginContext, settings: SettingsState, persist = true) {
+		currentSettings = settings;
+		if (persist) {
+			try {
+				void Promise.resolve(storage.set(settings)).catch((error) => {
+					console.warn("SettingsPlugin: Could not save settings to storage.", error);
+				});
+			} catch (error) {
+				console.warn("SettingsPlugin: Could not save settings to storage.", error);
+			}
 		}
 
 		const providerSettings = {
@@ -169,7 +189,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		name: "settings",
 
 		onMount: (ctx) => {
-			applySettings(ctx, currentSettings);
+			void loadInitialSettings(ctx);
 
 			const openModal = () => {
 				if (!modalOverlay) {

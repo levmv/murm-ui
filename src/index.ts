@@ -27,5 +27,10 @@ export {
 } from "./plugins/attachment/attachment-plugin";
 export { CopyPlugin } from "./plugins/copy/copy-plugin";
 export { EditPlugin } from "./plugins/edit/edit-plugin";
-export { SettingsPlugin, type SettingsPluginConfig, type SettingsState } from "./plugins/settings/settings-plugin";
+export {
+	SettingsPlugin,
+	type SettingsPluginConfig,
+	type SettingsState,
+	type SettingsStorage,
+} from "./plugins/settings/settings-plugin";
 export { ThinkingPlugin } from "./plugins/thinking/thinking-plugin";
