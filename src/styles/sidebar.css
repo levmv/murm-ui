@@ -175,9 +175,25 @@
 	flex-shrink: 0;
 }
 
-.mur-sidebar-item:hover .mur-delete-btn,
 .mur-sidebar-item:focus-within .mur-delete-btn {
 	display: block;
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.mur-sidebar-item:hover .mur-delete-btn {
+		display: block;
+	}
+}
+
+@media (hover: none), (pointer: coarse) {
+	.mur-sidebar-item .mur-delete-btn {
+		display: block;
+		opacity: 0.7;
+	}
+
+	.mur-sidebar-item .mur-delete-btn:active {
+		opacity: 1;
+	}
 }
 
 .mur-sidebar-item .mur-delete-btn:hover {
