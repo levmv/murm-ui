@@ -12,6 +12,7 @@ interface FeedHarness {
 	frameCount: () => number;
 	flushFrames: () => void;
 	scrollCalls: ScrollBehavior[];
+	windowScrollCalls: ScrollBehavior[];
 	triggerResize: () => void;
 }
 
@@ -23,7 +24,9 @@ function setGlobal(name: string, value: unknown): void {
 	});
 }
 
-function createFeedHarness(options: { resizeObserver?: boolean; plugins?: ChatPlugin[] } = {}): FeedHarness {
+function createFeedHarness(
+	options: { mobile?: boolean; resizeObserver?: boolean; plugins?: ChatPlugin[] } = {},
+): FeedHarness {
 	const dom = new JSDOM(`
 		<div class="mur-chat-scroll-area">
 			<div class="mur-chat-history"></div>
@@ -33,6 +36,7 @@ function createFeedHarness(options: { resizeObserver?: boolean; plugins?: ChatPl
 	const frames = new Map<number, FrameRequestCallback>();
 	let nextFrameId = 1;
 	const scrollCalls: ScrollBehavior[] = [];
+	const windowScrollCalls: ScrollBehavior[] = [];
 	let resizeCallback: ResizeObserverCallback | null = null;
 
 	class MockResizeObserver {
@@ -66,6 +70,22 @@ function createFeedHarness(options: { resizeObserver?: boolean; plugins?: ChatPl
 			scrollCalls.push(options.behavior);
 		}
 	};
+	dom.window.scrollTo = (options?: ScrollToOptions | number) => {
+		if (typeof options === "object" && options?.behavior) {
+			windowScrollCalls.push(options.behavior);
+		}
+	};
+	dom.window.matchMedia = (query: string) =>
+		({
+			matches: options.mobile === true && query === "(max-width: 768px)",
+			media: query,
+			onchange: null,
+			addEventListener: () => {},
+			removeEventListener: () => {},
+			addListener: () => {},
+			removeListener: () => {},
+			dispatchEvent: () => false,
+		}) as MediaQueryList;
 
 	const feed = new Feed(dom.window.document.body, { plugins: options.plugins ?? [] });
 
@@ -79,6 +99,7 @@ function createFeedHarness(options: { resizeObserver?: boolean; plugins?: ChatPl
 			for (const callback of pending) callback(0);
 		},
 		scrollCalls,
+		windowScrollCalls,
 		triggerResize: () => {
 			assert.ok(resizeCallback);
 			resizeCallback([], {} as ResizeObserver);
@@ -125,6 +146,19 @@ test("generation start schedules one smooth scroll", () => {
 	assert.equal(frameCount(), 1);
 	flushFrames();
 	assert.deepEqual(scrollCalls, ["smooth"]);
+
+	feed.destroy();
+});
+
+test("mobile generation scrolls the window", () => {
+	const { feed, frameCount, flushFrames, scrollCalls, windowScrollCalls } = createFeedHarness({ mobile: true });
+
+	feed.update(messages(), "assistant-1", false, true);
+
+	assert.equal(frameCount(), 1);
+	flushFrames();
+	assert.deepEqual(scrollCalls, []);
+	assert.deepEqual(windowScrollCalls, ["smooth"]);
 
 	feed.destroy();
 });

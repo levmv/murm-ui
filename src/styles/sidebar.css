@@ -186,8 +186,10 @@
 
 @media (max-width: 768px) {
 	.mur-sidebar {
-		position: absolute;
-		height: 100%;
+		position: fixed;
+		inset: 0 auto 0 0;
+		height: auto;
+		max-width: 86vw;
 		z-index: 50;
 		margin-left: 0;
 		transform: translateX(-100%);

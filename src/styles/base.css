@@ -296,8 +296,54 @@
 }
 
 @media (max-width: 768px) {
+	html.mur-chat-page-scroll,
+	html.mur-chat-page-scroll body {
+		height: auto;
+		min-height: 100%;
+	}
+
+	html.mur-chat-page-scroll body {
+		overflow-y: auto;
+	}
+
+	.mur-app {
+		min-height: 100vh;
+		height: auto;
+		width: 100%;
+		overflow: visible;
+	}
+
+	@supports (min-height: 100svh) {
+		.mur-app {
+			min-height: 100svh;
+		}
+	}
+
+	@supports (min-height: 100dvh) {
+		.mur-app {
+			min-height: 100dvh;
+			height: auto;
+		}
+	}
+
+	.mur-main-area {
+		min-height: 100vh;
+	}
+
+	@supports (min-height: 100svh) {
+		.mur-main-area {
+			min-height: 100svh;
+		}
+	}
+
+	@supports (min-height: 100dvh) {
+		.mur-main-area {
+			min-height: 100dvh;
+		}
+	}
+
 	.mur-main-header {
-		position: relative;
+		position: sticky;
 		background-color: var(--mur-bg);
 		border-bottom: 1px solid var(--mur-border);
 		pointer-events: auto;
@@ -318,7 +364,41 @@
 		text-overflow: ellipsis;
 	}
 
+	.mur-app:not(.mur-sidebar-closed) .mur-open-sidebar-btn {
+		display: flex;
+	}
+
+	.mur-chat-layout-wrapper {
+		min-height: calc(100vh - 60px);
+		overflow: visible;
+	}
+
+	@supports (min-height: 100svh) {
+		.mur-chat-layout-wrapper {
+			min-height: calc(100svh - 60px);
+		}
+	}
+
+	@supports (min-height: 100dvh) {
+		.mur-chat-layout-wrapper {
+			min-height: calc(100dvh - 60px);
+		}
+	}
+
+	.mur-chat-scroll-area {
+		flex: 1;
+		min-height: 0;
+		overflow: visible;
+		scrollbar-gutter: auto;
+	}
+
 	.mur-chat-history {
 		padding-top: 1rem;
+	}
+
+	.mur-chat-form-container {
+		position: sticky;
+		z-index: 12;
+		border-bottom-width: max(1rem, env(safe-area-inset-bottom));
 	}
 }

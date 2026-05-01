@@ -3,6 +3,7 @@ import { el, queryOrThrow } from "../utils/dom";
 import { MessageNode } from "./message-node";
 
 const STICKY_THRESHOLD = 50;
+const MOBILE_SCROLL_QUERY = "(max-width: 768px)";
 
 export class Feed {
 	private scrollArea: HTMLElement;
@@ -18,6 +19,8 @@ export class Feed {
 	private pendingScrollFrame: number | null = null;
 	private pendingScrollBehavior: ScrollBehavior | null = null;
 	private resizeObserver?: ResizeObserver;
+	private mediaQueryList: MediaQueryList;
+	private isMobileScroll = false;
 
 	constructor(
 		container: HTMLElement,
@@ -25,8 +28,12 @@ export class Feed {
 	) {
 		this.scrollArea = queryOrThrow<HTMLElement>(container, ".mur-chat-scroll-area");
 		this.historyContainer = queryOrThrow<HTMLElement>(container, ".mur-chat-history");
+		this.mediaQueryList = window.matchMedia(MOBILE_SCROLL_QUERY);
+		this.isMobileScroll = this.mediaQueryList.matches;
 
 		this.scrollArea.addEventListener("scroll", this.onScroll, { passive: true });
+		window.addEventListener("scroll", this.onScroll, { passive: true });
+		this.addMediaListener();
 
 		if (typeof ResizeObserver !== "undefined") {
 			this.resizeObserver = new ResizeObserver(() => {
@@ -117,6 +124,8 @@ export class Feed {
 
 		this.resizeObserver?.disconnect();
 		this.scrollArea.removeEventListener("scroll", this.onScroll);
+		window.removeEventListener("scroll", this.onScroll);
+		this.removeMediaListener();
 		this.clearAllNodes();
 		this.spinnerEl.remove();
 	}
@@ -155,15 +164,22 @@ export class Feed {
 
 			if (this.isDestroyed || !this.isStickyToBottom) return;
 
-			this.scrollArea.scrollTo({
-				top: this.scrollArea.scrollHeight,
-				behavior,
-			});
+			if (this.isMobileScroll) {
+				window.scrollTo({
+					top: document.documentElement.scrollHeight,
+					behavior,
+				});
+			} else {
+				this.scrollArea.scrollTo({
+					top: this.scrollArea.scrollHeight,
+					behavior,
+				});
+			}
 		});
 	}
 
 	private onScroll = () => {
-		const { scrollTop, scrollHeight, clientHeight } = this.scrollArea;
+		const { scrollTop, scrollHeight, clientHeight } = this.getScrollMetrics();
 		const distanceToBottom = scrollHeight - scrollTop - clientHeight;
 
 		const delta = scrollTop - this.lastScrollTop;
@@ -179,4 +195,42 @@ export class Feed {
 			this.isStickyToBottom = true;
 		}
 	};
+
+	private getScrollMetrics(): { scrollTop: number; scrollHeight: number; clientHeight: number } {
+		if (this.isMobileScroll) {
+			const doc = document.documentElement;
+
+			return {
+				scrollTop: window.scrollY || doc.scrollTop,
+				scrollHeight: doc.scrollHeight,
+				clientHeight: window.innerHeight,
+			};
+		}
+
+		return {
+			scrollTop: this.scrollArea.scrollTop,
+			scrollHeight: this.scrollArea.scrollHeight,
+			clientHeight: this.scrollArea.clientHeight,
+		};
+	}
+
+	private onMediaChange = (event: MediaQueryListEvent) => {
+		this.isMobileScroll = event.matches;
+	};
+
+	private addMediaListener(): void {
+		if (typeof this.mediaQueryList.addEventListener === "function") {
+			this.mediaQueryList.addEventListener("change", this.onMediaChange);
+		} else {
+			this.mediaQueryList.addListener(this.onMediaChange);
+		}
+	}
+
+	private removeMediaListener(): void {
+		if (typeof this.mediaQueryList.removeEventListener === "function") {
+			this.mediaQueryList.removeEventListener("change", this.onMediaChange);
+		} else {
+			this.mediaQueryList.removeListener(this.onMediaChange);
+		}
+	}
 }

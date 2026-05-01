@@ -65,7 +65,17 @@ function installDom(url = "https://example.test/"): HTMLElement {
 
 	Object.defineProperty(dom.window, "matchMedia", {
 		configurable: true,
-		value: () => ({ matches: false }),
+		value: (query: string) =>
+			({
+				matches: false,
+				media: query,
+				onchange: null,
+				addEventListener: () => {},
+				removeEventListener: () => {},
+				addListener: () => {},
+				removeListener: () => {},
+				dispatchEvent: () => false,
+			}) as MediaQueryList,
 	});
 	delete (dom.window as unknown as Window & { ontouchstart?: unknown }).ontouchstart;
 
@@ -197,6 +207,7 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 		destroy: () => lifecycle.push("destroy"),
 	};
 	const storage = new MemoryStorage();
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
 
 	const ui = new ChatUI({
 		container,
@@ -206,6 +217,7 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 		storage,
 		plugins: () => [plugin],
 	});
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), true);
 
 	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
 	assert.equal(storage.loadSessionsCalls, 0);
@@ -231,6 +243,7 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	await waitFor(() => latestSignal?.aborted === true && ui.engine.state.generatingMessageId === null, "stop");
 
 	await ui.destroy();
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
 	assert.deepEqual(lifecycle, ["mount", "input", "destroy"]);
 
 	input.value = "after destroy";

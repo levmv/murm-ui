@@ -106,3 +106,9 @@
 .mur-action-btn.mur-generating .mur-stop-icon {
 	display: block;
 }
+
+@media (max-width: 768px) {
+	.mur-app.mur-chat-empty .mur-chat-form-container {
+		position: absolute;
+	}
+}

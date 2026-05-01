@@ -12,6 +12,8 @@ import { Feed } from "./components/feed";
 import { Input } from "./components/input";
 import { Sidebar } from "./components/sidebar";
 
+const PAGE_SCROLL_CLASS = "mur-chat-page-scroll";
+
 export interface ChatUIConfig {
 	container: HTMLElement | string;
 	provider: ChatProvider;
@@ -80,6 +82,7 @@ export class ChatUI {
 
 		if (!el) throw new Error(`Chat container not found: ${this.config.container}`);
 		this.container = el as HTMLElement;
+		attachPageScrollClass();
 
 		const initialSessionId = this.config.initialSessionId || this.router.getId() || null;
 
@@ -113,6 +116,7 @@ export class ChatUI {
 		this.sidebarComponent?.destroy();
 		this.feedComponent.destroy();
 		this.inputComponent.destroy();
+		detachPageScrollClass();
 	}
 
 	private initComponents() {
@@ -409,4 +413,12 @@ function lsSetItem(key: string, value: string): void {
 	} catch {
 		// Ignore
 	}
+}
+
+function attachPageScrollClass(): void {
+	document.documentElement.classList.add(PAGE_SCROLL_CLASS);
+}
+
+function detachPageScrollClass(): void {
+	document.documentElement.classList.remove(PAGE_SCROLL_CLASS);
 }
