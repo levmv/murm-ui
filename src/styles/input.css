@@ -16,8 +16,7 @@
 		border-color 0.2s ease;
 }
 
-/* :has is newer than our browser baseline, but this layout enhancement can degrade safely. */
-.mur-chat-layout-wrapper:has(.mur-chat-history:empty) .mur-chat-form-container {
+.mur-app.mur-chat-empty .mur-chat-form-container {
 	bottom: 50%;
 	transform: translateY(50%);
 }

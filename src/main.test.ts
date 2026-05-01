@@ -273,6 +273,101 @@ test("ChatUI passes titleOptions into auto-title generation", async () => {
 	await ui.destroy();
 });
 
+test("ChatUI marks the app layout when the chat is empty", async () => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+	const ui = new ChatUI({
+		container,
+		enableSidebar: false,
+		provider: {
+			async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		routing: false,
+		storage: new MemoryStorage(),
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
+
+	assert.equal(container.classList.contains("mur-chat-empty"), true);
+
+	await ui.engine.setMessages([textMessage("msg-1", "user", "hello")]);
+	assert.equal(container.classList.contains("mur-chat-empty"), false);
+
+	await ui.engine.setMessages([]);
+	assert.equal(container.classList.contains("mur-chat-empty"), true);
+
+	await ui.destroy();
+});
+
+test("ChatUI keeps the non-empty layout state while switching between stored chats", async () => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+
+	let releaseLoad!: () => void;
+	const loadReleased = new Promise<void>((resolve) => {
+		releaseLoad = resolve;
+	});
+	let delayedLoadStarted = false;
+
+	const storage = new (class extends MemoryStorage {
+		override async loadOne(id: string): Promise<ChatSession | null> {
+			if (id === "chat-2") {
+				delayedLoadStarted = true;
+				await loadReleased;
+			}
+			return super.loadOne(id);
+		}
+	})([
+		{
+			id: "chat-1",
+			title: "Stored Chat 1",
+			updatedAt: 200,
+			messages: [textMessage("msg-1", "user", "stored one")],
+		},
+		{
+			id: "chat-2",
+			title: "Stored Chat 2",
+			updatedAt: 100,
+			messages: [textMessage("msg-2", "user", "stored two")],
+		},
+	]);
+
+	const ui = new ChatUI({
+		container,
+		provider: {
+			async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		routing: false,
+		storage,
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
+	await ui.engine.sessions.switch("chat-1");
+	await waitFor(
+		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
+		"chat 1 load",
+	);
+
+	assert.equal(container.classList.contains("mur-chat-empty"), false);
+
+	const switchPromise = ui.engine.sessions.switch("chat-2");
+	await waitFor(() => delayedLoadStarted && ui.engine.state.isLoadingSession, "chat 2 load start");
+
+	assert.deepEqual(ui.engine.state.messages, []);
+	assert.equal(container.classList.contains("mur-chat-empty"), false);
+
+	releaseLoad();
+	await switchPromise;
+
+	assert.equal(container.classList.contains("mur-chat-empty"), false);
+
+	await ui.destroy();
+});
+
 test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	const container = installDom();
 	const { ChatUI } = await import("./main");

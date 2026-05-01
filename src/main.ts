@@ -271,6 +271,15 @@ export class ChatUI {
 			() => this.syncRouterToState(),
 		);
 
+		this.engine.subscribe(
+			(state) => (state.isLoadingSession ? null : state.messages.length === 0),
+			(isEmpty) => {
+				if (isEmpty !== null) {
+					this.container.classList.toggle("mur-chat-empty", isEmpty);
+				}
+			},
+		);
+
 		let prevIsGenerating = false;
 
 		// Feed subscribes to the hot lane because stream chunks are applied via
