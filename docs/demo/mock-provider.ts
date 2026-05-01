@@ -3,38 +3,40 @@ import { uuidv7 } from "../../src/utils/uuid";
 
 const RESPONSES = [
 	[
-		"Hello! I am the local demo provider for Murm UI.",
+		"Hello! I am the local demo provider for Murm UI. 🚀",
 		"",
-		"Try sending a few messages, editing your prompt, attaching a small text file, or copying this response. Everything here runs in the browser, so the demo does not need an API key.",
+		"Try sending a few messages, editing your prompt, attaching a small text file, or copying this response. Everything here runs entirely in your browser, so no API keys were harmed in the making of this demo.",
 	].join("\n"),
 	[
-		"Here is a slightly more structured answer:",
+		"Notice how snappy this feels? That is the beauty of vanilla TypeScript.",
 		"",
-		"- **Provider**: streams normalized events into the UI.",
-		"- **Storage**: saves chat sessions and generated titles.",
-		"- **Plugins**: add focused behavior like attachments, copy buttons, and editing.",
-		"",
-		"The demo rotates canned responses so you can see markdown rendering without calling a model.",
+		"Because there is no virtual DOM diffing , the UI just updates the exact nodes it needs to using reference-based DOM updates. It is designed to keep your laptop fan quiet, even if I stream a massive wall of text at you.",
 	].join("\n"),
 	[
-		"A provider can be very small. The important part is emitting stream events:",
+		"I also handle markdown parsing right out of the box. I can do **bold text**, *italics*, and even tables:",
 		"",
-		"```ts",
-		"onEvent({",
-		'  type: "text_delta",',
-		"  messageId,",
-		"  blockId,",
-		'  delta: "Hello from a provider",',
-		"});",
-		"```",
+		"| Feature | Status |",
+		"| :--- | :--- |",
+		"| Dependencies | Minimal |",
+		"| Overhead | Low |",
+		"| Vibes | Immaculate |",
 		"",
-		"Code blocks render without syntax highlighting in this static demo, which keeps the page light.",
+		"And of course, code blocks render cleanly. You can plug in PrismJS (or any highlighter) for syntax colors.",
 	].join("\n"),
 	[
-		"One more thing to poke at: Murm UI keeps the UI pieces separate from provider logic.",
+		"Ultimately, Murm UI just wants to be a boring, reliable chat shell.",
 		"",
-		"That means you can start with a local mock, switch to an OpenAI-compatible endpoint later, and keep the same chat shell.",
+		"You bring your own backend, plug in your AI model, and let the UI handle the messy streaming states and scroll locking. Feel free to poke around the source code, or just keep chatting with me!",
 	].join("\n"),
+];
+
+const FUN_TITLES = [
+	"Existential AI Crisis",
+	"Zero-Framework Vibes",
+	"Vanilla JS Renaissance",
+	"Look Ma, No React!",
+	"Div Soup Avoided",
+	"Just Chillin' Locally",
 ];
 
 export class MockProvider implements ChatProvider {
@@ -57,6 +59,9 @@ export class MockProvider implements ChatProvider {
 			const chunks = splitIntoChunks(RESPONSES[Math.max(0, responseIndex) % RESPONSES.length]);
 			let index = 0;
 
+			// Dynamic Speed: Aim for ~1.1 seconds total, capped between 15ms (fast) and 45ms (normal)
+			const intervalMs = Math.max(15, Math.min(45, Math.floor(1100 / chunks.length)));
+			console.log(intervalMs);
 			const interval = setInterval(() => {
 				if (signal.aborted) {
 					clearInterval(interval);
@@ -78,15 +83,23 @@ export class MockProvider implements ChatProvider {
 					onEvent({ type: "finish", reason: "stop" });
 					resolve();
 				}
-			}, 50);
+			}, intervalMs);
 		});
 	}
 
 	async generateTitle(_messages: Message[], _options?: RequestOptions, _signal?: AbortSignal): Promise<string> {
-		return new Promise((resolve) => setTimeout(() => resolve("Simulated Chat"), 600));
+		const randomTitle = FUN_TITLES[Math.floor(Math.random() * FUN_TITLES.length)];
+		return new Promise((resolve) => setTimeout(() => resolve(randomTitle), 600));
 	}
 }
 
 function splitIntoChunks(text: string): string[] {
-	return text.match(/(\S+\s*)/g) ?? [text];
+	const chunks: string[] = [];
+	const size = 7;
+
+	for (let i = 0; i < text.length; i += size) {
+		chunks.push(text.slice(i, i + size));
+	}
+
+	return chunks;
 }
