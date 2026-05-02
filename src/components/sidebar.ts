@@ -1,5 +1,7 @@
 import type { ChatSessionMeta } from "../core/types";
 import { el, queryOrThrow, replaceNodes } from "../utils/dom";
+import { ICON_EDIT, ICON_MORE_VERTICAL, ICON_TRASH } from "../utils/icons";
+import { showDropdown } from "./dropdown";
 
 export interface SidebarProps {
 	container: HTMLElement;
@@ -111,18 +113,36 @@ export class Sidebar {
 			link.setAttribute("aria-current", "page");
 		}
 
-		const deleteBtn = el("button", "mur-delete-btn", {
+		const optionsBtn = el("button", "mur-sidebar-options-btn", {
 			type: "button",
-			innerHTML: "×",
-			title: `Delete "${session.title}"`,
+			innerHTML: ICON_MORE_VERTICAL,
+			title: `Options for "${session.title}"`,
 			onclick: (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				this.props.onDeleteSession(session.id);
+
+				showDropdown(optionsBtn, [
+					{
+						id: "rename",
+						label: "Rename",
+						iconHtml: ICON_EDIT,
+						onClick: () => {
+							// TODO: Implement rename functionality later
+							console.log("Rename clicked for", session.id);
+						},
+					},
+					{
+						id: "delete",
+						label: "Delete",
+						iconHtml: ICON_TRASH,
+						danger: true,
+						onClick: () => this.props.onDeleteSession(session.id),
+					},
+				]);
 			},
 		});
-		deleteBtn.setAttribute("aria-label", `Delete chat "${session.title}"`);
-		item.append(link, deleteBtn);
+		optionsBtn.setAttribute("aria-label", `Options for chat "${session.title}"`);
+		item.append(link, optionsBtn);
 
 		return item;
 	}
