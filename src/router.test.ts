@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { JSDOM, type DOMWindow } from "jsdom";
+import { type DOMWindow, JSDOM } from "jsdom";
 import { AppRouter } from "./router";
 
 function setGlobal(name: string, value: unknown): void {

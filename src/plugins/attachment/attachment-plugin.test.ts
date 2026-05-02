@@ -250,7 +250,7 @@ test("upload fallback creates file content blocks", async () => {
 });
 
 test("submission is blocked while processing and enabled after resolution", async () => {
-	let resolveUpload: ((value: { type: string; data: string; name?: string }) => void) | null = null;
+	let resolveUpload!: (value: { type: string; data: string; name?: string }) => void;
 	const plugin = AttachmentPlugin({
 		uploadFile: async () =>
 			new Promise((resolve) => {
@@ -267,7 +267,6 @@ test("submission is blocked while processing and enabled after resolution", asyn
 	harness.form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 	assert.deepEqual(harness.submissions, []);
 
-	assert.ok(resolveUpload);
 	resolveUpload({ type: "application/octet-stream", data: "done", name: "slow.bin" });
 	await waitFor(() => plugin.isSubmitBlocked?.() === false, "upload resolved");
 

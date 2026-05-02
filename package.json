@@ -6,7 +6,8 @@
 	"scripts": {
 		"lint": "biome check .",
 		"format": "biome format --write .",
-		"check": "biome check . && tsc --noEmit && tsc -p tsconfig.docs.json",
+		"check": "biome check . && npm run check:types",
+		"check:types": "tsc --noEmit && tsc -p docs/tsconfig.json && tsc -p src/tsconfig.test.json",
 		"dev": "esbuild example/app.ts --bundle --outfile=example/bundle.js --servedir=example",
 		"clean": "rm -rf dist",
 		"build": "npm run build:lib",

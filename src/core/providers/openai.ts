@@ -210,6 +210,7 @@ export class OpenAIProvider implements ChatProvider {
 				});
 				finishEmitted = true;
 			}
+			return undefined;
 		});
 
 		// If it finishes normally but didn't emit a finish reason (some providers do this)

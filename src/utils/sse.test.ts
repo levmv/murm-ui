@@ -17,6 +17,7 @@ test("flushes a buffered TextDecoder sequence at stream end", async () => {
 
 	await parseSSE(new Response(stream), (data) => {
 		messages.push(data);
+		return undefined;
 	});
 
 	assert.deepEqual(messages, [`hi ${String.fromCharCode(0xfffd)}`]);
