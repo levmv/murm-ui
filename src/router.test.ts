@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { JSDOM } from "jsdom";
+import { JSDOM, type DOMWindow } from "jsdom";
 import { AppRouter } from "./router";
 
 function setGlobal(name: string, value: unknown): void {
@@ -11,7 +11,7 @@ function setGlobal(name: string, value: unknown): void {
 	});
 }
 
-function installDom(url: string): Window {
+function installDom(url: string): DOMWindow {
 	const dom = new JSDOM("", { url });
 	setGlobal("window", dom.window);
 	setGlobal("history", dom.window.history);

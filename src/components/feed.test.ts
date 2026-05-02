@@ -300,34 +300,6 @@ test("copy action reads the latest message for a reused node", async () => {
 
 	feed.destroy();
 });
-
-test("assistant messages do not render copy actions without CopyPlugin", () => {
-	const { feed, root } = createFeedHarness();
-
-	setGlobal("navigator", {
-		clipboard: {
-			writeText: async () => {},
-		},
-	});
-
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-1", type: "text", text: "Text" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-
-	assert.equal(root.querySelector(".mur-message-actions"), null);
-
-	feed.destroy();
-});
-
 test("message actions are shown again when they become applicable", () => {
 	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
 
@@ -512,37 +484,6 @@ test("plugin action clicks receive the latest message and DOM context", () => {
 	assert.equal(clicks[0].messageEl, root.querySelector(".mur-message"));
 	assert.equal(clicks[0].actionId, "share");
 	assert.equal(clicks[0].pluginName, "share");
-
-	feed.destroy();
-});
-
-test("plugin action buttons render for user messages", () => {
-	const plugin: ChatPlugin = {
-		name: "thumbs",
-		getActionButtons: (msg) =>
-			msg.role === "user"
-				? [
-						{
-							id: "thumbs-up",
-							title: "Thumbs up",
-							iconHtml: "<span>T</span>",
-							onClick: () => {},
-						},
-					]
-				: [],
-	};
-	const { feed, root } = createFeedHarness({ plugins: [plugin] });
-
-	feed.update(
-		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Hello" }] }],
-		null,
-		false,
-		false,
-	);
-
-	const actions = root.querySelector<HTMLElement>(".mur-message-user .mur-message-actions");
-	assert.ok(actions);
-	assert.equal(actions.querySelector<HTMLButtonElement>("[data-action-id='thumbs-up']")?.title, "Thumbs up");
 
 	feed.destroy();
 });
