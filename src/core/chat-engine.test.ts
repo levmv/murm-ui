@@ -25,16 +25,28 @@ class MemoryStorage implements ChatStorage {
 	constructor(sessions: ChatSession[] = []) {
 		for (const session of sessions) {
 			this.sessions.set(session.id, session);
-			this.metas.push({ id: session.id, title: session.title, updatedAt: session.updatedAt });
+			this.metas.push({
+				id: session.id,
+				title: session.title,
+				updatedAt: session.updatedAt,
+				...(typeof session.isPinned === "boolean" ? { isPinned: session.isPinned } : {}),
+			});
 		}
 	}
 
-	async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
-		let metas = [...this.metas].sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id));
+	async loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions> {
+		let metas = [...this.metas].sort((a, b) => {
+			const pinnedDelta = Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned));
+			if (pinnedDelta !== 0) return pinnedDelta;
+			return b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
+		});
 
 		if (cursor) {
 			const cursorIndex = metas.findIndex(
-				(session) => session.updatedAt === cursor.updatedAt && session.id === cursor.id,
+				(session) =>
+					Boolean(session.isPinned) === Boolean(cursor.isPinned) &&
+					session.updatedAt === cursor.updatedAt &&
+					session.id === cursor.id,
 			);
 			if (cursorIndex >= 0) metas = metas.slice(cursorIndex + 1);
 		}
@@ -51,7 +63,14 @@ class MemoryStorage implements ChatStorage {
 		this.saved.push(session);
 		this.sessions.set(session.id, session);
 
-		const meta = { id: session.id, title: session.title, updatedAt: session.updatedAt };
+		const previousMeta = this.metas.find((s) => s.id === session.id);
+		const isPinned = typeof session.isPinned === "boolean" ? session.isPinned : previousMeta?.isPinned;
+		const meta = {
+			id: session.id,
+			title: session.title,
+			updatedAt: session.updatedAt,
+			...(typeof isPinned === "boolean" ? { isPinned } : {}),
+		};
 		this.metas = [meta, ...this.metas.filter((s) => s.id !== session.id)];
 	}
 
@@ -150,6 +169,57 @@ test("sessions.loadHistory lists stored sessions while a clean URL starts a blan
 	assert.deepEqual(storage.loadOneCalls, []);
 });
 
+test("sessions.updatePinned persists metadata, sorts pinned first, and enforces the pin limit", async () => {
+	const storage = new MemoryStorage([
+		{ id: "pin-1", title: "Pinned 1", updatedAt: 100, isPinned: true, messages: [] },
+		{ id: "pin-2", title: "Pinned 2", updatedAt: 200, isPinned: true, messages: [] },
+		{ id: "pin-3", title: "Pinned 3", updatedAt: 300, isPinned: true, messages: [] },
+		{ id: "chat-1", title: "Regular", updatedAt: 400, messages: [] },
+	]);
+	const engine = new ChatEngine({ provider: replyingProvider("ok"), storage });
+
+	await engine.sessions.loadHistory();
+	await engine.sessions.updatePinned("chat-1", true);
+
+	assert.equal(engine.state.sessions.find((session) => session.id === "chat-1")?.isPinned, undefined);
+	assert.equal(storage.metadataUpdates.length, 0);
+
+	await engine.sessions.updatePinned("pin-1", false);
+	await engine.sessions.updatePinned("chat-1", true);
+
+	assert.deepEqual(storage.metadataUpdates, [
+		{ id: "pin-1", meta: { isPinned: false } },
+		{ id: "chat-1", meta: { isPinned: true } },
+	]);
+	assert.deepEqual(
+		engine.state.sessions.map((session) => session.id),
+		["chat-1", "pin-3", "pin-2", "pin-1"],
+	);
+});
+
+test("session saves and title updates preserve pinned metadata", async () => {
+	const storage = new MemoryStorage([
+		{
+			id: "chat-1",
+			title: "Pinned chat",
+			updatedAt: 100,
+			isPinned: true,
+			messages: [textMessage("msg-1", "user", "hello")],
+		},
+	]);
+	const engine = new ChatEngine({ provider: replyingProvider("reply"), storage });
+
+	await engine.sessions.loadHistory();
+	await engine.sessions.switch("chat-1");
+	await engine.sendMessage("next");
+	await waitFor(() => storage.saved.length === 1, "session save");
+	await engine.sessions.updateTitle("chat-1", "  Better title  ");
+
+	assert.equal(storage.saved[0].isPinned, true);
+	assert.deepEqual(storage.metadataUpdates, [{ id: "chat-1", meta: { title: "Better title" } }]);
+	assert.equal(engine.state.sessions.find((session) => session.id === "chat-1")?.isPinned, true);
+});
+
 test("initial load can open a session that is not in the first sidebar page", async () => {
 	const listed = {
 		id: "listed",
@@ -184,7 +254,7 @@ test("initial load can open a session that is not in the first sidebar page", as
 	await waitFor(() => !engine.state.isLoadingSessions, "deep-linked sidebar load");
 	assert.deepEqual(
 		engine.state.sessions.map((session) => session.id),
-		["deep-linked", "listed"],
+		["listed", "deep-linked"],
 	);
 });
 
@@ -718,7 +788,7 @@ test("sendMessage works while initial history is loading", async () => {
 	});
 
 	const storage = new (class extends MemoryStorage {
-		override async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
+		override async loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions> {
 			loadStarted();
 			await loadReleased;
 			return super.loadSessions(limit, cursor);

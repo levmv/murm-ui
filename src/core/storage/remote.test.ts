@@ -44,7 +44,7 @@ test("loadSessions sends pagination params and auth header", async () => {
 	const { calls } = mockJsonFetch({ items: [], hasMore: false });
 	const storage = new RemoteStorage("https://example.test/api", () => "token-1");
 
-	const result = await storage.loadSessions(20, { updatedAt: 123, id: "chat-1" });
+	const result = await storage.loadSessions(20, { updatedAt: 123, id: "chat-1", title: "A chat", isPinned: true });
 
 	assert.deepEqual(result, { items: [], hasMore: false });
 	const url = new URL(calls[0].url);
@@ -53,6 +53,7 @@ test("loadSessions sends pagination params and auth header", async () => {
 	assert.equal(url.searchParams.get("limit"), "20");
 	assert.equal(url.searchParams.get("cursor"), "123");
 	assert.equal(url.searchParams.get("cursorId"), "chat-1");
+	assert.equal(url.searchParams.get("cursorPinned"), "true");
 	assert.deepEqual(calls[0].init.headers, {
 		"Content-Type": "application/json",
 		Authorization: "Bearer token-1",
@@ -98,7 +99,7 @@ test("save, updateMetadata, and delete use the expected endpoints and methods", 
 	const chat = session();
 
 	await storage.save(chat);
-	await storage.updateMetadata(chat.id, { title: "Renamed" });
+	await storage.updateMetadata(chat.id, { title: "Renamed", isPinned: true });
 	await storage.delete(chat.id);
 
 	assert.equal(calls[0].url, "https://example.test/api/chats/chat-1");
@@ -108,7 +109,7 @@ test("save, updateMetadata, and delete use the expected endpoints and methods", 
 
 	assert.equal(calls[1].url, "https://example.test/api/chats/chat-1/meta");
 	assert.equal(calls[1].init.method, "POST");
-	assert.deepEqual(JSON.parse(calls[1].init.body as string), { title: "Renamed" });
+	assert.deepEqual(JSON.parse(calls[1].init.body as string), { title: "Renamed", isPinned: true });
 
 	assert.equal(calls[2].url, "https://example.test/api/chats/chat-1");
 	assert.equal(calls[2].init.method, "DELETE");

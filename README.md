@@ -69,14 +69,15 @@ Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-th
 `RemoteStorage` takes the API root as its first argument. For the endpoints below, use `new RemoteStorage("/api", getToken)`. It sends `Authorization: Bearer <token>` when the token callback returns a value.
 
 **1. List Chats - Cursor Paginated**
-* **GET** `/api/chats?limit=20&cursor=1710629000000&cursorId=chat-5`
-* `cursor` (timestamp) and `cursorId` (string ID) are optional. When present, they should point to the `updatedAt` and `id` of the last item from the previous page.
-*  Chats are sorted by `updatedAt` descending.
+* **GET** `/api/chats?limit=20&cursor=1710629000000&cursorId=chat-5&cursorPinned=true`
+* `cursor` (timestamp), `cursorId` (string ID), and `cursorPinned` (boolean) are optional. When present, they should point to the `isPinned`, `updatedAt`, and `id` of the last item from the previous page.
+* Chats are sorted by pinned first, then `updatedAt` descending.
+* `isPinned` is optional metadata. If you expose the built-in pin menu, preserve it in list/save/meta responses and support pinned-first ordering.
 *   **Response (200 OK):** 
     ```json
     {
       "items": [
-        { "id": "chat-1", "title": "React vs Vue", "updatedAt": 1710629000000 },
+        { "id": "chat-1", "title": "React vs Vue", "updatedAt": 1710629000000, "isPinned": true },
         { "id": "chat-2", "title": "Explain Quantum Computing", "updatedAt": 1710628000000 }
       ],
       "hasMore": false

@@ -22,6 +22,7 @@ export type {
 	RequestOptions,
 	TokenUsage,
 } from "./core/types";
+export { MAX_PINNED_SESSIONS } from "./core/types";
 export { ChatUI, type ChatUIConfig } from "./main";
 
 export {

@@ -26,9 +26,18 @@ class MemoryStorage implements ChatStorage {
 	async loadSessions(limit: number): Promise<PaginatedSessions> {
 		this.loadSessionsCalls++;
 		const items = [...this.sessions.values()]
-			.sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))
+			.sort((a, b) => {
+				const pinnedDelta = Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned));
+				if (pinnedDelta !== 0) return pinnedDelta;
+				return b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
+			})
 			.slice(0, limit)
-			.map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
+			.map(({ id, title, updatedAt, isPinned }) => ({
+				id,
+				title,
+				updatedAt,
+				...(typeof isPinned === "boolean" ? { isPinned } : {}),
+			}));
 
 		return { items, hasMore: this.sessions.size > limit };
 	}
@@ -473,7 +482,7 @@ test("ChatUI passes sidebarMenu config into session menus", async () => {
 	assert.equal(seenSessionId, "chat-1");
 	assert.deepEqual(
 		Array.from(container.querySelectorAll(".mur-dropdown-item")).map((item) => item.textContent),
-		["Rename", "Delete", "Archive"],
+		["Rename", "Pin", "Delete", "Archive"],
 	);
 
 	closeDropdown();

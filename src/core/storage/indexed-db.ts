@@ -1,9 +1,12 @@
 import type { ChatSession, ChatSessionMeta, ChatStorage, PaginatedSessions } from "../types";
 
-const DB_VERSION = 4;
+const DB_VERSION = 6;
 const STORE_META = "session_meta";
 const STORE_MSGS = "session_messages";
-const INDEX_META_BY_UPDATED_ID = "by_updated_id";
+const INDEX_META_BY_PINNED_UPDATED_ID = "by_pinned_updated_id";
+const INDEXED_PINNED_FIELD = "isPinnedKey";
+
+type StoredSessionMeta = ChatSessionMeta & { [INDEXED_PINNED_FIELD]: number };
 
 export class IndexedDBStorage implements ChatStorage {
 	private db: IDBDatabase | null = null;
@@ -53,13 +56,32 @@ export class IndexedDBStorage implements ChatStorage {
 					if (metaStore.indexNames.contains("by_updated")) {
 						metaStore.deleteIndex("by_updated");
 					}
-					if (!metaStore.indexNames.contains(INDEX_META_BY_UPDATED_ID)) {
-						metaStore.createIndex(INDEX_META_BY_UPDATED_ID, ["updatedAt", "id"], { unique: false });
+					if (metaStore.indexNames.contains("by_updated_id")) {
+						metaStore.deleteIndex("by_updated_id");
+					}
+					if (metaStore.indexNames.contains(INDEX_META_BY_PINNED_UPDATED_ID)) {
+						metaStore.deleteIndex(INDEX_META_BY_PINNED_UPDATED_ID);
+					}
+					if (!metaStore.indexNames.contains(INDEX_META_BY_PINNED_UPDATED_ID)) {
+						metaStore.createIndex(INDEX_META_BY_PINNED_UPDATED_ID, [INDEXED_PINNED_FIELD, "updatedAt", "id"], {
+							unique: false,
+						});
 					}
 
 					if (!db.objectStoreNames.contains(STORE_MSGS)) {
 						db.createObjectStore(STORE_MSGS, { keyPath: "id" });
 					}
+
+					const normalizeReq = metaStore.openCursor();
+					normalizeReq.onsuccess = () => {
+						const cursor = normalizeReq.result;
+						if (!cursor) return;
+						const value = cursor.value;
+						if (typeof value[INDEXED_PINNED_FIELD] !== "number") {
+							cursor.update(this.toStoredMeta(value));
+						}
+						cursor.continue();
+					};
 				};
 			} catch (err) {
 				this.dbPromise = null;
@@ -70,12 +92,14 @@ export class IndexedDBStorage implements ChatStorage {
 		return this.dbPromise;
 	}
 
-	async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
+	async loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions> {
 		return this.runTx(STORE_META, (tx, resolve, reject) => {
-			const index = tx.objectStore(STORE_META).index(INDEX_META_BY_UPDATED_ID);
+			const index = tx.objectStore(STORE_META).index(INDEX_META_BY_PINNED_UPDATED_ID);
 			const sessions: ChatSessionMeta[] = [];
 
-			const range = cursor ? IDBKeyRange.upperBound([cursor.updatedAt, cursor.id], true) : null;
+			const range = cursor
+				? IDBKeyRange.upperBound([this.toPinnedKey(cursor.isPinned), cursor.updatedAt, cursor.id], true)
+				: null;
 			const request = index.openCursor(range, "prev");
 
 			request.onsuccess = () => {
@@ -85,7 +109,7 @@ export class IndexedDBStorage implements ChatStorage {
 					return;
 				}
 
-				sessions.push(dbCursor.value);
+				sessions.push(this.fromStoredMeta(dbCursor.value));
 
 				if (sessions.length <= limit) {
 					dbCursor.continue();
@@ -106,7 +130,7 @@ export class IndexedDBStorage implements ChatStorage {
 
 			tx.oncomplete = () => {
 				if (!metaReq.result || !msgReq.result) resolve(null);
-				else resolve({ ...metaReq.result, messages: msgReq.result.messages });
+				else resolve({ ...this.fromStoredMeta(metaReq.result), messages: msgReq.result.messages });
 			};
 		});
 	}
@@ -121,7 +145,15 @@ export class IndexedDBStorage implements ChatStorage {
 
 				getReq.onsuccess = () => {
 					const existing = getReq.result;
-					if (existing) store.put({ ...existing, ...meta });
+					if (existing) {
+						store.put(
+							this.toStoredMeta({
+								...existing,
+								...meta,
+								isPinned: typeof meta.isPinned === "boolean" ? meta.isPinned : Boolean(existing.isPinned),
+							}),
+						);
+					}
 				};
 			},
 			"readwrite",
@@ -134,8 +166,15 @@ export class IndexedDBStorage implements ChatStorage {
 			(tx, resolve) => {
 				tx.oncomplete = () => resolve();
 				const updatedAt = session.updatedAt || Date.now();
-				tx.objectStore(STORE_META).put({ id: session.id, title: session.title, updatedAt });
-				tx.objectStore(STORE_MSGS).put({ id: session.id, messages: session.messages });
+				const metaStore = tx.objectStore(STORE_META);
+				const messagesStore = tx.objectStore(STORE_MSGS);
+				const existingReq = metaStore.get(session.id);
+				existingReq.onsuccess = () => {
+					const existingPinned = Boolean(existingReq.result?.isPinned);
+					const isPinned = typeof session.isPinned === "boolean" ? session.isPinned : existingPinned;
+					metaStore.put(this.toStoredMeta({ id: session.id, title: session.title, updatedAt, isPinned }));
+					messagesStore.put({ id: session.id, messages: session.messages });
+				};
 			},
 			"readwrite",
 		);
@@ -176,5 +215,28 @@ export class IndexedDBStorage implements ChatStorage {
 			tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
 			operation(tx, resolve, reject);
 		});
+	}
+
+	private toStoredMeta(meta: ChatSessionMeta): StoredSessionMeta {
+		return {
+			id: meta.id,
+			title: meta.title,
+			updatedAt: meta.updatedAt,
+			isPinned: Boolean(meta.isPinned),
+			[INDEXED_PINNED_FIELD]: this.toPinnedKey(meta.isPinned),
+		};
+	}
+
+	private fromStoredMeta(meta: ChatSessionMeta): ChatSessionMeta {
+		return {
+			id: meta.id,
+			title: meta.title,
+			updatedAt: meta.updatedAt,
+			isPinned: Boolean(meta.isPinned),
+		};
+	}
+
+	private toPinnedKey(isPinned: boolean | undefined): number {
+		return isPinned ? 1 : 0;
 	}
 }

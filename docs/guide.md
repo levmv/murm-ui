@@ -202,6 +202,8 @@ Remote storage endpoints:
 - `POST /api/chats/:id/meta` updates metadata such as generated titles.
 - `DELETE /api/chats/:id` deletes a chat.
 
+Chat metadata may include `isPinned?: boolean`. If your app exposes the built-in Pin menu item, custom storage should preserve that field, return pinned chats first, and use `isPinned`, `updatedAt`, and `id` as the pagination cursor. `RemoteStorage` sends `cursorPinned=true|false` with cursor requests.
+
 For long chats, pass `{ saveLimit: 20 }` to send only the most recent messages. Partial saves include `X-Murm-Save-Mode: partial`; backends should merge those messages instead of replacing the full stored chat.
 
 <h2 id="browser-support">Browser Support</h2>

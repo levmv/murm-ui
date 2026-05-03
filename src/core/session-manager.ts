@@ -1,7 +1,15 @@
 import { uuidv7 } from "../utils/uuid";
 import { dropEphemeralMessages, extractPlainText } from "./msg-utils";
 import type { Store } from "./store";
-import type { ChatSession, ChatSessionMeta, ChatState, ChatStorage, ContentBlock, Message } from "./types";
+import {
+	type ChatSession,
+	type ChatSessionMeta,
+	type ChatState,
+	type ChatStorage,
+	type ContentBlock,
+	MAX_PINNED_SESSIONS,
+	type Message,
+} from "./types";
 
 interface SessionManagerConfig {
 	store: Store<ChatState>;
@@ -17,6 +25,7 @@ export interface ChatSessions {
 	switch(id: string): Promise<void>;
 	delete(id: string): Promise<void>;
 	updateTitle(sessionId: string, title: string): Promise<void>;
+	updatePinned(sessionId: string, isPinned: boolean): Promise<void>;
 }
 
 export class SessionManager implements ChatSessions {
@@ -28,6 +37,7 @@ export class SessionManager implements ChatSessions {
 	private sessionWriteQueues = new Map<string, Promise<void>>();
 	private deletedSessionIds = new Set<string>();
 	private isFetchingSessions = false;
+	private sessionPageCursor: ChatSessionMeta | null = null;
 	private switchSeq = 0;
 
 	constructor(config: SessionManagerConfig) {
@@ -97,11 +107,15 @@ export class SessionManager implements ChatSessions {
 		const existingMeta = this.state.sessions.find((s) => s.id === sessionId);
 		const title = existingMeta?.title ?? this.createFallbackTitle(messagesToSave);
 		const updatedAt = Date.now();
+		const isPinned =
+			existingMeta?.isPinned ??
+			(this.activeSessionMeta?.id === sessionId ? this.activeSessionMeta.isPinned : undefined);
 
 		const sessionToSave: ChatSession = {
 			id: sessionId,
 			title,
 			updatedAt,
+			...(typeof isPinned === "boolean" ? { isPinned } : {}),
 			messages: messagesToSave,
 		};
 
@@ -112,12 +126,12 @@ export class SessionManager implements ChatSessions {
 
 				if (this.deletedSessionIds.has(sessionId)) return false;
 
-				const sessionMeta = { id: sessionId, title, updatedAt };
+				const sessionMeta = this.toSessionMeta(sessionToSave);
 				if (this.state.currentSessionId === sessionId) {
 					this.activeSessionMeta = sessionMeta;
 				}
 				this.store.set({
-					sessions: [sessionMeta, ...this.state.sessions.filter((s) => s.id !== sessionId)],
+					sessions: this.sortSessionMetas([sessionMeta, ...this.state.sessions.filter((s) => s.id !== sessionId)]),
 				});
 
 				return true;
@@ -130,22 +144,60 @@ export class SessionManager implements ChatSessions {
 
 	public async updateTitle(sessionId: string, title: string): Promise<void> {
 		if (this.deletedSessionIds.has(sessionId)) return;
+		const nextTitle = title.trim();
+		if (!nextTitle) return;
+
+		const existingTitle =
+			this.state.sessions.find((s) => s.id === sessionId)?.title ??
+			(this.activeSessionMeta?.id === sessionId ? this.activeSessionMeta.title : undefined);
+		if (existingTitle === nextTitle) return;
 
 		await this.enqueueSessionWrite(sessionId, async () => {
 			if (this.deletedSessionIds.has(sessionId)) return;
 
 			if (this.storage.updateMetadata) {
-				await this.storage.updateMetadata(sessionId, { title });
+				await this.storage.updateMetadata(sessionId, { title: nextTitle });
 			}
 
 			if (this.deletedSessionIds.has(sessionId)) return;
 			if (!this.state.sessions.find((s) => s.id === sessionId)) return;
 
 			this.store.set({
-				sessions: this.state.sessions.map((s) => (s.id === sessionId ? { ...s, title } : s)),
+				sessions: this.sortSessionMetas(
+					this.state.sessions.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)),
+				),
 			});
 			if (this.state.currentSessionId === sessionId && this.activeSessionMeta?.id === sessionId) {
-				this.activeSessionMeta = { ...this.activeSessionMeta, title };
+				this.activeSessionMeta = { ...this.activeSessionMeta, title: nextTitle };
+			}
+		});
+	}
+
+	public async updatePinned(sessionId: string, isPinned: boolean): Promise<void> {
+		if (this.deletedSessionIds.has(sessionId)) return;
+
+		const current =
+			this.state.sessions.find((s) => s.id === sessionId) ??
+			(this.activeSessionMeta?.id === sessionId ? this.activeSessionMeta : null);
+		if (!current) return;
+		if (Boolean(current.isPinned) === isPinned) return;
+		if (isPinned && this.countPinnedSessions(sessionId) >= MAX_PINNED_SESSIONS) return;
+
+		await this.enqueueSessionWrite(sessionId, async () => {
+			if (this.deletedSessionIds.has(sessionId)) return;
+
+			if (this.storage.updateMetadata) {
+				await this.storage.updateMetadata(sessionId, { isPinned });
+			}
+
+			if (this.deletedSessionIds.has(sessionId)) return;
+			if (!this.state.sessions.find((s) => s.id === sessionId)) return;
+
+			this.store.set({
+				sessions: this.sortSessionMetas(this.state.sessions.map((s) => (s.id === sessionId ? { ...s, isPinned } : s))),
+			});
+			if (this.state.currentSessionId === sessionId && this.activeSessionMeta?.id === sessionId) {
+				this.activeSessionMeta = { ...this.activeSessionMeta, isPinned };
 			}
 		});
 	}
@@ -167,13 +219,14 @@ export class SessionManager implements ChatSessions {
 		this.store.set({ isLoadingSessions: true });
 
 		try {
-			const sessions = this.state.sessions;
-			const cursor =
-				append && sessions.length > 0
-					? { updatedAt: sessions[sessions.length - 1].updatedAt, id: sessions[sessions.length - 1].id }
-					: undefined;
+			const cursor = append ? (this.sessionPageCursor ?? undefined) : undefined;
 
 			const result = await this.storage.loadSessions(20, cursor);
+			if (!append) this.sessionPageCursor = null;
+			if (result.items.length > 0) {
+				this.sessionPageCursor = result.items[result.items.length - 1];
+			}
+
 			const resultItems = this.withoutDeletedSessions(result.items);
 			const nextSessions = append ? [...this.state.sessions, ...resultItems] : resultItems;
 
@@ -253,7 +306,12 @@ export class SessionManager implements ChatSessions {
 	}
 
 	private toSessionMeta(session: ChatSession): ChatSessionMeta {
-		return { id: session.id, title: session.title, updatedAt: session.updatedAt };
+		return {
+			id: session.id,
+			title: session.title,
+			updatedAt: session.updatedAt,
+			...(typeof session.isPinned === "boolean" ? { isPinned: session.isPinned } : {}),
+		};
 	}
 
 	private withActiveSessionMeta(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
@@ -265,9 +323,25 @@ export class SessionManager implements ChatSessions {
 			return true;
 		});
 
-		if (!this.activeSessionMeta || this.deletedSessionIds.has(this.activeSessionMeta.id)) return deduped;
-		if (deduped.some((session) => session.id === this.activeSessionMeta?.id)) return deduped;
-		return [this.activeSessionMeta, ...deduped];
+		if (!this.activeSessionMeta || this.deletedSessionIds.has(this.activeSessionMeta.id)) {
+			return this.sortSessionMetas(deduped);
+		}
+		if (deduped.some((session) => session.id === this.activeSessionMeta?.id)) {
+			return this.sortSessionMetas(deduped);
+		}
+		return this.sortSessionMetas([this.activeSessionMeta, ...deduped]);
+	}
+
+	private sortSessionMetas(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
+		return [...sessions].sort((a, b) => {
+			const pinnedDelta = Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned));
+			if (pinnedDelta !== 0) return pinnedDelta;
+			return b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
+		});
+	}
+
+	private countPinnedSessions(exceptSessionId?: string): number {
+		return this.state.sessions.filter((session) => session.id !== exceptSessionId && session.isPinned).length;
 	}
 
 	private createFallbackTitle(messages: Message[]): string {

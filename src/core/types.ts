@@ -129,12 +129,14 @@ export interface ChatSessionMeta {
 	id: string;
 	title: string;
 	updatedAt: number;
+	isPinned?: boolean;
 }
 
 export interface ChatSession {
 	id: string;
 	title: string;
 	updatedAt: number;
+	isPinned?: boolean;
 	messages: Message[];
 }
 
@@ -155,13 +157,15 @@ export interface ChatState {
 }
 
 export interface ChatStorage {
-	loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions>;
+	loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions>;
 	loadOne(id: string): Promise<ChatSession | null>;
 	save(session: ChatSession): Promise<void>;
 	updateMetadata?(id: string, meta: Partial<ChatSessionMeta>): Promise<void>;
 	delete(id: string): Promise<void>;
 	close?(): void | Promise<void>;
 }
+
+export const MAX_PINNED_SESSIONS = 3;
 
 export interface RequestOptions {
 	model?: string;

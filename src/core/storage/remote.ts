@@ -29,11 +29,12 @@ export class RemoteStorage implements ChatStorage {
 		return `${base}/chats${suffix}`;
 	}
 
-	async loadSessions(limit: number, cursor?: { updatedAt: number; id: string }): Promise<PaginatedSessions> {
+	async loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions> {
 		const params = new URLSearchParams({ limit: limit.toString() });
 		if (cursor) {
 			params.append("cursor", cursor.updatedAt.toString());
 			params.append("cursorId", cursor.id);
+			params.append("cursorPinned", String(Boolean(cursor.isPinned)));
 		}
 
 		const res = await fetch(`${this.getPath()}?${params.toString()}`, { headers: this.headers });
