@@ -18,7 +18,7 @@ let activeDropdown: { menu: HTMLElement; trigger: HTMLElement; cleanup: (restore
 	null;
 let nextDropdownId = 0;
 
-export function showDropdown(trigger: HTMLElement, items: DropdownItem[], options: DropdownOptions = {}) {
+export function showDropdown(trigger: HTMLElement, items: readonly DropdownItem[], options: DropdownOptions = {}) {
 	if (activeDropdown) {
 		const wasSameTrigger = activeDropdown.trigger === trigger;
 		activeDropdown.cleanup(wasSameTrigger);

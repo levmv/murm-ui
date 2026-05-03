@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
+import { closeDropdown } from "./components/dropdown";
 import type {
 	ChatPlugin,
 	ChatProvider,
@@ -431,6 +432,51 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.state.currentSessionId, previousSessionId);
 
+	await ui.destroy();
+});
+
+test("ChatUI passes sidebarMenu config into session menus", async () => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+	const storage = new MemoryStorage([
+		{
+			id: "chat-1",
+			title: "Stored Chat",
+			updatedAt: 100,
+			messages: [textMessage("msg-1", "user", "stored")],
+		},
+	]);
+	const provider: ChatProvider = {
+		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	let seenEngine: unknown;
+	let seenSessionId = "";
+
+	const ui = new ChatUI({
+		container,
+		provider,
+		routing: false,
+		storage,
+		sidebarMenu: (defaults, ctx) => {
+			seenEngine = ctx.engine;
+			seenSessionId = ctx.session.id;
+			return [...defaults, { id: "archive", label: "Archive", onClick: () => {} }];
+		},
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
+	(container.querySelector(".mur-sidebar-options-btn") as HTMLButtonElement).click();
+
+	assert.equal(seenEngine, ui.engine);
+	assert.equal(seenSessionId, "chat-1");
+	assert.deepEqual(
+		Array.from(container.querySelectorAll(".mur-dropdown-item")).map((item) => item.textContent),
+		["Rename", "Delete", "Archive"],
+	);
+
+	closeDropdown();
 	await ui.destroy();
 });
 

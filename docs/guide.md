@@ -98,6 +98,24 @@ new ChatUI({
 });
 ```
 
+You can customize sidebar menus without replacing Murm UI's defaults:
+
+```ts
+new ChatUI({
+  // ...
+  sidebarMenu: (defaults, ctx) => [
+    ...defaults,
+    {
+      id: "archive",
+      label: "Archive",
+      onClick: () => archiveChat(ctx.session.id),
+    },
+  ],
+});
+```
+
+The `sidebarMenu` builder should stay pure. Return the final item list from the defaults and context, and put side effects inside item `onClick` handlers.
+
 <h2 id="providers">Providers</h2>
 
 Providers are the boundary between Murm UI and the model. A provider receives normalized chat messages and streams normalized events back into the engine.

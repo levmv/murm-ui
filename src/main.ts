@@ -11,7 +11,7 @@ import "./styles/dropdown.css";
 
 import { Feed } from "./components/feed";
 import { Input } from "./components/input";
-import { Sidebar } from "./components/sidebar";
+import { Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
 
 const PAGE_SCROLL_CLASS = "mur-chat-page-scroll";
 
@@ -27,6 +27,12 @@ export interface ChatUIConfig {
 
 	highlighter?: (code: string, language: string) => string;
 	plugins?: (chatApi: ChatEngine) => ChatPlugin[];
+
+	/**
+	 * Customizes sidebar item menus. Return the final item list from the provided
+	 * defaults; keep side effects inside each item's onClick handler.
+	 */
+	sidebarMenu?: SidebarMenuBuilder;
 
 	/**
 	 * Updates the browser window title to match the active chat.
@@ -178,6 +184,7 @@ export class ChatUI {
 
 			this.sidebarComponent = new Sidebar({
 				container: this.container,
+				engine: this.engine,
 				onNewChat: () => {
 					void this.engine.sessions.create();
 					this.closeSidebar(true);
@@ -186,9 +193,6 @@ export class ChatUI {
 					void this.engine.sessions.switch(id);
 					this.closeSidebar(true);
 				},
-				onDeleteSession: (id) => {
-					void this.engine.sessions.delete(id);
-				},
 				onLoadMore: () => {
 					void this.engine.sessions.loadMore();
 				},
@@ -196,6 +200,7 @@ export class ChatUI {
 					this.closeSidebar(false);
 				},
 				getSessionHref: (id) => this.router.hrefFor(id),
+				sidebarMenu: this.config.sidebarMenu,
 			});
 			void this.engine.sessions.loadHistory();
 		}

@@ -1,16 +1,38 @@
+import type { ChatEngine } from "../core/chat-engine";
 import type { ChatSessionMeta } from "../core/types";
 import { el, queryOrThrow, replaceNodes } from "../utils/dom";
 import { ICON_EDIT, ICON_MORE_VERTICAL, ICON_TRASH } from "../utils/icons";
 import { showDropdown } from "./dropdown";
 
+export interface SidebarMenuItem {
+	id: string;
+	label: string;
+	iconHtml?: string;
+	danger?: boolean;
+	disabled?: boolean;
+	onClick: () => void;
+}
+
+export type SidebarMenuContext = {
+	type: "session";
+	session: ChatSessionMeta;
+	engine: ChatEngine;
+};
+
+export type SidebarMenuBuilder = (
+	defaultItems: readonly SidebarMenuItem[],
+	ctx: SidebarMenuContext,
+) => readonly SidebarMenuItem[];
+
 export interface SidebarProps {
 	container: HTMLElement;
+	engine: ChatEngine;
 	onNewChat: () => void;
 	onSelectSession: (id: string) => void;
-	onDeleteSession: (id: string) => void;
 	onLoadMore: () => void;
 	onClose: () => void;
 	getSessionHref: (id: string) => string;
+	sidebarMenu?: SidebarMenuBuilder;
 }
 
 export class Sidebar {
@@ -112,39 +134,56 @@ export class Sidebar {
 		if (isActive) {
 			link.setAttribute("aria-current", "page");
 		}
+		item.appendChild(link);
 
-		const optionsBtn = el("button", "mur-sidebar-options-btn", {
-			type: "button",
-			innerHTML: ICON_MORE_VERTICAL,
-			title: `Options for "${session.title}"`,
-			onclick: (e) => {
-				e.preventDefault();
-				e.stopPropagation();
+		const menuItems = this.getSessionMenuItems(session);
+		if (menuItems.length > 0) {
+			const optionsBtn = el("button", "mur-sidebar-options-btn", {
+				type: "button",
+				innerHTML: ICON_MORE_VERTICAL,
+				title: `Options for "${session.title}"`,
+				onclick: (e) => {
+					e.preventDefault();
+					e.stopPropagation();
 
-				showDropdown(optionsBtn, [
-					{
-						id: "rename",
-						label: "Rename",
-						iconHtml: ICON_EDIT,
-						onClick: () => {
-							// TODO: Implement rename functionality later
-							console.log("Rename clicked for", session.id);
-						},
-					},
-					{
-						id: "delete",
-						label: "Delete",
-						iconHtml: ICON_TRASH,
-						danger: true,
-						onClick: () => this.props.onDeleteSession(session.id),
-					},
-				]);
-			},
-		});
-		optionsBtn.setAttribute("aria-label", `Options for chat "${session.title}"`);
-		item.append(link, optionsBtn);
+					const currentItems = this.getSessionMenuItems(session);
+					if (currentItems.length > 0) {
+						showDropdown(optionsBtn, currentItems);
+					}
+				},
+			});
+			optionsBtn.setAttribute("aria-label", `Options for chat "${session.title}"`);
+			item.appendChild(optionsBtn);
+		}
 
 		return item;
+	}
+
+	private getSessionMenuItems(session: ChatSessionMeta): readonly SidebarMenuItem[] {
+		const defaultItems: SidebarMenuItem[] = [
+			{
+				id: "rename",
+				label: "Rename",
+				iconHtml: ICON_EDIT,
+				onClick: () => {
+					// TODO: Implement rename functionality later
+					console.log("Rename clicked for", session.id);
+				},
+			},
+			{
+				id: "delete",
+				label: "Delete",
+				iconHtml: ICON_TRASH,
+				danger: true,
+				onClick: () => {
+					void this.props.engine.sessions.delete(session.id);
+				},
+			},
+		];
+
+		return (
+			this.props.sidebarMenu?.(defaultItems, { type: "session", session, engine: this.props.engine }) ?? defaultItems
+		);
 	}
 
 	public setActiveSession(id: string) {
