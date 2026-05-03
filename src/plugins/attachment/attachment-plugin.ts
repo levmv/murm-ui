@@ -260,6 +260,8 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 				innerHTML: ICON_PAPERCLIP,
 				onclick: () => fileInput.click(),
 			});
+			attachBtn.setAttribute("aria-label", "Attach files");
+			attachBtn.title = "Attach files";
 
 			ctx.form.prepend(attachBtn);
 			if (config?.previewMountSelector) {

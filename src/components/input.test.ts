@@ -37,6 +37,32 @@ function installDom(): HTMLElement {
 	return dom.window.document.querySelector(".mur-app") as HTMLElement;
 }
 
+function installLabeledDom(): HTMLElement {
+	const dom = new JSDOM(`
+		<div class="mur-app">
+			<form class="mur-chat-form">
+				<label for="chat-input">Custom prompt</label>
+				<textarea id="chat-input" class="mur-chat-input" rows="1"></textarea>
+				<button type="submit" class="mur-send-btn">Send</button>
+			</form>
+		</div>
+	`);
+
+	Object.defineProperty(dom.window, "matchMedia", {
+		configurable: true,
+		value: () => ({ matches: false }),
+	});
+
+	setGlobal("window", dom.window);
+	setGlobal("document", dom.window.document);
+	setGlobal("navigator", dom.window.navigator);
+	setGlobal("HTMLElement", dom.window.HTMLElement);
+	setGlobal("Event", dom.window.Event);
+	setGlobal("CSS", { supports: () => false });
+
+	return dom.window.document.querySelector(".mur-app") as HTMLElement;
+}
+
 function mountInput(
 	plugins: ChatPlugin[] = [],
 	onSubmit?: (text: string, submissions: string[]) => boolean,
@@ -77,6 +103,24 @@ function mountInput(
 	};
 }
 
+function mountInputInContainer(container: HTMLElement): {
+	input: HTMLTextAreaElement;
+	sendBtn: HTMLButtonElement;
+	destroy: () => void;
+} {
+	const inputComponent = new Input({
+		container,
+		onSubmit: () => true,
+		onStop: () => {},
+	});
+
+	return {
+		input: container.querySelector(".mur-chat-input") as HTMLTextAreaElement,
+		sendBtn: container.querySelector(".mur-send-btn") as HTMLButtonElement,
+		destroy: () => inputComponent.destroy(),
+	};
+}
+
 function setInputValue(input: HTMLTextAreaElement, value: string): void {
 	input.value = value;
 	input.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -85,6 +129,34 @@ function setInputValue(input: HTMLTextAreaElement, value: string): void {
 function submit(form: HTMLFormElement): void {
 	form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 }
+
+test("input controls expose practical accessible names", () => {
+	const harness = mountInput();
+
+	assert.equal(harness.input.getAttribute("aria-label"), "Message");
+	assert.equal(harness.sendBtn.getAttribute("aria-label"), "Send message");
+	assert.equal(harness.sendBtn.title, "Send message");
+
+	harness.setGeneratingState(true, false);
+
+	assert.equal(harness.sendBtn.getAttribute("aria-label"), "Stop generation");
+	assert.equal(harness.sendBtn.title, "Stop generation");
+
+	harness.setGeneratingState(false, false);
+
+	assert.equal(harness.sendBtn.getAttribute("aria-label"), "Send message");
+	assert.equal(harness.sendBtn.title, "Send message");
+
+	harness.destroy();
+});
+
+test("input does not override an existing textarea label", () => {
+	const harness = mountInputInContainer(installLabeledDom());
+
+	assert.equal(harness.input.hasAttribute("aria-label"), false);
+
+	harness.destroy();
+});
 
 test("send button is disabled without text or pending plugin data", () => {
 	const harness = mountInput();

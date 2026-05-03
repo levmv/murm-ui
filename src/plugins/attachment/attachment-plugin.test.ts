@@ -144,6 +144,9 @@ test("file input uses default and custom accepted types", () => {
 	const defaultPlugin = AttachmentPlugin();
 	const defaultHarness = mountAttachment(defaultPlugin);
 	assert.equal(defaultHarness.fileInput.accept, "image/*,text/*,.csv,.json,.md");
+	const attachBtn = defaultHarness.container.querySelector<HTMLButtonElement>(".mur-form-icon-btn");
+	assert.equal(attachBtn?.getAttribute("aria-label"), "Attach files");
+	assert.equal(attachBtn?.title, "Attach files");
 	defaultHarness.destroy();
 
 	const customPlugin = AttachmentPlugin({ acceptedTypes: ".pdf" });

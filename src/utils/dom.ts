@@ -48,10 +48,39 @@ export function replaceNodes(parent: HTMLElement, ...nodes: (Node | string)[]): 
 }
 
 /**
- * Super lightweight DOM diffing specifically for our sanitized HTML.
- * Mutates `target` to match `source` without destroying untouched nodes.
+ * Super lightweight child-node diffing specifically for our sanitized HTML.
+ * Mutates `target` children to match `source` children without destroying untouched nodes.
  */
-export function syncDOM(target: Node, source: Node) {
+export function syncDOMChildren(target: Node, source: Node) {
+	let targetChild = target.firstChild;
+	let sourceChild = source.firstChild;
+
+	while (sourceChild !== null) {
+		if (targetChild === null) {
+			// Target is missing children; append the remainder
+			target.appendChild(sourceChild.cloneNode(true));
+			sourceChild = sourceChild.nextSibling;
+		} else {
+			// Cache next siblings before recursion in case targetChild replaces itself
+			const nextTargetChild = targetChild.nextSibling;
+			const nextSourceChild = sourceChild.nextSibling;
+
+			syncDOMNode(targetChild, sourceChild);
+
+			targetChild = nextTargetChild;
+			sourceChild = nextSourceChild;
+		}
+	}
+
+	// Cleanup remaining obsolete target children
+	while (targetChild !== null) {
+		const nextTargetChild = targetChild.nextSibling;
+		target.removeChild(targetChild);
+		targetChild = nextTargetChild;
+	}
+}
+
+function syncDOMNode(target: Node, source: Node) {
 	// Reconcile text nodes
 	if (target.nodeType === Node.TEXT_NODE && source.nodeType === Node.TEXT_NODE) {
 		if (target.nodeValue !== source.nodeValue) {
@@ -92,31 +121,5 @@ export function syncDOM(target: Node, source: Node) {
 		}
 	}
 
-	// Reconcile children
-	let targetChild = target.firstChild;
-	let sourceChild = source.firstChild;
-
-	while (sourceChild !== null) {
-		if (targetChild === null) {
-			// Target is missing children; append the remainder
-			target.appendChild(sourceChild.cloneNode(true));
-			sourceChild = sourceChild.nextSibling;
-		} else {
-			// Cache next siblings before recursion in case targetChild replaces itself
-			const nextTargetChild = targetChild.nextSibling;
-			const nextSourceChild = sourceChild.nextSibling;
-
-			syncDOM(targetChild, sourceChild);
-
-			targetChild = nextTargetChild;
-			sourceChild = nextSourceChild;
-		}
-	}
-
-	// Cleanup remaining obsolete target children
-	while (targetChild !== null) {
-		const nextTargetChild = targetChild.nextSibling;
-		target.removeChild(targetChild);
-		targetChild = nextTargetChild;
-	}
+	syncDOMChildren(target, source);
 }

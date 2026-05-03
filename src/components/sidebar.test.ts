@@ -7,11 +7,13 @@ import { Sidebar, type SidebarMenuBuilder } from "./sidebar";
 
 const originalDocument = globalThis.document;
 const originalIntersectionObserver = globalThis.IntersectionObserver;
+const originalConfirm = globalThis.confirm;
 
 afterEach(() => {
 	closeDropdown();
 	setGlobal("document", originalDocument);
 	setGlobal("IntersectionObserver", originalIntersectionObserver);
+	setGlobal("confirm", originalConfirm);
 });
 
 function setGlobal(name: string, value: unknown): void {
@@ -141,6 +143,7 @@ test("renders the built-in session menu and deletes through the engine", () => {
 	const container = installDom();
 	const deletedIds: string[] = [];
 	const sidebar = createSidebar(container, { engine: createEngine((id) => deletedIds.push(id)) });
+	setGlobal("confirm", () => true);
 
 	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
 
@@ -156,6 +159,26 @@ test("renders the built-in session menu and deletes through the engine", () => {
 
 	menuItems[2].click();
 	assert.deepEqual(deletedIds, ["chat-1"]);
+
+	sidebar.destroy();
+});
+
+test("built-in delete asks for confirmation before deleting", () => {
+	const container = installDom();
+	const deletedIds: string[] = [];
+	const prompts: string[] = [];
+	const sidebar = createSidebar(container, { engine: createEngine((id) => deletedIds.push(id)) });
+	setGlobal("confirm", (message: string) => {
+		prompts.push(message);
+		return false;
+	});
+
+	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
+	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
+	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[2]?.click();
+
+	assert.deepEqual(prompts, ['Delete chat "Stored Chat"? This cannot be undone.']);
+	assert.deepEqual(deletedIds, []);
 
 	sidebar.destroy();
 });

@@ -215,6 +215,32 @@ test("generation start schedules one smooth scroll", () => {
 	feed.destroy();
 });
 
+test("chat history is marked busy while a response is generating", () => {
+	const { feed, root } = createFeedHarness();
+	const history = root.querySelector<HTMLElement>(".mur-chat-history");
+	assert.ok(history);
+	const originalSetAttribute = history.setAttribute.bind(history);
+	let busyAttributeWrites = 0;
+	history.setAttribute = ((name: string, value: string) => {
+		if (name === "aria-busy") busyAttributeWrites++;
+		originalSetAttribute(name, value);
+	}) as typeof history.setAttribute;
+
+	feed.update(messages(), "assistant-1", false, true);
+	assert.equal(history.getAttribute("aria-busy"), "true");
+	assert.equal(busyAttributeWrites, 1);
+
+	feed.update(messages(), "assistant-1", false, false);
+	assert.equal(history.getAttribute("aria-busy"), "true");
+	assert.equal(busyAttributeWrites, 1);
+
+	feed.update(messages(), null, false, false);
+	assert.equal(history.getAttribute("aria-busy"), "false");
+	assert.equal(busyAttributeWrites, 2);
+
+	feed.destroy();
+});
+
 test("desktop feed listens only to the scroll area", () => {
 	const { feed, scrollListenerCounts } = createFeedHarness();
 
@@ -368,6 +394,32 @@ test("global errors without a message id are ignored by the feed", () => {
 	feed.update(messages(), null, false, false, { message: "Chat not found. Started a new one." });
 
 	assert.equal(root.querySelector(".mur-message-error"), null);
+
+	feed.destroy();
+});
+
+test("text blocks render markdown directly into the block container", async () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-1", type: "text", text: "Hello **world**" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+	await flushMicrotasks();
+
+	const block = root.querySelector<HTMLElement>(".mur-block-text");
+	assert.ok(block);
+	assert.equal(block.querySelector(".mur-message-content"), null);
+	assert.equal(block.firstElementChild?.tagName, "P");
+	assert.match(block.textContent ?? "", /Hello world/);
 
 	feed.destroy();
 });

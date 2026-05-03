@@ -2,6 +2,10 @@ import type { ChatPlugin } from "../core/types";
 import { IS_TOUCH_DEVICE } from "../utils/device";
 import { queryOrThrow } from "../utils/dom";
 
+const MESSAGE_INPUT_LABEL = "Message";
+const SEND_BUTTON_LABEL = "Send message";
+const STOP_BUTTON_LABEL = "Stop generation";
+
 export interface InputProps {
 	container: HTMLElement;
 	onSubmit: (text: string) => boolean;
@@ -30,6 +34,8 @@ export class Input {
 		this.form = queryOrThrow<HTMLFormElement>(this.props.container, ".mur-chat-form");
 		this.input = queryOrThrow<HTMLTextAreaElement>(this.props.container, ".mur-chat-input");
 		this.sendBtn = queryOrThrow<HTMLButtonElement>(this.props.container, ".mur-send-btn");
+
+		this.ensureInputAccessibleName();
 
 		for (const plugin of plugins) {
 			if (plugin.onInputMount) {
@@ -73,6 +79,13 @@ export class Input {
 		this.input.removeEventListener("input", this.onInputBound);
 		this.input.removeEventListener("keydown", this.onKeydownBound);
 		this.form.removeEventListener("submit", this.onSubmitBound);
+	}
+
+	private ensureInputAccessibleName() {
+		if (this.input.hasAttribute("aria-label") || this.input.hasAttribute("aria-labelledby")) return;
+		if (this.input.labels && this.input.labels.length > 0) return;
+
+		this.input.setAttribute("aria-label", MESSAGE_INPUT_LABEL);
 	}
 
 	private clearPendingFocus() {
@@ -171,6 +184,10 @@ export class Input {
 	}
 
 	private syncSubmitState() {
+		const buttonLabel = this.isGenerating ? STOP_BUTTON_LABEL : SEND_BUTTON_LABEL;
+		this.sendBtn.setAttribute("aria-label", buttonLabel);
+		this.sendBtn.title = buttonLabel;
+
 		if (this.isGenerating) {
 			this.sendBtn.disabled = false;
 			return;

@@ -1,6 +1,6 @@
 import { marked } from "marked";
 import type { ActionButtonDef, ContentBlock, Message, RenderConfig } from "../core/types";
-import { el, syncDOM } from "../utils/dom";
+import { el, syncDOMChildren } from "../utils/dom";
 import { renderSafeHTML } from "../utils/html";
 
 const MARKDOWN_THROTTLE_MS = 70;
@@ -208,16 +208,12 @@ export class MessageNode {
 
 			if (this.isDestroyed || !state || seq !== state.renderSeq) return;
 
-			let contentEl = state.container.querySelector(".mur-message-content");
-
-			if (!contentEl) {
-				contentEl = el("div", "mur-message-content");
-				renderSafeHTML(contentEl as HTMLElement, html, this.config.highlighter);
-				state.container.appendChild(contentEl);
+			if (!state.container.hasChildNodes()) {
+				renderSafeHTML(state.container, html, this.config.highlighter);
 			} else {
-				const tempDiv = el("div", "mur-message-content");
-				renderSafeHTML(tempDiv, html, this.config.highlighter);
-				syncDOM(contentEl, tempDiv);
+				const nextContent = document.createElement("div");
+				renderSafeHTML(nextContent, html, this.config.highlighter);
+				syncDOMChildren(state.container, nextContent);
 			}
 
 			state.textCache = content;

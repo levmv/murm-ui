@@ -270,6 +270,7 @@ export class Sidebar {
 				iconHtml: ICON_TRASH,
 				danger: true,
 				onClick: () => {
+					if (!confirm(`Delete chat "${session.title}"? This cannot be undone.`)) return;
 					void this.props.engine.sessions.delete(session.id);
 				},
 			},

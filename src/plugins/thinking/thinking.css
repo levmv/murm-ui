@@ -35,6 +35,9 @@
 
 .mur-think-content {
 	margin-top: 0.25rem;
+	max-height: min(400px, 50vh);
+	overflow-y: auto;
+	overscroll-behavior: contain;
 	padding: 0.5rem 0.75rem;
 	border-left: 2px solid var(--mur-border);
 	color: var(--mur-text-muted);

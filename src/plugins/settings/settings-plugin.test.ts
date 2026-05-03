@@ -114,6 +114,100 @@ test("SettingsPlugin saves and applies title model settings", async () => {
 	assert.deepEqual(providerSettings.at(-1), { model: "new-chat-model", titleModel: "" });
 });
 
+test("SettingsPlugin modal exposes useful names for assistive tech", async () => {
+	const container = installDom();
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: () => {},
+		setTitleOptions: () => {},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin();
+
+	plugin.onMount?.({ engine, container });
+
+	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
+	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
+
+	const modal = container.querySelector<HTMLElement>(".mur-settings-modal");
+	assert.ok(modal);
+	assert.equal(modal.getAttribute("role"), "dialog");
+	assert.equal(modal.getAttribute("aria-modal"), "true");
+	assert.equal(document.getElementById(modal.getAttribute("aria-labelledby") ?? "")?.textContent, "Chat Settings");
+	assert.equal(container.querySelector(".mur-settings-close-btn")?.getAttribute("aria-label"), "Close settings");
+	const modelInput = container.querySelector<HTMLInputElement>(".mur-set-model");
+	const modelLabel = container.querySelector<HTMLLabelElement>(`label[for="${modelInput?.id}"]`);
+	assert.equal(modelLabel?.textContent, "Model Name");
+
+	plugin.destroy?.();
+});
+
+test("SettingsPlugin modal focuses the first field and closes on Escape", async () => {
+	const container = installDom();
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: () => {},
+		setTitleOptions: () => {},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin();
+
+	plugin.onMount?.({ engine, container });
+
+	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
+	const settingsBtn = container.querySelector<HTMLButtonElement>(".mur-settings-btn");
+	assert.ok(settingsBtn);
+
+	settingsBtn.focus();
+	settingsBtn.click();
+
+	const endpointInput = container.querySelector<HTMLInputElement>(".mur-set-endpoint");
+	assert.equal(document.activeElement, endpointInput);
+
+	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Escape" }));
+
+	assert.equal(container.querySelector(".mur-settings-modal"), null);
+	assert.equal(document.activeElement, settingsBtn);
+
+	plugin.destroy?.();
+});
+
+test("SettingsPlugin modal keeps Tab focus inside the dialog", async () => {
+	const container = installDom();
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: () => {},
+		setTitleOptions: () => {},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin();
+
+	plugin.onMount?.({ engine, container });
+
+	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
+	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
+
+	const closeBtn = container.querySelector<HTMLButtonElement>(".mur-settings-close-btn");
+	const endpointInput = container.querySelector<HTMLInputElement>(".mur-set-endpoint");
+	const saveBtn = container.querySelector<HTMLButtonElement>(".mur-set-save-btn");
+	assert.ok(closeBtn);
+	assert.ok(endpointInput);
+	assert.ok(saveBtn);
+
+	saveBtn.focus();
+	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+	assert.equal(document.activeElement, closeBtn);
+
+	closeBtn.focus();
+	document.dispatchEvent(
+		new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }),
+	);
+	assert.equal(document.activeElement, saveBtn);
+
+	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).focus();
+	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+	assert.equal(document.activeElement, closeBtn);
+
+	plugin.destroy?.();
+});
+
 test("SettingsPlugin loads and saves through a custom storage adapter", async () => {
 	const container = installDom();
 	const provider: ChatProvider = {

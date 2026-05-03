@@ -38,6 +38,7 @@ export interface SettingsPluginConfig {
 }
 
 const STORAGE_KEY = "mur_chat_settings";
+let nextSettingsModalId = 0;
 
 const defaultLocalStorageSettingsStorage: SettingsStorage = {
 	async get() {
@@ -61,6 +62,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 	let currentSettings = { ...defaults };
 
 	let modalOverlay: HTMLElement | null = null;
+	let closeModal: (() => void) | null = null;
 	let mountedTriggerEl: Element | null = null;
 	let mountedTriggerHandler: (() => void) | null = null;
 	let appliedProviderSettings: Pick<SettingsState, "apiKey" | "endpoint" | "model"> | null = null;
@@ -114,43 +116,48 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		});
 	}
 
-	function createModal(ctx: PluginContext) {
+	function createModal(ctx: PluginContext, triggerEl: Element | null) {
 		const overlay = el("div", "mur-settings-overlay");
+		const idPrefix = `mur-settings-${++nextSettingsModalId}`;
+		const id = (suffix: string) => `${idPrefix}-${suffix}`;
 
 		const modal = el("div", "mur-settings-modal", {
 			innerHTML: `
 				<div class="mur-settings-header">
-					<h3>Chat Settings</h3>
-					<button class="mur-settings-close-btn">&times;</button>
+					<h3 id="${id("title")}">Chat Settings</h3>
+					<button type="button" class="mur-settings-close-btn" aria-label="Close settings">&times;</button>
 				</div>
 				<div class="mur-settings-body">
 					<div class="mur-settings-group">
-						<label>API Endpoint</label>
-						<input type="text" class="mur-set-endpoint" placeholder="https://api.openai.com/v1/chat/completions" />
+						<label for="${id("endpoint")}">API Endpoint</label>
+						<input id="${id("endpoint")}" type="text" class="mur-set-endpoint" placeholder="https://api.openai.com/v1/chat/completions" />
 						<div class="mur-settings-hint">Compatible with OpenAI, OpenRouter, LMStudio, Ollama, etc.</div>
 					</div>
 					<div class="mur-settings-group">
-						<label>API Key</label>
-						<input type="password" class="mur-set-apikey" placeholder="sk-..." />
+						<label for="${id("apikey")}">API Key</label>
+						<input id="${id("apikey")}" type="password" class="mur-set-apikey" placeholder="sk-..." />
 					</div>
 					<div class="mur-settings-group">
-						<label>Model Name</label>
-						<input type="text" class="mur-set-model" placeholder="gpt-4o-mini" />
+						<label for="${id("model")}">Model Name</label>
+						<input id="${id("model")}" type="text" class="mur-set-model" placeholder="gpt-4o-mini" />
 					</div>
 					<div class="mur-settings-group">
-						<label>Title Model</label>
-						<input type="text" class="mur-set-title-model" placeholder="Use chat model" />
+						<label for="${id("title-model")}">Title Model</label>
+						<input id="${id("title-model")}" type="text" class="mur-set-title-model" placeholder="Use chat model" />
 					</div>
 					<div class="mur-settings-group">
-						<label>System Prompt</label>
-						<textarea class="mur-set-sysprompt" rows="3" placeholder="You are a helpful assistant..."></textarea>
+						<label for="${id("sysprompt")}">System Prompt</label>
+						<textarea id="${id("sysprompt")}" class="mur-set-sysprompt" rows="3" placeholder="You are a helpful assistant..."></textarea>
 					</div>
 				</div>
 				<div class="mur-settings-footer">
-					<button class="mur-set-save-btn mur-btn-primary">Save & Apply</button>
+					<button type="button" class="mur-set-save-btn mur-btn-primary">Save & Apply</button>
 				</div>
 			`,
 		});
+		modal.setAttribute("role", "dialog");
+		modal.setAttribute("aria-modal", "true");
+		modal.setAttribute("aria-labelledby", id("title"));
 
 		overlay.appendChild(modal);
 
@@ -160,9 +167,51 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		(modal.querySelector(".mur-set-title-model") as HTMLInputElement).value = currentSettings.titleModel;
 		(modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value = currentSettings.systemPrompt;
 
+		const restoreFocus = () => {
+			if (triggerEl?.isConnected && typeof (triggerEl as HTMLElement).focus === "function") {
+				(triggerEl as HTMLElement).focus();
+			}
+		};
+
+		const getFocusableElements = () =>
+			Array.from(
+				modal.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+			).filter((element) => !element.hidden && !element.hasAttribute("disabled"));
+
+		const trapFocus = (event: KeyboardEvent) => {
+			const focusable = getFocusableElements();
+			const first = focusable[0];
+			const last = focusable.at(-1);
+			if (!first || !last) return;
+
+			const activeElement = document.activeElement;
+			if (!modal.contains(activeElement)) {
+				event.preventDefault();
+				first.focus();
+			} else if (event.shiftKey && activeElement === first) {
+				event.preventDefault();
+				last.focus();
+			} else if (!event.shiftKey && activeElement === last) {
+				event.preventDefault();
+				first.focus();
+			}
+		};
+
+		function onKeydown(event: KeyboardEvent) {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				close();
+			} else if (event.key === "Tab") {
+				trapFocus(event);
+			}
+		}
+
 		const close = () => {
+			document.removeEventListener("keydown", onKeydown);
 			overlay.remove();
 			modalOverlay = null;
+			closeModal = null;
+			restoreFocus();
 		};
 
 		modal.querySelector(".mur-settings-close-btn")!.addEventListener("click", close);
@@ -182,6 +231,9 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 			close();
 		});
 
+		document.addEventListener("keydown", onKeydown);
+		closeModal = close;
+
 		return overlay;
 	}
 
@@ -193,8 +245,9 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 
 			const openModal = () => {
 				if (!modalOverlay) {
-					modalOverlay = createModal(ctx);
+					modalOverlay = createModal(ctx, mountedTriggerEl);
 					ctx.container.appendChild(modalOverlay);
+					(modalOverlay.querySelector(".mur-set-endpoint") as HTMLInputElement | null)?.focus();
 				}
 			};
 
@@ -228,8 +281,9 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 			if (mountedTriggerEl && mountedTriggerHandler) {
 				mountedTriggerEl.removeEventListener("click", mountedTriggerHandler);
 			}
-			modalOverlay?.remove();
+			closeModal?.();
 			modalOverlay = null;
+			closeModal = null;
 			mountedTriggerEl = null;
 			mountedTriggerHandler = null;
 		},

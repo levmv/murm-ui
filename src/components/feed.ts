@@ -13,6 +13,7 @@ export class Feed {
 	private nodes = new Map<string, MessageNode>();
 	private lastMessagesRef: Message[] | null = null;
 	private isStickyToBottom = true;
+	private isHistoryBusy = false;
 	private lastScrollTop = 0;
 	private isDestroyed = false;
 
@@ -57,6 +58,7 @@ export class Feed {
 		generationStarted: boolean,
 		error: { message: string; id?: string } | null = null,
 	) {
+		this.syncHistoryBusy(generatingMessageId !== null);
 		this.spinnerEl.hidden = !isLoadingSession;
 
 		if (isLoadingSession) {
@@ -110,6 +112,13 @@ export class Feed {
 
 		const isActivelyStreaming = generatingMessageId !== null && !generationStarted;
 		this.requestBottomScroll(isActivelyStreaming ? "auto" : "smooth");
+	}
+
+	private syncHistoryBusy(isBusy: boolean): void {
+		if (this.isHistoryBusy === isBusy) return;
+
+		this.isHistoryBusy = isBusy;
+		this.historyContainer.setAttribute("aria-busy", isBusy ? "true" : "false");
 	}
 
 	public destroy() {
