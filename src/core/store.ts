@@ -27,6 +27,8 @@ export class Store<T extends object> {
 	 * Mutates state in-place to prevent GC thrashing during LLM streaming.
 	 * NOTE: This intentionally bypasses selector subscribers so hot updates
 	 * do not run every selector on every token. Only hot subscribers are notified.
+	 * Hot subscribers receive the live mutable state object; they must not retain
+	 * references to state or nested slices across notifications.
 	 */
 	mutateHot(recipe: (state: T) => void) {
 		recipe(this.state);
@@ -48,6 +50,8 @@ export class Store<T extends object> {
 	 * Subscribes to normal set() updates and hot in-place mutations.
 	 * Fires IMMEDIATELY with the current state, then on subsequent updates.
 	 * Use sparingly for render paths that must observe high-frequency mutable state.
+	 * The listener receives the live mutable state object; do not retain references
+	 * to state or nested slices because mutateHot may change them in-place.
 	 */
 	subscribeHot(listener: (state: T) => void): () => void {
 		listener(this.state);

@@ -188,6 +188,21 @@ test("submit refreshes stale text state from programmatic value changes", () => 
 	harness.destroy();
 });
 
+test("textarea fallback height uses the computed max-height", () => {
+	const harness = mountInput();
+	harness.input.style.maxHeight = "120px";
+	Object.defineProperty(harness.input, "scrollHeight", {
+		configurable: true,
+		value: 300,
+	});
+
+	setInputValue(harness.input, "hello\n".repeat(20));
+
+	assert.equal(harness.input.style.height, "120px");
+
+	harness.destroy();
+});
+
 test("rejected submissions keep the input text and enabled state", () => {
 	const harness = mountInput([], (text, submissions) => {
 		submissions.push(text);

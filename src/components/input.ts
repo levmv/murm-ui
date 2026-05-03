@@ -123,8 +123,13 @@ export class Input {
 	private adjustHeight() {
 		const el = this.input;
 		el.style.height = "auto"; // Force synchronous reflow to determine natural height
-		const newHeight = Math.min(el.scrollHeight, 200);
+		const newHeight = Math.min(el.scrollHeight, this.getMaxHeight());
 		el.style.height = newHeight + "px";
+	}
+
+	private getMaxHeight(): number {
+		const maxHeight = Number.parseFloat(window.getComputedStyle(this.input).maxHeight);
+		return Number.isFinite(maxHeight) && maxHeight > 0 ? maxHeight : 200;
 	}
 
 	private handleSubmit() {

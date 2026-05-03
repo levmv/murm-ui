@@ -33,6 +33,7 @@
 	--mur-shadow-attachment: 0 2px 4px rgba(0, 0, 0, 0.2);
 
 	--mur-font: system-ui, -apple-system, sans-serif;
+	--mur-input-max-height: 200px;
 
 	display: flex;
 	height: 100vh;

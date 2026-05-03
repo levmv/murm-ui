@@ -238,7 +238,9 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 		const files = Array.from(event.clipboardData?.files || []);
 		if (files.length === 0) return;
 
-		event.preventDefault();
+		if (!hasClipboardText(event)) {
+			event.preventDefault();
+		}
 		queueFiles(files);
 	};
 
@@ -335,6 +337,18 @@ function hasDraggedFiles(event: DragEvent): boolean {
 	const types = event.dataTransfer?.types;
 	if (!types) return false;
 	return Array.from(types).includes("Files");
+}
+
+function hasClipboardText(event: ClipboardEvent): boolean {
+	const data = event.clipboardData;
+	if (!data) return false;
+
+	const types = Array.from(data.types || []);
+	return (
+		types.includes("text/plain") ||
+		types.includes("text/html") ||
+		(typeof data.getData === "function" && data.getData("text/plain").length > 0)
+	);
 }
 
 function isTextLikeFile(file: File): boolean {

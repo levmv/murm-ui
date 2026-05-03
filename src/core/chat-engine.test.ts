@@ -646,6 +646,125 @@ test("deleting a session prevents pending auto-title completion from recreating 
 	assert.notEqual(engine.state.currentSessionId, sessionId);
 });
 
+test("destroy aborts pending auto-title and ignores late completion", async () => {
+	let titleSignal: AbortSignal | null = null;
+	let titleStarted!: () => void;
+	const titleStartedPromise = new Promise<void>((resolve) => {
+		titleStarted = resolve;
+	});
+
+	let releaseTitle!: () => void;
+	const titleReleased = new Promise<void>((resolve) => {
+		releaseTitle = resolve;
+	});
+
+	const storage = new MemoryStorage();
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			_signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+		async generateTitle(_messages: Message[], _options?: RequestOptions, signal?: AbortSignal): Promise<string> {
+			titleSignal = signal ?? null;
+			titleStarted();
+			await titleReleased;
+			return "Late Title";
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await titleStartedPromise;
+
+	await engine.destroy();
+	assert.ok(titleSignal);
+	assert.equal((titleSignal as AbortSignal).aborted, true);
+
+	releaseTitle();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.deepEqual(storage.metadataUpdates, []);
+});
+
+test("destroy aborts pending auto-title before waiting on active generation shutdown", async () => {
+	let titleSignal: AbortSignal | null = null;
+	let titleStarted!: () => void;
+	const titleStartedPromise = new Promise<void>((resolve) => {
+		titleStarted = resolve;
+	});
+
+	let releaseTitle!: () => void;
+	const titleReleased = new Promise<void>((resolve) => {
+		releaseTitle = resolve;
+	});
+
+	let secondStreamStarted!: () => void;
+	const secondStreamStartedPromise = new Promise<void>((resolve) => {
+		secondStreamStarted = resolve;
+	});
+
+	let releaseSecondStream!: () => void;
+	const secondStreamReleased = new Promise<void>((resolve) => {
+		releaseSecondStream = resolve;
+	});
+
+	const storage = new MemoryStorage();
+	let streamCalls = 0;
+	const provider: ChatProvider = {
+		async streamChat(
+			_messages: Message[],
+			_options: RequestOptions,
+			signal: AbortSignal,
+			onEvent: (event: StreamEvent) => void,
+		): Promise<void> {
+			streamCalls++;
+			if (streamCalls === 1) {
+				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "first-reply", delta: "answer" });
+				onEvent({ type: "finish", reason: "stop" });
+				return;
+			}
+
+			secondStreamStarted();
+			await secondStreamReleased;
+			if (signal.aborted) {
+				onEvent({ type: "finish", reason: "aborted" });
+			}
+		},
+		async generateTitle(_messages: Message[], _options?: RequestOptions, signal?: AbortSignal): Promise<string> {
+			titleSignal = signal ?? null;
+			titleStarted();
+			await titleReleased;
+			return "Late Title";
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("first");
+	await titleStartedPromise;
+
+	assert.equal(engine.sendMessage("second"), true);
+	await secondStreamStartedPromise;
+
+	const destroyPromise = engine.destroy();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.ok(titleSignal);
+	assert.equal((titleSignal as AbortSignal).aborted, true);
+
+	releaseSecondStream();
+	releaseTitle();
+	await destroyPromise;
+
+	assert.deepEqual(storage.metadataUpdates, []);
+});
+
 test("sendMessage preserves encrypted reasoning as hidden metadata", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({

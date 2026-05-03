@@ -14,6 +14,8 @@ interface FeedHarness {
 	scrollCalls: ScrollBehavior[];
 	windowScrollCalls: ScrollBehavior[];
 	triggerResize: () => void;
+	triggerMediaChange: (matches: boolean) => void;
+	scrollListenerCounts: () => { scrollArea: number; window: number };
 }
 
 function setGlobal(name: string, value: unknown): void {
@@ -38,6 +40,9 @@ function createFeedHarness(
 	const scrollCalls: ScrollBehavior[] = [];
 	const windowScrollCalls: ScrollBehavior[] = [];
 	let resizeCallback: ResizeObserverCallback | null = null;
+	let mediaChangeListener: ((event: MediaQueryListEvent) => void) | null = null;
+	let scrollAreaListenerCount = 0;
+	let windowScrollListenerCount = 0;
 
 	class MockResizeObserver {
 		constructor(callback: ResizeObserverCallback) {
@@ -65,6 +70,38 @@ function createFeedHarness(
 		frames.delete(id);
 	});
 
+	const scrollArea = dom.window.document.querySelector<HTMLElement>(".mur-chat-scroll-area");
+	assert.ok(scrollArea);
+	const originalScrollAreaAdd = scrollArea.addEventListener.bind(scrollArea);
+	const originalScrollAreaRemove = scrollArea.removeEventListener.bind(scrollArea);
+	const originalWindowAdd = dom.window.addEventListener.bind(dom.window);
+	const originalWindowRemove = dom.window.removeEventListener.bind(dom.window);
+
+	scrollArea.addEventListener = ((
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: AddEventListenerOptions,
+	) => {
+		if (type === "scroll") scrollAreaListenerCount++;
+		originalScrollAreaAdd(type, listener, options);
+	}) as typeof scrollArea.addEventListener;
+	scrollArea.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject) => {
+		if (type === "scroll") scrollAreaListenerCount = Math.max(0, scrollAreaListenerCount - 1);
+		originalScrollAreaRemove(type, listener);
+	}) as typeof scrollArea.removeEventListener;
+	dom.window.addEventListener = ((
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: AddEventListenerOptions,
+	) => {
+		if (type === "scroll") windowScrollListenerCount++;
+		originalWindowAdd(type, listener, options);
+	}) as typeof dom.window.addEventListener;
+	dom.window.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject) => {
+		if (type === "scroll") windowScrollListenerCount = Math.max(0, windowScrollListenerCount - 1);
+		originalWindowRemove(type, listener);
+	}) as typeof dom.window.removeEventListener;
+
 	dom.window.HTMLElement.prototype.scrollTo = (options?: ScrollToOptions | number) => {
 		if (typeof options === "object" && options?.behavior) {
 			scrollCalls.push(options.behavior);
@@ -80,10 +117,18 @@ function createFeedHarness(
 			matches: options.mobile === true && query === "(max-width: 768px)",
 			media: query,
 			onchange: null,
-			addEventListener: () => {},
-			removeEventListener: () => {},
-			addListener: () => {},
-			removeListener: () => {},
+			addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+				mediaChangeListener = listener;
+			},
+			removeEventListener: () => {
+				mediaChangeListener = null;
+			},
+			addListener: (listener: (event: MediaQueryListEvent) => void) => {
+				mediaChangeListener = listener;
+			},
+			removeListener: () => {
+				mediaChangeListener = null;
+			},
 			dispatchEvent: () => false,
 		}) as MediaQueryList;
 
@@ -104,6 +149,11 @@ function createFeedHarness(
 			assert.ok(resizeCallback);
 			resizeCallback([], {} as ResizeObserver);
 		},
+		triggerMediaChange: (matches) => {
+			assert.ok(mediaChangeListener);
+			mediaChangeListener({ matches } as MediaQueryListEvent);
+		},
+		scrollListenerCounts: () => ({ scrollArea: scrollAreaListenerCount, window: windowScrollListenerCount }),
 	};
 }
 
@@ -133,6 +183,21 @@ function setScrollMetrics(
 	});
 }
 
+function setWindowScrollMetrics(metrics: { scrollTop: number; scrollHeight: number; clientHeight: number }): void {
+	Object.defineProperty(window, "scrollY", {
+		configurable: true,
+		value: metrics.scrollTop,
+	});
+	Object.defineProperty(window, "innerHeight", {
+		configurable: true,
+		value: metrics.clientHeight,
+	});
+	Object.defineProperties(document.documentElement, {
+		scrollTop: { configurable: true, value: metrics.scrollTop, writable: true },
+		scrollHeight: { configurable: true, value: metrics.scrollHeight },
+	});
+}
+
 async function flushMicrotasks(): Promise<void> {
 	await Promise.resolve();
 	await Promise.resolve();
@@ -146,6 +211,61 @@ test("generation start schedules one smooth scroll", () => {
 	assert.equal(frameCount(), 1);
 	flushFrames();
 	assert.deepEqual(scrollCalls, ["smooth"]);
+
+	feed.destroy();
+});
+
+test("desktop feed listens only to the scroll area", () => {
+	const { feed, scrollListenerCounts } = createFeedHarness();
+
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
+	feed.destroy();
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
+});
+
+test("mobile feed listens only to window scroll", () => {
+	const { feed, scrollListenerCounts } = createFeedHarness({ mobile: true });
+
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 1 });
+	feed.destroy();
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
+});
+
+test("feed swaps scroll listener targets when the mobile query changes", () => {
+	const { feed, scrollListenerCounts, triggerMediaChange } = createFeedHarness();
+
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
+
+	triggerMediaChange(true);
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 1 });
+
+	triggerMediaChange(false);
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
+
+	feed.destroy();
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
+});
+
+test("feed resets scroll position baseline when swapping scroll targets", () => {
+	const { feed, root, frameCount, flushFrames, scrollCalls, triggerMediaChange } = createFeedHarness();
+	const scrollArea = root.querySelector<HTMLElement>(".mur-chat-scroll-area");
+	assert.ok(scrollArea);
+	const currentMessages = messages();
+
+	feed.update(currentMessages, null, false, false);
+	flushFrames();
+	scrollCalls.length = 0;
+
+	setScrollMetrics(scrollArea, { scrollTop: 400, scrollHeight: 500, clientHeight: 100 });
+	scrollArea.dispatchEvent(new window.Event("scroll"));
+
+	setWindowScrollMetrics({ scrollTop: 100, scrollHeight: 1000, clientHeight: 500 });
+	triggerMediaChange(true);
+	window.dispatchEvent(new window.Event("scroll"));
+
+	feed.update(currentMessages, null, false, false);
+
+	assert.equal(frameCount(), 1);
 
 	feed.destroy();
 });

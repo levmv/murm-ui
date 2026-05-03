@@ -106,11 +106,19 @@ function dispatchDrag(container: HTMLElement, type: string): void {
 	container.dispatchEvent(event);
 }
 
-function dispatchPaste(input: HTMLTextAreaElement, files: File[]): boolean {
+function dispatchPaste(
+	input: HTMLTextAreaElement,
+	files: File[],
+	options: { types?: string[]; text?: string } = {},
+): boolean {
 	const event = new window.Event("paste", { bubbles: true, cancelable: true });
 	Object.defineProperty(event, "clipboardData", {
 		configurable: true,
-		value: { files },
+		value: {
+			files,
+			types: options.types ?? [],
+			getData: (type: string) => (type === "text/plain" ? (options.text ?? "") : ""),
+		},
 	});
 	return input.dispatchEvent(event);
 }
@@ -292,6 +300,21 @@ test("drop and paste queue files", async () => {
 	assert.equal(pasteAllowed, false);
 
 	await waitFor(() => harness.container.querySelectorAll(".mur-attachment-ready").length === 2, "drop and paste ready");
+
+	harness.destroy();
+});
+
+test("mixed text and file paste keeps default text insertion while queueing files", async () => {
+	const plugin = AttachmentPlugin();
+	const harness = mountAttachment(plugin);
+
+	const pasteAllowed = dispatchPaste(harness.input, [file("paste.txt", "text/plain", "paste")], {
+		types: ["text/plain", "Files"],
+		text: "pasted text",
+	});
+
+	assert.equal(pasteAllowed, true);
+	await waitFor(() => harness.container.querySelectorAll(".mur-attachment-ready").length === 1, "mixed paste ready");
 
 	harness.destroy();
 });

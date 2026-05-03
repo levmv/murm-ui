@@ -39,6 +39,8 @@ export class ChatEngine {
 	private requestDefaults: Partial<RequestOptions> = {};
 	private titleOptions: Partial<RequestOptions> = {};
 	private activeGeneration: ActiveGeneration | null = null;
+	private autoTitleControllers = new Set<AbortController>();
+	private isDestroyed = false;
 
 	constructor(config: ChatEngineConfig) {
 		this.provider = config.provider;
@@ -193,6 +195,8 @@ export class ChatEngine {
 	}
 
 	public async destroy() {
+		this.isDestroyed = true;
+		this.abortAutoTitles();
 		await this.stopGeneration();
 		await this.sessionManager.close();
 		this.store.clearAllListeners();
@@ -379,10 +383,12 @@ export class ChatEngine {
 		provider: ChatProvider,
 		requestDefaults: Partial<RequestOptions>,
 	) {
-		if (this.sessionManager.isDeleted(sessionId)) return;
+		if (this.isDestroyed || this.sessionManager.isDeleted(sessionId)) return;
+
+		const controller = new AbortController();
+		this.autoTitleControllers.add(controller);
 
 		try {
-			const controller = new AbortController();
 			const payloadMessages = dropEphemeralMessages(messages);
 			const titleRequestDefaults = { ...requestDefaults };
 			delete titleRequestDefaults.systemPrompt;
@@ -390,12 +396,22 @@ export class ChatEngine {
 
 			const smartTitle = await provider.generateTitle!(payloadMessages, payloadOptions, controller.signal);
 			if (!smartTitle) return;
-			if (this.sessionManager.isDeleted(sessionId)) return;
+			if (controller.signal.aborted || this.isDestroyed || this.sessionManager.isDeleted(sessionId)) return;
 
 			await this.sessionManager.updateTitle(sessionId, smartTitle);
 		} catch (e) {
+			if (controller.signal.aborted) return;
 			console.error("Failed to auto-generate title", e);
+		} finally {
+			this.autoTitleControllers.delete(controller);
 		}
+	}
+
+	private abortAutoTitles(): void {
+		for (const controller of this.autoTitleControllers) {
+			controller.abort();
+		}
+		this.autoTitleControllers.clear();
 	}
 
 	private mergeDefinedOptions(base: Partial<RequestOptions>, patch: Partial<RequestOptions>): Partial<RequestOptions> {

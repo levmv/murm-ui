@@ -21,6 +21,7 @@ export class Feed {
 	private resizeObserver?: ResizeObserver;
 	private mediaQueryList: MediaQueryList;
 	private isMobileScroll = false;
+	private activeScrollTarget: "scrollArea" | "window" | null = null;
 
 	constructor(
 		container: HTMLElement,
@@ -31,8 +32,7 @@ export class Feed {
 		this.mediaQueryList = window.matchMedia(MOBILE_SCROLL_QUERY);
 		this.isMobileScroll = this.mediaQueryList.matches;
 
-		this.scrollArea.addEventListener("scroll", this.onScroll, { passive: true });
-		window.addEventListener("scroll", this.onScroll, { passive: true });
+		this.syncScrollListener();
 		this.addMediaListener();
 
 		if (typeof ResizeObserver !== "undefined") {
@@ -123,8 +123,7 @@ export class Feed {
 		this.pendingScrollBehavior = null;
 
 		this.resizeObserver?.disconnect();
-		this.scrollArea.removeEventListener("scroll", this.onScroll);
-		window.removeEventListener("scroll", this.onScroll);
+		this.removeActiveScrollListener();
 		this.removeMediaListener();
 		this.clearAllNodes();
 		this.spinnerEl.remove();
@@ -216,7 +215,31 @@ export class Feed {
 
 	private onMediaChange = (event: MediaQueryListEvent) => {
 		this.isMobileScroll = event.matches;
+		this.syncScrollListener();
+		this.lastScrollTop = this.getScrollMetrics().scrollTop;
 	};
+
+	private syncScrollListener(): void {
+		const nextTarget = this.isMobileScroll ? "window" : "scrollArea";
+		if (this.activeScrollTarget === nextTarget) return;
+
+		this.removeActiveScrollListener();
+		if (nextTarget === "window") {
+			window.addEventListener("scroll", this.onScroll, { passive: true });
+		} else {
+			this.scrollArea.addEventListener("scroll", this.onScroll, { passive: true });
+		}
+		this.activeScrollTarget = nextTarget;
+	}
+
+	private removeActiveScrollListener(): void {
+		if (this.activeScrollTarget === "window") {
+			window.removeEventListener("scroll", this.onScroll);
+		} else if (this.activeScrollTarget === "scrollArea") {
+			this.scrollArea.removeEventListener("scroll", this.onScroll);
+		}
+		this.activeScrollTarget = null;
+	}
 
 	private addMediaListener(): void {
 		if (typeof this.mediaQueryList.addEventListener === "function") {
