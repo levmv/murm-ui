@@ -51,6 +51,7 @@ export class ChatUI {
 	private feedComponent!: Feed;
 	private sidebarComponent?: Sidebar;
 	private plugins: ChatPlugin[] = [];
+	private inputDrafts = new Map<string, string>();
 
 	private elements!: {
 		mainArea: HTMLElement;
@@ -308,10 +309,19 @@ export class ChatUI {
 			prevIsGenerating = isGenerating;
 		});
 
+		let inputSessionId = this.engine.state.currentSessionId;
 		this.engine.onChange(
 			(state) => state.currentSessionId,
-			() => {
-				this.inputComponent.setText("");
+			(currentSessionId) => {
+				const draft = this.inputComponent.getText();
+				if (draft.length > 0) {
+					this.inputDrafts.set(inputSessionId, draft);
+				} else {
+					this.inputDrafts.delete(inputSessionId);
+				}
+
+				inputSessionId = currentSessionId;
+				this.inputComponent.setText(this.inputDrafts.get(currentSessionId) ?? "");
 				this.inputComponent.focus();
 			},
 		);

@@ -163,6 +163,11 @@ function submit(form: HTMLFormElement): void {
 	form.dispatchEvent(new window.SubmitEvent("submit", { bubbles: true, cancelable: true }));
 }
 
+function setInputValue(input: HTMLTextAreaElement, value: string): void {
+	input.value = value;
+	input.dispatchEvent(new window.Event("input", { bubbles: true }));
+}
+
 async function waitFor(assertion: () => boolean, label: string): Promise<void> {
 	for (let i = 0; i < 30; i++) {
 		if (assertion()) return;
@@ -440,6 +445,90 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.state.currentSessionId, previousSessionId);
+
+	await ui.destroy();
+});
+
+test("ChatUI restores per-chat input drafts when switching sessions", async () => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+	const storage = new MemoryStorage([
+		{
+			id: "chat-1",
+			title: "Stored Chat 1",
+			updatedAt: 200,
+			messages: [textMessage("msg-1", "user", "stored one")],
+		},
+		{
+			id: "chat-2",
+			title: "Stored Chat 2",
+			updatedAt: 100,
+			messages: [textMessage("msg-2", "user", "stored two")],
+		},
+	]);
+	const provider: ChatProvider = {
+		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+
+	const ui = new ChatUI({
+		container,
+		provider,
+		routing: false,
+		storage,
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
+	await ui.engine.sessions.switch("chat-1");
+	await waitFor(
+		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
+		"chat 1 load",
+	);
+
+	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
+	const form = container.querySelector(".mur-chat-form") as HTMLFormElement;
+
+	setInputValue(input, "draft for one");
+	await ui.engine.sessions.switch("chat-2");
+	await waitFor(
+		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-2",
+		"chat 2 load",
+	);
+
+	assert.equal(input.value, "");
+
+	setInputValue(input, "draft for two");
+	await ui.engine.sessions.switch("chat-1");
+	await waitFor(
+		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
+		"chat 1 restore",
+	);
+
+	assert.equal(input.value, "draft for one");
+
+	await ui.engine.sessions.switch("chat-2");
+	await waitFor(
+		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-2",
+		"chat 2 restore",
+	);
+
+	assert.equal(input.value, "draft for two");
+
+	submit(form);
+	await waitFor(() => ui.engine.state.generatingMessageId === null, "submitted draft");
+	await ui.engine.sessions.switch("chat-1");
+	await waitFor(
+		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
+		"chat 1 after submit",
+	);
+	await ui.engine.sessions.switch("chat-2");
+	await waitFor(
+		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-2",
+		"chat 2 after submit",
+	);
+
+	assert.equal(input.value, "");
 
 	await ui.destroy();
 });

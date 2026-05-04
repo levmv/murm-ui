@@ -74,6 +74,10 @@ export class Input {
 		}
 	}
 
+	public getText(): string {
+		return this.input.value;
+	}
+
 	public destroy() {
 		this.clearPendingFocus();
 		this.input.removeEventListener("input", this.onInputBound);
