@@ -202,6 +202,7 @@ export interface ChatProvider {
 export interface RenderConfig {
 	/**
 	 * Receives code text from a sanitized code block and returns trusted HTML.
+	 * The language is an empty string for code blocks without a language class.
 	 * The returned HTML is injected directly, so custom highlighters must escape
 	 * any interpolated code text and must not use untrusted highlighter output.
 	 */

@@ -10,8 +10,8 @@ g.NodeFilter = dom.window.NodeFilter;
 
 import { renderSafeHTML } from "./html";
 
-test("keeps safe markdown HTML intact", () => {
-	const input = '<p>Hello <strong>World</strong>!</p><pre><code class="language-js">let x = 1;</code></pre>';
+test("keeps safe non-code markdown HTML intact", () => {
+	const input = "<p>Hello <strong>World</strong>!</p>";
 	const output = document.createElement("div");
 	renderSafeHTML(output, input);
 	assert.equal(output.innerHTML, input);
@@ -65,7 +65,78 @@ test("treats highlighter output as trusted for code blocks", () => {
 	const input = '<pre><code class="language-ts">const x = 1;</code></pre>';
 	const output = document.createElement("div");
 	renderSafeHTML(output, input, (code, lang) => `<span class="${lang}">${code}</span>`);
-	assert.equal(output.innerHTML, '<pre><code class="language-ts"><span class="ts">const x = 1;</span></code></pre>');
+	assert.equal(output.querySelector("pre > code > span.ts")?.textContent, "const x = 1;");
+});
+
+test("passes an empty language to highlighter for unlabeled code blocks", () => {
+	const input = "<pre><code>const x = 1;</code></pre>";
+	const output = document.createElement("div");
+	const calls: string[] = [];
+
+	renderSafeHTML(output, input, (code, lang) => {
+		calls.push(lang);
+		return `<span class="auto">${code}</span>`;
+	});
+
+	assert.deepEqual(calls, [""]);
+	assert.equal(output.querySelector("pre > code > span.auto")?.textContent, "const x = 1;");
+});
+
+test("leaves code block content unchanged when highlighter throws", () => {
+	const input = "<pre><code>const x = 1;</code></pre>";
+	const output = document.createElement("div");
+
+	renderSafeHTML(output, input, () => {
+		throw new Error("Missing grammar");
+	});
+
+	assert.equal(output.querySelector("pre > code")?.textContent, "const x = 1;");
+});
+
+test("renders language and copy controls for labeled code blocks", () => {
+	const input = '<pre><code class="language-ts">const x = 1;</code></pre>';
+	const output = document.createElement("div");
+
+	renderSafeHTML(output, input);
+
+	const codeBlock = output.querySelector(".mur-code-block");
+	assert.ok(codeBlock);
+	assert.equal(codeBlock.querySelector(".mur-code-language")?.textContent, "ts");
+	assert.equal(codeBlock.querySelector("button.mur-code-copy-btn")?.getAttribute("type"), "button");
+	assert.equal(codeBlock.querySelector("pre > code")?.textContent, "const x = 1;");
+});
+
+test("renders code block controls after applying highlighter output", () => {
+	const input = '<pre><code class="language-ts">const x = 1;</code></pre>';
+	const output = document.createElement("div");
+
+	renderSafeHTML(output, input, (code, lang) => `<span class="${lang}">${code}</span>`);
+
+	assert.equal(output.querySelector(".mur-code-language")?.textContent, "ts");
+	assert.equal(output.querySelector("pre > code > span.ts")?.textContent, "const x = 1;");
+	assert.ok(output.querySelector("button.mur-code-copy-btn"));
+});
+
+test("renders copy-only header for unlabeled code blocks", () => {
+	const input = "<pre><code>const x = 1;</code></pre>";
+	const output = document.createElement("div");
+
+	renderSafeHTML(output, input);
+
+	assert.ok(output.querySelector(".mur-code-block"));
+	assert.equal(output.querySelector(".mur-code-language"), null);
+	assert.ok(output.querySelector("button.mur-code-copy-btn"));
+});
+
+test("escapes unsafe user markup while adding internal code block controls", () => {
+	const input = '<button class="mur-code-copy-btn">Bad</button><pre><code>Safe</code></pre>';
+	const output = document.createElement("div");
+
+	renderSafeHTML(output, input);
+
+	assert.ok(output.innerHTML.includes('&lt;button class="mur-code-copy-btn"&gt;Bad&lt;/button&gt;'));
+	assert.equal(output.querySelectorAll("button.mur-code-copy-btn").length, 1);
+	assert.equal(output.querySelector("pre > code")?.textContent, "Safe");
 });
 
 test("escapes dangerous tags to text instead of deleting them (UX)", () => {

@@ -1,5 +1,6 @@
 import type { Message, RenderConfig } from "../core/types";
 import { el, queryOrThrow } from "../utils/dom";
+import { ICON_CHECK, ICON_COPY } from "../utils/icons";
 import { MessageNode } from "./message-node";
 
 const STICKY_THRESHOLD = 50;
@@ -33,6 +34,7 @@ export class Feed {
 		this.mediaQueryList = window.matchMedia(MOBILE_SCROLL_QUERY);
 		this.isMobileScroll = this.mediaQueryList.matches;
 
+		this.historyContainer.addEventListener("click", this.onHistoryClick);
 		this.syncScrollListener();
 		this.addMediaListener();
 
@@ -132,6 +134,7 @@ export class Feed {
 		this.pendingScrollBehavior = null;
 
 		this.resizeObserver?.disconnect();
+		this.historyContainer.removeEventListener("click", this.onHistoryClick);
 		this.removeActiveScrollListener();
 		this.removeMediaListener();
 		this.clearAllNodes();
@@ -203,6 +206,40 @@ export class Feed {
 			this.isStickyToBottom = true;
 		}
 	};
+
+	private onHistoryClick = (event: MouseEvent) => {
+		const target = event.target as Element | null;
+		const button = target?.closest?.(".mur-code-copy-btn") as HTMLElement | null;
+		if (
+			!button ||
+			button.tagName !== "BUTTON" ||
+			!this.historyContainer.contains(button) ||
+			!button.closest(".mur-code-header")
+		) {
+			return;
+		}
+
+		void this.copyCode(button as HTMLButtonElement);
+	};
+
+	private async copyCode(button: HTMLButtonElement): Promise<void> {
+		const codeBlock = button.closest(".mur-code-block");
+		const codeEl = codeBlock?.querySelector("pre > code");
+		const text = codeEl?.textContent;
+		if (text === undefined || typeof navigator === "undefined" || !navigator.clipboard) return;
+
+		try {
+			await navigator.clipboard.writeText(text);
+			button.innerHTML = ICON_CHECK;
+			window.setTimeout(() => {
+				if (button.isConnected) {
+					button.innerHTML = ICON_COPY;
+				}
+			}, 2000);
+		} catch {
+			// Copy is best-effort; leave the button unchanged on failure.
+		}
+	}
 
 	private getScrollMetrics(): { scrollTop: number; scrollHeight: number; clientHeight: number } {
 		if (this.isMobileScroll) {

@@ -108,6 +108,61 @@
 	margin-bottom: 1rem;
 }
 
+.mur-code-block {
+	background-color: var(--mur-surface);
+	border-radius: 0.5rem;
+	overflow: hidden;
+	margin-bottom: 1rem;
+}
+
+.mur-message .mur-code-block pre {
+	background-color: transparent;
+	border-radius: 0;
+	margin-bottom: 0;
+}
+
+.mur-code-header {
+	display: flex;
+	align-items: center;
+	min-height: 2rem;
+	padding: 0.25rem 0.25rem 0.25rem 1rem;
+	color: var(--mur-text-muted);
+}
+
+.mur-code-language {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: monospace;
+	font-size: 0.75rem;
+	line-height: 1;
+}
+
+.mur-code-copy-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 1.8rem;
+	height: 1.8rem;
+	margin-left: auto;
+	color: var(--mur-text-muted);
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.mur-code-copy-btn:hover {
+	background-color: var(--mur-hover-bg);
+	color: var(--mur-text);
+}
+
+.mur-code-copy-btn svg {
+	flex: 0 0 auto;
+}
+
 .mur-message pre code {
 	background-color: transparent;
 	padding: 0;

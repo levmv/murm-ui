@@ -1,3 +1,5 @@
+import { ICON_COPY } from "./icons";
+
 export type Highlighter = (code: string, lang: string) => string;
 
 let parser: DOMParser | null = null;
@@ -34,6 +36,7 @@ export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlig
 
 	const nodesToEscape: Element[] = [];
 	const blocksToHighlight: { el: Element; lang: string }[] = [];
+	const codeElsToDecorate: Element[] = [];
 
 	let node = walker.nextNode() as Element;
 	while (node) {
@@ -42,6 +45,17 @@ export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlig
 		if (!ALLOWED_TAGS.has(tagName)) {
 			nodesToEscape.push(node);
 		} else {
+			const isCodeBlock = tagName === "CODE" && node.parentElement?.tagName === "PRE";
+			const codeLanguage = isCodeBlock ? extractCodeLanguage(node) : null;
+
+			if (isCodeBlock && highlighter) {
+				blocksToHighlight.push({ el: node, lang: codeLanguage ?? "" });
+			}
+
+			if (isCodeBlock) {
+				codeElsToDecorate.push(node);
+			}
+
 			const attrs = node.getAttributeNames();
 			for (const attr of attrs) {
 				const attrLower = attr.toLowerCase();
@@ -63,12 +77,6 @@ export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlig
 				}
 
 				if (tagName === "CODE" && attrLower === "class") {
-					if (highlighter && node.parentElement?.tagName === "PRE") {
-						const match = node.getAttribute(attr)?.match(/language-([a-zA-Z0-9+-]+)/);
-						if (match) {
-							blocksToHighlight.push({ el: node, lang: match[1] });
-						}
-					}
 					continue;
 				}
 
@@ -88,7 +96,12 @@ export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlig
 
 	for (const { el, lang } of blocksToHighlight) {
 		const rawCode = el.textContent || "";
-		const highlightedHTML = highlighter!(rawCode, lang);
+		let highlightedHTML = "";
+		try {
+			highlightedHTML = highlighter!(rawCode, lang);
+		} catch {
+			continue;
+		}
 		if (highlightedHTML) {
 			// Note: We inject the highlighted HTML directly without a second sanitization
 			// pass for performance reasons during rapid LLM streaming.
@@ -97,10 +110,51 @@ export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlig
 			el.innerHTML = highlightedHTML;
 		}
 	}
+
+	decorateCodeBlocks(codeElsToDecorate);
+
 	targetNode.innerHTML = "";
 	while (doc.body.firstChild) {
 		targetNode.appendChild(doc.body.firstChild);
 	}
+}
+
+function decorateCodeBlocks(codeEls: Element[]): void {
+	for (const codeEl of codeEls) {
+		const pre = codeEl.parentElement;
+		if (!pre || pre.tagName !== "PRE" || pre.parentElement?.classList.contains("mur-code-block")) continue;
+
+		const language = extractCodeLanguage(codeEl);
+
+		const wrapper = codeEl.ownerDocument.createElement("div");
+		wrapper.className = "mur-code-block";
+
+		const header = codeEl.ownerDocument.createElement("div");
+		header.className = "mur-code-header";
+
+		if (language !== null) {
+			const label = codeEl.ownerDocument.createElement("span");
+			label.className = "mur-code-language";
+			label.textContent = language;
+			header.appendChild(label);
+		}
+
+		const button = codeEl.ownerDocument.createElement("button");
+		button.className = "mur-code-copy-btn";
+		button.type = "button";
+		button.title = "Copy code";
+		button.setAttribute("aria-label", "Copy code");
+		button.innerHTML = ICON_COPY;
+		header.appendChild(button);
+
+		pre.replaceWith(wrapper);
+		wrapper.append(header, pre);
+	}
+}
+
+function extractCodeLanguage(codeEl: Element): string | null {
+	const match = codeEl.getAttribute("class")?.match(/(?:^|\s)language-([a-zA-Z0-9+-]+)/);
+	return match?.[1] ?? null;
 }
 
 // Validates URLs against an explicit whitelist of safe prefixes.

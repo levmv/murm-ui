@@ -424,6 +424,45 @@ test("text blocks render markdown directly into the block container", async () =
 	feed.destroy();
 });
 
+test("code block copy button writes the rendered code text", async () => {
+	const { feed, root } = createFeedHarness();
+	const copied: string[] = [];
+
+	setGlobal("navigator", {
+		clipboard: {
+			writeText: async (text: string) => {
+				copied.push(text);
+			},
+		},
+	});
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-1", type: "text", text: "```ts\nconst x = 1;\n```" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+	await flushMicrotasks();
+
+	const copyBtn = root.querySelector<HTMLButtonElement>(".mur-code-copy-btn");
+	assert.ok(copyBtn);
+	assert.equal(root.querySelector(".mur-code-language")?.textContent, "ts");
+
+	copyBtn.click();
+	await flushMicrotasks();
+
+	assert.equal(copied.length, 1);
+	assert.match(copied[0], /const x = 1;/);
+
+	feed.destroy();
+});
+
 test("copy action reads the latest message for a reused node", async () => {
 	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
 	const copied: string[] = [];
