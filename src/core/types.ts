@@ -199,14 +199,17 @@ export interface ChatProvider {
 	generateTitle?(messages: Message[], options?: RequestOptions, signal?: AbortSignal): Promise<string>;
 }
 
+export type CodeHighlighter = (code: string, lang: string) => string | Promise<string>;
+
 export interface RenderConfig {
 	/**
-	 * Receives code text from a sanitized code block and returns trusted HTML.
+	 * Receives code text from a sanitized code block and returns trusted HTML,
+	 * either synchronously or after loading a grammar.
 	 * The language is an empty string for code blocks without a language class.
 	 * The returned HTML is injected directly, so custom highlighters must escape
 	 * any interpolated code text and must not use untrusted highlighter output.
 	 */
-	highlighter?: (code: string, lang: string) => string;
+	highlighter?: CodeHighlighter;
 	plugins: ChatPlugin[];
 }
 

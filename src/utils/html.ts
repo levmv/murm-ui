@@ -1,6 +1,7 @@
+import type { CodeHighlighter } from "../core/types";
 import { ICON_COPY } from "./icons";
 
-export type Highlighter = (code: string, lang: string) => string;
+export type Highlighter = CodeHighlighter;
 
 let parser: DOMParser | null = null;
 
@@ -30,13 +31,18 @@ const IMG_PREFIXES = ["http://", "https://", "data:image/"];
  * @param rawHtml - The un-sanitized HTML string (usually from marked.parse).
  * @param highlighter - Optional function to apply syntax highlighting to <code> blocks.
  */
-export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlighter?: Highlighter): void {
+export function renderSafeHTML(
+	targetNode: HTMLElement,
+	rawHtml: string,
+	highlighter?: Highlighter,
+): void | Promise<void> {
 	const doc = getParser().parseFromString(rawHtml, "text/html");
 	const walker = document.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
 
 	const nodesToEscape: Element[] = [];
 	const blocksToHighlight: { el: Element; lang: string }[] = [];
 	const codeElsToDecorate: Element[] = [];
+	const pendingHighlights: Promise<void>[] = [];
 
 	let node = walker.nextNode() as Element;
 	while (node) {
@@ -96,27 +102,50 @@ export function renderSafeHTML(targetNode: HTMLElement, rawHtml: string, highlig
 
 	for (const { el, lang } of blocksToHighlight) {
 		const rawCode = el.textContent || "";
-		let highlightedHTML = "";
 		try {
-			highlightedHTML = highlighter!(rawCode, lang);
-		} catch {
-			continue;
-		}
-		if (highlightedHTML) {
-			// Note: We inject the highlighted HTML directly without a second sanitization
-			// pass for performance reasons during rapid LLM streaming.
-			// We operate on the assumption that the provided `highlighter` is
-			// trusted and does not inject malicious tags.
-			el.innerHTML = highlightedHTML;
-		}
+			const highlightedHTML = highlighter!(rawCode, lang);
+			if (isPromiseLike(highlightedHTML)) {
+				pendingHighlights.push(
+					highlightedHTML
+						.then((html) => {
+							applyHighlightedHTML(el, html);
+						})
+						.catch(() => undefined),
+				);
+				continue;
+			}
+			applyHighlightedHTML(el, highlightedHTML);
+		} catch {}
 	}
 
-	decorateCodeBlocks(codeElsToDecorate);
+	const commit = () => {
+		decorateCodeBlocks(codeElsToDecorate);
 
-	targetNode.innerHTML = "";
-	while (doc.body.firstChild) {
-		targetNode.appendChild(doc.body.firstChild);
+		targetNode.innerHTML = "";
+		while (doc.body.firstChild) {
+			targetNode.appendChild(doc.body.firstChild);
+		}
+	};
+
+	if (pendingHighlights.length > 0) {
+		return Promise.all(pendingHighlights).then(commit);
 	}
+
+	commit();
+}
+
+function applyHighlightedHTML(el: Element, highlightedHTML: string): void {
+	if (!highlightedHTML) return;
+
+	// Note: We inject the highlighted HTML directly without a second sanitization
+	// pass for performance reasons during rapid LLM streaming.
+	// We operate on the assumption that the provided `highlighter` is
+	// trusted and does not inject malicious tags.
+	el.innerHTML = highlightedHTML;
+}
+
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+	return !!value && typeof value === "object" && "then" in value && typeof value.then === "function";
 }
 
 function decorateCodeBlocks(codeEls: Element[]): void {

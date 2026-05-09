@@ -13,6 +13,7 @@ export type {
 	ChatSessionMeta,
 	ChatState,
 	ChatStorage,
+	CodeHighlighter,
 	JsonValue,
 	Message,
 	MessageActionContext,

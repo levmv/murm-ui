@@ -8,6 +8,7 @@ Murm UI is a zero-framework TypeScript chat interface for LLM apps. It handles t
 - [HTML Shell](#html-shell)
 - [CSS](#css)
 - [Create The UI](#create-the-ui)
+- [Syntax Highlighting](#syntax-highlighting)
 - [Providers](#providers)
 - [Plugins](#plugins)
 - [Storage](#storage)
@@ -68,6 +69,7 @@ import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
 import "murm-ui/plugins/settings/settings.css";
 import "murm-ui/plugins/thinking/thinking.css";
+import "murm-ui/highlighter/theme.css";
 ```
 
 Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-theme="light"` or `data-theme="dark"` on `.mur-app`, or omit `data-theme` to follow `prefers-color-scheme`.
@@ -84,11 +86,13 @@ import {
   OpenAIProvider,
   ThinkingPlugin,
 } from "murm-ui";
+import { highlight } from "murm-ui/highlighter";
 
 new ChatUI({
   container: ".mur-app",
   provider: new OpenAIProvider(apiKey, endpoint, model),
   storage: new IndexedDBStorage(),
+  highlighter: highlight,
   plugins: (chatApi) => [
     AttachmentPlugin(),
     ThinkingPlugin(),
@@ -115,6 +119,64 @@ new ChatUI({
 ```
 
 The `sidebarMenu` builder should stay pure. Return the final item list from the defaults and context, and put side effects inside item `onClick` handlers.
+
+<h2 id="syntax-highlighting">Syntax Highlighting</h2>
+
+Syntax highlighting is optional. If you omit `highlighter`, Murm UI still renders safe code blocks with language labels and copy buttons; it just leaves the code text uncolored.
+
+The package includes a built-in highlighter with common languages already registered. Import the highlighter function and its theme when you want first-party highlighting without adding another runtime dependency.
+
+```ts
+import { highlight } from "murm-ui/highlighter";
+import "murm-ui/highlighter/theme.css";
+
+new ChatUI({
+  // ...
+  highlighter: highlight,
+});
+```
+
+The built-in set includes JavaScript, TypeScript, JSON, YAML, CSS, HTML/XML, JSX, TSX, Python, Bash, SQL, Diff, Markdown, Go, Rust, Java, C, C++, C#, PHP, Ruby, Kotlin, Swift, Dockerfile, TOML, and GraphQL. Unknown languages and plain code blocks are escaped safely.
+
+You can replace it with any trusted highlighter. The function receives raw code text and the language id from the Markdown fence, then returns the HTML fragment that should go inside the `<code>` element.
+
+```ts
+new ChatUI({
+  // ...
+  highlighter: (code, language) => myHighlighter.renderCodeInnerHtml(code, language),
+});
+```
+
+Custom highlighter output is injected directly for streaming performance, so escape any user code you interpolate and do not return untrusted HTML.
+
+For larger apps, `murm-ui/highlighter/chat` exposes an async highlighter that can lazy-load extra grammars. Built-in languages are available immediately; `loadLanguage` is called only for missing languages.
+
+```ts
+import { createHighlighter } from "murm-ui/highlighter/chat";
+import "murm-ui/highlighter/theme.css";
+
+const highlighter = createHighlighter({
+  async loadLanguage(language) {
+    return import(`./grammars/${language}.js`);
+  },
+});
+
+new ChatUI({
+  // ...
+  highlighter: highlighter.highlight,
+});
+```
+
+Grammar definitions use the Prism-style grammar shape (`pattern`, `inside`, `lookbehind`, `greedy`, `alias`, `rest`), so Prism-compatible grammars can be registered directly. If a lazy module exports a raw grammar object, wrap it as a language definition:
+
+```ts
+const highlighter = createHighlighter({
+  async loadLanguage(language) {
+    const module = await import(`./prism-grammars/${language}.js`);
+    return { id: language, grammar: module.default };
+  },
+});
+```
 
 <h2 id="providers">Providers</h2>
 

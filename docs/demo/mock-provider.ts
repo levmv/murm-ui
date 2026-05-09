@@ -21,7 +21,7 @@ const RESPONSES = [
 		"| Overhead | Low |",
 		"| Vibes | Immaculate |",
 		"",
-		"And of course, code blocks render cleanly. You can plug in PrismJS (or any highlighter) for syntax colors.",
+		"And of course, code blocks render cleanly. Murm UI ships a built-in highlighter for syntax colors.",
 	].join("\n"),
 	[
 		"Ultimately, Murm UI just wants to be a boring, reliable chat shell.",

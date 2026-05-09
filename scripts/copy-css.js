@@ -8,4 +8,12 @@ fs.cpSync("src", "dist", {
 		return isDir || source.endsWith(".css");
 	},
 });
+
+for (const file of ["THIRD_PARTY_NOTICES.md"]) {
+	const source = `src/highlighter/${file}`;
+	if (fs.existsSync(source)) {
+		fs.cpSync(source, `dist/highlighter/${file}`);
+	}
+}
+
 console.log("CSS copied successfully!");

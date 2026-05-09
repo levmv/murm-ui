@@ -208,13 +208,12 @@ export class MessageNode {
 
 			if (this.isDestroyed || !state || seq !== state.renderSeq) return;
 
-			if (!state.container.hasChildNodes()) {
-				renderSafeHTML(state.container, html, this.config.highlighter);
-			} else {
-				const nextContent = document.createElement("div");
-				renderSafeHTML(nextContent, html, this.config.highlighter);
-				syncDOMChildren(state.container, nextContent);
-			}
+			const nextContent = document.createElement("div");
+			await renderSafeHTML(nextContent, html, this.config.highlighter);
+
+			if (this.isDestroyed || !state || seq !== state.renderSeq) return;
+
+			syncDOMChildren(state.container, nextContent);
 
 			state.textCache = content;
 		} catch (error) {

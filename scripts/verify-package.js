@@ -7,6 +7,16 @@ const root = process.cwd();
 const requiredFiles = [
 	"dist/index.js",
 	"dist/index.d.ts",
+	"dist/highlighter/index.js",
+	"dist/highlighter/index.d.ts",
+	"dist/highlighter/chat.js",
+	"dist/highlighter/chat.d.ts",
+	"dist/highlighter/core.js",
+	"dist/highlighter/core.d.ts",
+	"dist/highlighter/languages/index.js",
+	"dist/highlighter/languages/index.d.ts",
+	"dist/highlighter/theme.css",
+	"dist/highlighter/THIRD_PARTY_NOTICES.md",
 	"dist/main.js",
 	"dist/main.d.ts",
 	"dist/styles/base.css",
@@ -57,6 +67,18 @@ if (packageJson.exports?.["./plugins/*.css"] !== "./dist/plugins/*.css") {
 	throw new Error('package.json must export "./plugins/*.css"');
 }
 
+if (packageJson.exports?.["./highlighter/*.css"] !== "./dist/highlighter/*.css") {
+	throw new Error('package.json must export "./highlighter/*.css"');
+}
+
+if (packageJson.exports?.["./highlighter"]?.import !== "./dist/highlighter/index.js") {
+	throw new Error('package.json export "./highlighter" must point to ./dist/highlighter/index.js');
+}
+
+if (packageJson.exports?.["./highlighter/*"]?.import !== "./dist/highlighter/*.js") {
+	throw new Error('package.json export "./highlighter/*" must point to ./dist/highlighter/*.js');
+}
+
 await Promise.all(requiredFiles.map(assertFile));
 
 await build({
@@ -75,5 +97,48 @@ await build({
 	},
 	write: false,
 });
+
+await build({
+	bundle: true,
+	format: "esm",
+	logLevel: "silent",
+	outdir: "package-smoke",
+	platform: "browser",
+	stdin: {
+		contents: `
+			import { highlight } from "murm-ui/highlighter";
+			import { createHighlighter as createChatHighlighter } from "murm-ui/highlighter/chat";
+			import { createHighlighter as createCoreHighlighter } from "murm-ui/highlighter/core";
+			import { registerBuiltInLanguages } from "murm-ui/highlighter/languages";
+			import { registerRubyLanguage } from "murm-ui/highlighter/languages/ruby";
+			void [highlight, createChatHighlighter, createCoreHighlighter, registerBuiltInLanguages, registerRubyLanguage];
+		`,
+		resolveDir: root,
+		sourcefile: "highlighter-package-smoke.js",
+	},
+	write: false,
+});
+
+await build({
+	bundle: true,
+	format: "esm",
+	logLevel: "silent",
+	outdir: "package-smoke",
+	platform: "browser",
+	stdin: {
+		contents: `
+			import "murm-ui/highlighter/theme.css";
+		`,
+		resolveDir: root,
+		sourcefile: "highlighter-css-smoke.js",
+	},
+	write: false,
+});
+
+await import("murm-ui/highlighter");
+await import("murm-ui/highlighter/chat");
+await import("murm-ui/highlighter/core");
+await import("murm-ui/highlighter/languages");
+await import("murm-ui/highlighter/languages/ruby");
 
 console.log("Package smoke passed.");

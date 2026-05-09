@@ -68,6 +68,16 @@ test("treats highlighter output as trusted for code blocks", () => {
 	assert.equal(output.querySelector("pre > code > span.ts")?.textContent, "const x = 1;");
 });
 
+test("waits for async highlighter output", async () => {
+	const input = '<pre><code class="language-ruby">puts "hello"</code></pre>';
+	const output = document.createElement("div");
+
+	await renderSafeHTML(output, input, async (code, lang) => `<span class="${lang}">${code}</span>`);
+
+	assert.equal(output.querySelector(".mur-code-language")?.textContent, "ruby");
+	assert.equal(output.querySelector("pre > code > span.ruby")?.textContent, 'puts "hello"');
+});
+
 test("passes an empty language to highlighter for unlabeled code blocks", () => {
 	const input = "<pre><code>const x = 1;</code></pre>";
 	const output = document.createElement("div");

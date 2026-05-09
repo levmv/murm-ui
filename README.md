@@ -1,13 +1,13 @@
 # Murm UI
 
-A zero-framework, vanilla TypeScript chat interface for LLMs. 
+A zero-framework, vanilla TypeScript chat interface for LLMs.
 
 Documentation and the static mock demo live at https://levmv.github.io/murm-ui/.
 
 Built for developers who need a functional chat UI without framework overhead. No React, no virtual DOM, no build pipeline complexity—just a small, composable library that handles chat state, rendering, and user interaction.
 
 ### Key Features
-- **Minimal dependencies:** Only `marked` for markdown parsing. Everything else is standard Web APIs.
+- **Minimal dependencies:** Only `marked` as an external runtime dependency. The optional syntax highlighter ships inside the package.
 - **Simple build:** Single-command bundling with esbuild. No transpilation config required.
 - **Efficient rendering**: Reference-based DOM updates and throttled markdown parsing to handle streaming responses without layout thrashing.
 - **Highly Modular:** Bring your own backend, bring your own AI provider, and only load the UI plugins you actually need.
@@ -30,6 +30,8 @@ import {
 	OpenAIProvider,
 	ThinkingPlugin,
 } from "murm-ui";
+import { highlight } from "murm-ui/highlighter";
+import "murm-ui/highlighter/theme.css";
 
 const ui = new ChatUI({
 	container: "#app",
@@ -43,9 +45,12 @@ const ui = new ChatUI({
 			onSave: (id, text) => chatApi.editAndResubmit(id, text),
 		}),
 	],
-	highlighter: (code, lang) => Prism.highlight(code, Prism.languages[lang], lang),
+	highlighter: highlight,
 });
 ```
+
+Code block headers are enabled by default.
+The built-in highlighter escapes plain or unknown-language code blocks.
 
 The package entry imports the library CSS for bundlers that support CSS imports. The CSS assets are also exported for explicit use:
 
@@ -58,6 +63,7 @@ import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
 import "murm-ui/plugins/settings/settings.css";
 import "murm-ui/plugins/thinking/thinking.css";
+import "murm-ui/highlighter/theme.css";
 ```
 
 You provide the HTML skeleton. See `example/index.html` for the standard class names expected by `ChatUI`.

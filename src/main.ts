@@ -1,5 +1,5 @@
 import { ChatEngine } from "./core/chat-engine";
-import type { ChatPlugin, ChatProvider, ChatStorage, RequestOptions } from "./core/types";
+import type { ChatPlugin, ChatProvider, ChatStorage, CodeHighlighter, RequestOptions } from "./core/types";
 import { AppRouter, type RouterConfig } from "./router";
 import { el, queryOrThrow } from "./utils/dom";
 
@@ -25,7 +25,7 @@ export interface ChatUIConfig {
 	enableSidebar?: boolean;
 	initialSessionId?: string;
 
-	highlighter?: (code: string, language: string) => string;
+	highlighter?: CodeHighlighter;
 	plugins?: (chatApi: ChatEngine) => ChatPlugin[];
 
 	/**

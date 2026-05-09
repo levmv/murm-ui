@@ -11,7 +11,7 @@
 		"dev": "esbuild example/app.ts --bundle --outfile=example/bundle.js --servedir=example",
 		"clean": "rm -rf dist",
 		"build": "npm run build:lib",
-		"build:lib": "npm run clean && tsc && npm run copy:css",
+		"build:lib": "npm run clean && tsc && node scripts/fix-esm-imports.js && npm run copy:css",
 		"copy:css": "node scripts/copy-css.js",
 		"test": "node --import ./scripts/register-test-loaders.js --import tsx --test \"src/**/*.test.ts\"",
 		"pack:dry": "node scripts/pack-dry-run.js",
@@ -25,6 +25,22 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
+		},
+		"./highlighter": {
+			"types": "./dist/highlighter/index.d.ts",
+			"import": "./dist/highlighter/index.js",
+			"default": "./dist/highlighter/index.js"
+		},
+		"./highlighter/languages": {
+			"types": "./dist/highlighter/languages/index.d.ts",
+			"import": "./dist/highlighter/languages/index.js",
+			"default": "./dist/highlighter/languages/index.js"
+		},
+		"./highlighter/*.css": "./dist/highlighter/*.css",
+		"./highlighter/*": {
+			"types": "./dist/highlighter/*.d.ts",
+			"import": "./dist/highlighter/*.js",
+			"default": "./dist/highlighter/*.js"
 		},
 		"./styles/*.css": "./dist/styles/*.css",
 		"./plugins/*.css": "./dist/plugins/*.css"
@@ -57,10 +73,8 @@
 		"@biomejs/biome": "2.4.11",
 		"@types/jsdom": "^28.0.1",
 		"@types/node": "^25.6.0",
-		"@types/prismjs": "^1.26.6",
 		"esbuild": "^0.27.4",
 		"jsdom": "^29.0.1",
-		"prismjs": "^1.30.0",
 		"tsx": "^4.21.0",
 		"typescript": "^5.9.3"
 	},
