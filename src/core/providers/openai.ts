@@ -59,10 +59,7 @@ export class OpenAIProvider implements ChatProvider {
 
 		const response = await fetch(this.endpoint, {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.apiKey}`,
-			},
+			headers: this.headers(),
 			body: JSON.stringify({
 				model: model,
 				messages: this.formatMessages(messages),
@@ -252,10 +249,7 @@ export class OpenAIProvider implements ChatProvider {
 
 			const response = await fetch(this.endpoint, {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${this.apiKey}`,
-				},
+				headers: this.headers(),
 				body: JSON.stringify({
 					model,
 					messages: formattedMessages,
@@ -275,6 +269,17 @@ export class OpenAIProvider implements ChatProvider {
 			}
 			return "";
 		}
+	}
+
+	private headers(): Record<string, string> {
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+		};
+		const apiKey = this.apiKey.trim();
+		if (apiKey) {
+			headers.Authorization = `Bearer ${apiKey}`;
+		}
+		return headers;
 	}
 
 	private formatMessages(messages: Message[]): Record<string, unknown>[] {

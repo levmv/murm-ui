@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import type { ChatSession } from "../types";
-import { RemoteStorage } from "./remote";
+import { RemoteStorage, RemoteStorageError } from "./remote";
 
 const originalFetch = globalThis.fetch;
 
@@ -89,8 +89,18 @@ test("loadOne returns null for missing chats and throws on other failures", asyn
 	globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
 	assert.equal(await storage.loadOne("missing"), null);
 
-	globalThis.fetch = (async () => new Response(null, { status: 500 })) as typeof fetch;
-	await assert.rejects(() => storage.loadOne("broken"), /Failed to load chat/);
+	globalThis.fetch = (async () => new Response("upstream unavailable", { status: 500 })) as typeof fetch;
+	await assert.rejects(
+		() => storage.loadOne("broken"),
+		(error: unknown) => {
+			assert.ok(error instanceof RemoteStorageError);
+			assert.equal(error.status, 500);
+			assert.equal(error.url, "https://example.test/api/chats/broken");
+			assert.equal(error.responseBody, "upstream unavailable");
+			assert.match(error.message, /Failed to load chat \(500\).*upstream unavailable/);
+			return true;
+		},
+	);
 });
 
 test("save, updateMetadata, and delete use the expected endpoints and methods", async () => {

@@ -18,24 +18,24 @@ Built for developers who need a functional chat UI without framework overhead. N
 
 The UI is heavily decoupled. You assemble the chat by passing in a **Provider** (how it talks to the AI), **Storage** (how it saves history), and **Plugins** (extra UI features).
 
-Here is a complete example:
+Here is a complete example. In browser apps, `OpenAIProvider` usually points at an app-owned backend proxy; BYOK or local tools can pass a user-provided token directly.
 
 ```typescript
 import {
-	AttachmentPlugin,
 	ChatUI,
-	CopyPlugin,
-	EditPlugin,
 	IndexedDBStorage,
 	OpenAIProvider,
-	ThinkingPlugin,
-} from "murm-ui";
+} from "murm-ui/with-css";
+import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+import { CopyPlugin } from "murm-ui/plugins/copy";
+import { EditPlugin } from "murm-ui/plugins/edit";
+import { ThinkingPlugin } from "murm-ui/plugins/thinking";
 import { highlight } from "murm-ui/highlighter";
 import "murm-ui/highlighter/theme.css";
 
 const ui = new ChatUI({
 	container: "#app",
-	provider: new OpenAIProvider("YOUR_API_KEY", "https://api.openai.com/v1/chat/completions", "gpt-4o-mini"),
+	provider: new OpenAIProvider("USER_PROVIDED_OR_PROXY_TOKEN", "/api/chat/completions", "gpt-4o-mini"),
 	storage: new IndexedDBStorage(),
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
@@ -52,19 +52,22 @@ const ui = new ChatUI({
 Code block headers are enabled by default.
 The built-in highlighter escapes plain or unknown-language code blocks.
 
-The package entry imports the library CSS for bundlers that support CSS imports. The CSS assets are also exported for explicit use:
+The root package entry is side-effect-free. For bundlers that support CSS imports, `murm-ui/with-css` includes the core styles automatically. You can also import the CSS assets explicitly:
 
 ```typescript
 import "murm-ui/styles/base.css";
 import "murm-ui/styles/sidebar.css";
 import "murm-ui/styles/input.css";
 import "murm-ui/styles/feed.css";
+import "murm-ui/styles/dropdown.css";
 import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
 import "murm-ui/plugins/settings/settings.css";
 import "murm-ui/plugins/thinking/thinking.css";
 import "murm-ui/highlighter/theme.css";
 ```
+
+Plugin entrypoints such as `murm-ui/plugins/attachment` import their own CSS, so apps only ship styles for plugins they enable.
 
 You provide the HTML skeleton. See `example/index.html` for the standard class names expected by `ChatUI`.
 

@@ -114,6 +114,18 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 	assert.deepEqual(events.at(-1), { type: "finish", reason: "tool_use" });
 });
 
+test("streamChat omits Authorization when the API key is empty", async () => {
+	const provider = new OpenAIProvider("   ", "https://example.test/chat", "fallback-model");
+	const finishChunk = JSON.stringify({
+		choices: [{ delta: {}, finish_reason: "stop" }],
+	});
+	const { calls } = mockFetch(sse(finishChunk));
+
+	await provider.streamChat([textMessage("user-1", "user", "hello")], {}, new AbortController().signal, () => {});
+
+	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
+});
+
 test("streamChat marks encrypted reasoning without retaining provider payloads", async () => {
 	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
 	const encryptedObjectChunk = JSON.stringify({
@@ -352,6 +364,19 @@ test("generateTitle sends non-streaming title request options", async () => {
 	assert.deepEqual(body.messages[0], { role: "system", content: "Name chats plainly." });
 	assert.equal(body.messages.at(-1).role, "user");
 	assert.match(body.messages.at(-1).content, /Summarize the above conversation/);
+});
+
+test("generateTitle omits Authorization when the API key is empty", async () => {
+	const provider = new OpenAIProvider("", "https://example.test/chat", "fallback-model");
+	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
+
+	const title = await provider.generateTitle([
+		textMessage("user-1", "user", "hello"),
+		textMessage("assistant-1", "assistant", "hello back"),
+	]);
+
+	assert.equal(title, "Useful Title");
+	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
 });
 
 test("generateTitle uses a default title system prompt", async () => {

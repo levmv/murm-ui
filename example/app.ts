@@ -1,15 +1,11 @@
 import { highlight } from "../src/highlighter";
-import {
-	AttachmentPlugin,
-	ChatUI,
-	CopyPlugin,
-	EditPlugin,
-	IndexedDBStorage,
-	OpenAIProvider,
-	SettingsPlugin,
-	ThinkingPlugin,
-} from "../src/index";
+import { ChatUI, IndexedDBStorage, OpenAIProvider } from "../src/with-css";
 import "../src/highlighter/theme.css";
+import { AttachmentPlugin } from "../src/plugins/attachment/attachment-plugin";
+import { CopyPlugin } from "../src/plugins/copy/copy-plugin";
+import { EditPlugin } from "../src/plugins/edit/edit-plugin";
+import { SettingsPlugin } from "../src/plugins/settings/settings-plugin";
+import { ThinkingPlugin } from "../src/plugins/thinking/thinking-plugin";
 
 new ChatUI({
 	container: ".mur-app",

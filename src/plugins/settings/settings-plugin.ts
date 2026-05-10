@@ -136,6 +136,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 					<div class="mur-settings-group">
 						<label for="${id("apikey")}">API Key</label>
 						<input id="${id("apikey")}" type="password" class="mur-set-apikey" placeholder="sk-..." />
+						<div class="mur-settings-hint">Stored in this browser. Shared deployments usually use a backend proxy.</div>
 					</div>
 					<div class="mur-settings-group">
 						<label for="${id("model")}">Model Name</label>
@@ -181,7 +182,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		const trapFocus = (event: KeyboardEvent) => {
 			const focusable = getFocusableElements();
 			const first = focusable[0];
-			const last = focusable.at(-1);
+			const last = focusable[focusable.length - 1];
 			if (!first || !last) return;
 
 			const activeElement = document.activeElement;

@@ -16,6 +16,7 @@
 		"test": "node --import ./scripts/register-test-loaders.js --import tsx --test \"src/**/*.test.ts\"",
 		"pack:dry": "node scripts/pack-dry-run.js",
 		"verify": "npm run check && npm test && npm run build && node scripts/verify-package.js && npm run pack:dry",
+		"prepublishOnly": "npm run verify",
 		"build:example": "esbuild example/app.ts --bundle --outfile=example/index.js --minify --target=es2018",
 		"build:docs": "node scripts/build-docs.js",
 		"build:demo": "npm run build && npm run build:docs && node scripts/build-demo.js"
@@ -25,6 +26,11 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
+		},
+		"./with-css": {
+			"types": "./dist/with-css.d.ts",
+			"import": "./dist/with-css.js",
+			"default": "./dist/with-css.js"
 		},
 		"./highlighter": {
 			"types": "./dist/highlighter/index.d.ts",
@@ -43,14 +49,21 @@
 			"default": "./dist/highlighter/*.js"
 		},
 		"./styles/*.css": "./dist/styles/*.css",
-		"./plugins/*.css": "./dist/plugins/*.css"
+		"./plugins/*.css": "./dist/plugins/*.css",
+		"./plugins/*": {
+			"types": "./dist/plugins/*/*-plugin.d.ts",
+			"import": "./dist/plugins/*/*-plugin.js",
+			"default": "./dist/plugins/*/*-plugin.js"
+		}
 	},
 	"types": "./dist/index.d.ts",
 	"files": [
 		"dist"
 	],
 	"sideEffects": [
-		"**/*.css"
+		"**/*.css",
+		"./dist/with-css.js",
+		"./dist/plugins/*/*-plugin.js"
 	],
 	"keywords": [
 		"chat",

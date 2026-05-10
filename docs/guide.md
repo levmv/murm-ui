@@ -58,13 +58,14 @@ For a complete static shell, see `docs/demo/index.html`.
 
 <h2 id="css">CSS</h2>
 
-The package entry imports the core CSS for bundlers that support CSS imports. You can also import CSS explicitly.
+The root `murm-ui` entry does not import CSS. For bundlers that support CSS imports, use `murm-ui/with-css` to include the core styles automatically. You can also import CSS explicitly.
 
 ```ts
 import "murm-ui/styles/base.css";
 import "murm-ui/styles/sidebar.css";
 import "murm-ui/styles/input.css";
 import "murm-ui/styles/feed.css";
+import "murm-ui/styles/dropdown.css";
 import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
 import "murm-ui/plugins/settings/settings.css";
@@ -78,15 +79,15 @@ Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-th
 
 ```ts
 import {
-  AttachmentPlugin,
   ChatUI,
-  CopyPlugin,
-  EditPlugin,
   IndexedDBStorage,
   OpenAIProvider,
-  ThinkingPlugin,
-} from "murm-ui";
+} from "murm-ui/with-css";
 import { highlight } from "murm-ui/highlighter";
+import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+import { CopyPlugin } from "murm-ui/plugins/copy";
+import { EditPlugin } from "murm-ui/plugins/edit";
+import { ThinkingPlugin } from "murm-ui/plugins/thinking";
 
 new ChatUI({
   container: ".mur-app",
@@ -211,6 +212,8 @@ const provider = new OpenAIProvider(
 );
 ```
 
+For browser apps, a backend proxy is usually the production boundary. BYOK and local tools can pass user-provided keys directly and keep them on that user's device.
+
 `RequestOptions` is intentionally open-ended. Common options include `model`, `systemPrompt`, `temperature`, `top_p`, `max_tokens`, `tools`, and `stream_options`.
 
 The hosted demo uses a mock provider so visitors can try streaming without an API key or backend.
@@ -223,9 +226,14 @@ Plugins add behavior around input, rendering, request preparation, and message a
 - `ThinkingPlugin()` renders reasoning blocks behind an expandable control.
 - `CopyPlugin()` adds message copy actions.
 - `EditPlugin()` lets users edit a prior user message and resubmit from that point.
-- `SettingsPlugin()` adds browser-side provider settings for apps that want user-configurable endpoints.
+- `SettingsPlugin()` adds browser-side provider settings for apps that want user-configurable endpoints. Its default storage keeps settings in this browser; shared deployments usually pair it with custom storage or a backend proxy.
 
 ```ts
+import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+import { CopyPlugin } from "murm-ui/plugins/copy";
+import { EditPlugin } from "murm-ui/plugins/edit";
+import { ThinkingPlugin } from "murm-ui/plugins/thinking";
+
 new ChatUI({
   container: ".mur-app",
   provider,
@@ -241,7 +249,7 @@ new ChatUI({
 });
 ```
 
-Plugin CSS is exported separately so apps only ship styles for plugins they enable.
+Plugin entrypoints import their own CSS. If you do not import a plugin entrypoint, its code and styles stay out of the app bundle. Plugin CSS files are also exported separately for apps that manage styles explicitly.
 
 <h2 id="storage">Storage</h2>
 

@@ -3,3 +3,7 @@
 node_modules/
 dist
 docs/dist/
+docs/demo/bundle.css
+docs/demo/bundle.js
+example/index.css
+example/index.js

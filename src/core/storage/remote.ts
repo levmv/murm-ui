@@ -1,5 +1,18 @@
 import type { ChatSession, ChatSessionMeta, ChatStorage, PaginatedSessions } from "../types";
 
+export class RemoteStorageError extends Error {
+	constructor(
+		action: string,
+		public readonly status: number,
+		public readonly url: string,
+		public readonly responseBody: string,
+	) {
+		const bodyExcerpt = responseBody ? `: ${responseBody.slice(0, 500)}` : "";
+		super(`${action} (${status}) at ${url}${bodyExcerpt}`);
+		this.name = "RemoteStorageError";
+	}
+}
+
 export interface RemoteStorageOptions {
 	/**
 	 * Limits the number of messages sent during a save() operation.
@@ -37,17 +50,19 @@ export class RemoteStorage implements ChatStorage {
 			params.append("cursorPinned", String(Boolean(cursor.isPinned)));
 		}
 
-		const res = await fetch(`${this.getPath()}?${params.toString()}`, { headers: this.headers });
-		if (!res.ok) throw new Error("Failed to load chats");
+		const url = `${this.getPath()}?${params.toString()}`;
+		const res = await fetch(url, { headers: this.headers });
+		await this.assertOk(res, "Failed to load chats", url);
 		return res.json();
 	}
 
 	async loadOne(id: string): Promise<ChatSession | null> {
-		const res = await fetch(this.getPath(`/${encodeURIComponent(id)}`), {
+		const url = this.getPath(`/${encodeURIComponent(id)}`);
+		const res = await fetch(url, {
 			headers: this.headers,
 		});
 		if (res.status === 404) return null;
-		if (!res.ok) throw new Error("Failed to load chat");
+		await this.assertOk(res, "Failed to load chat", url);
 		return res.json();
 	}
 
@@ -64,12 +79,13 @@ export class RemoteStorage implements ChatStorage {
 			headers["X-Murm-Save-Mode"] = "partial";
 		}
 
-		const res = await fetch(this.getPath(`/${encodeURIComponent(session.id)}`), {
+		const url = this.getPath(`/${encodeURIComponent(session.id)}`);
+		const res = await fetch(url, {
 			method: "PUT",
 			headers,
 			body: JSON.stringify(payload),
 		});
-		if (!res.ok) throw new Error("Failed to save chat");
+		await this.assertOk(res, "Failed to save chat", url);
 	}
 
 	private getSaveLimit(): number | null {
@@ -81,19 +97,34 @@ export class RemoteStorage implements ChatStorage {
 	}
 
 	async updateMetadata(id: string, meta: Partial<ChatSessionMeta>): Promise<void> {
-		const res = await fetch(this.getPath(`/${encodeURIComponent(id)}/meta`), {
+		const url = this.getPath(`/${encodeURIComponent(id)}/meta`);
+		const res = await fetch(url, {
 			method: "POST",
 			headers: this.headers,
 			body: JSON.stringify(meta),
 		});
-		if (!res.ok) throw new Error("Failed to update chat metadata");
+		await this.assertOk(res, "Failed to update chat metadata", url);
 	}
 
 	async delete(id: string): Promise<void> {
-		const res = await fetch(this.getPath(`/${encodeURIComponent(id)}`), {
+		const url = this.getPath(`/${encodeURIComponent(id)}`);
+		const res = await fetch(url, {
 			method: "DELETE",
 			headers: this.headers,
 		});
-		if (!res.ok) throw new Error("Failed to delete chat");
+		await this.assertOk(res, "Failed to delete chat", url);
+	}
+
+	private async assertOk(res: Response, action: string, url: string): Promise<void> {
+		if (res.ok) return;
+
+		let responseBody = "";
+		try {
+			responseBody = (await res.text()).trim();
+		} catch {
+			responseBody = "";
+		}
+
+		throw new RemoteStorageError(action, res.status, url, responseBody);
 	}
 }

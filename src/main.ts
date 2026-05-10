@@ -1,17 +1,10 @@
+import { Feed } from "./components/feed";
+import { Input } from "./components/input";
+import { Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
 import { ChatEngine } from "./core/chat-engine";
 import type { ChatPlugin, ChatProvider, ChatStorage, CodeHighlighter, RequestOptions } from "./core/types";
 import { AppRouter, type RouterConfig } from "./router";
 import { el, queryOrThrow } from "./utils/dom";
-
-import "./styles/base.css";
-import "./styles/sidebar.css";
-import "./styles/input.css";
-import "./styles/feed.css";
-import "./styles/dropdown.css";
-
-import { Feed } from "./components/feed";
-import { Input } from "./components/input";
-import { Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
 
 const PAGE_SCROLL_CLASS = "mur-chat-page-scroll";
 
@@ -139,7 +132,7 @@ export class ChatUI {
 		this.elements.globalErrorText = el("span", "mur-global-error-text");
 		this.elements.globalErrorCloseBtn = el("button", "mur-global-error-close", {
 			type: "button",
-			textContent: "x",
+			textContent: "×",
 			title: "Dismiss error",
 		});
 		this.elements.globalErrorCloseBtn.setAttribute("aria-label", "Dismiss error");

@@ -183,6 +183,24 @@ test("built-in delete asks for confirmation before deleting", () => {
 	sidebar.destroy();
 });
 
+test("closes an open session dropdown on rerender and destroy", () => {
+	const container = installDom();
+	const sidebar = createSidebar(container);
+
+	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
+	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
+	assert.ok(document.querySelector(".mur-dropdown-menu"));
+
+	sidebar.renderSessions([{ id: "chat-2", title: "Next Chat", updatedAt: 2 }], "chat-2", false);
+	assert.equal(document.querySelector(".mur-dropdown-menu"), null);
+
+	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
+	assert.ok(document.querySelector(".mur-dropdown-menu"));
+
+	sidebar.destroy();
+	assert.equal(document.querySelector(".mur-dropdown-menu"), null);
+});
+
 test("built-in pin menu toggles pinned state and enforces the pin limit", () => {
 	const container = installDom();
 	const pinnedUpdates: { id: string; isPinned: boolean }[] = [];

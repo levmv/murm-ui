@@ -2,7 +2,7 @@ import type { ChatEngine } from "../core/chat-engine";
 import { type ChatSessionMeta, MAX_PINNED_SESSIONS } from "../core/types";
 import { el, queryOrThrow, replaceNodes } from "../utils/dom";
 import { ICON_EDIT, ICON_MORE_VERTICAL, ICON_PIN, ICON_PIN_OFF, ICON_TRASH } from "../utils/icons";
-import { showDropdown } from "./dropdown";
+import { closeDropdown, showDropdown } from "./dropdown";
 
 export interface SidebarMenuItem {
 	id: string;
@@ -86,6 +86,7 @@ export class Sidebar {
 	}
 
 	public renderSessions(sessions: ChatSessionMeta[], activeId: string, hasMore: boolean, isLoading = false) {
+		closeDropdown();
 		this.pinnedCount = sessions.filter((session) => session.isPinned).length;
 
 		if (isLoading && sessions.length === 0) {
@@ -307,6 +308,7 @@ export class Sidebar {
 	}
 
 	public destroy() {
+		closeDropdown();
 		this.observer?.disconnect();
 		if (this.newChatBtn) {
 			this.newChatBtn.removeEventListener("click", this.onNewChatBound);

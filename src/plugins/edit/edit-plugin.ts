@@ -54,8 +54,8 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 		parentEl.classList.add("mur-editing");
 
 		const textarea = el("textarea", "mur-edit-textarea", { spellcheck: false }) as HTMLTextAreaElement;
-		const cancelBtn = el("button", "mur-cancel-edit-btn", { textContent: "Cancel" });
-		const saveBtn = el("button", "mur-save-edit-btn", { textContent: "Save" });
+		const cancelBtn = el("button", "mur-cancel-edit-btn", { textContent: "Cancel", type: "button" });
+		const saveBtn = el("button", "mur-save-edit-btn", { textContent: "Save", type: "button" });
 		const controls = el("div", "mur-edit-controls", null, [cancelBtn, saveBtn]);
 
 		replaceNodes(state.editContainer, textarea, controls);

@@ -10,7 +10,7 @@ const RESPONSES = [
 	[
 		"Notice how snappy this feels? That is the beauty of vanilla TypeScript.",
 		"",
-		"Because there is no virtual DOM diffing , the UI just updates the exact nodes it needs to using reference-based DOM updates. It is designed to keep your laptop fan quiet, even if I stream a massive wall of text at you.",
+		"Because there is no virtual DOM diffing, the UI just updates the exact nodes it needs to using reference-based DOM updates. It is designed to keep your laptop fan quiet, even if I stream a massive wall of text at you.",
 	].join("\n"),
 	[
 		"I also handle markdown parsing right out of the box. I can do **bold text**, *italics*, and even tables:",
@@ -61,7 +61,6 @@ export class MockProvider implements ChatProvider {
 
 			// Dynamic Speed: Aim for ~1.1 seconds total, capped between 15ms (fast) and 45ms (normal)
 			const intervalMs = Math.max(15, Math.min(45, Math.floor(1100 / chunks.length)));
-			console.log(intervalMs);
 			const interval = setInterval(() => {
 				if (signal.aborted) {
 					clearInterval(interval);

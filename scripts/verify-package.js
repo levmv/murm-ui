@@ -7,6 +7,8 @@ const root = process.cwd();
 const requiredFiles = [
 	"dist/index.js",
 	"dist/index.d.ts",
+	"dist/with-css.js",
+	"dist/with-css.d.ts",
 	"dist/highlighter/index.js",
 	"dist/highlighter/index.d.ts",
 	"dist/highlighter/chat.js",
@@ -20,26 +22,52 @@ const requiredFiles = [
 	"dist/main.js",
 	"dist/main.d.ts",
 	"dist/styles/base.css",
+	"dist/styles/dropdown.css",
 	"dist/styles/feed.css",
 	"dist/styles/input.css",
 	"dist/styles/sidebar.css",
+	"dist/plugins/attachment/attachment-plugin.js",
+	"dist/plugins/attachment/attachment-plugin.d.ts",
+	"dist/plugins/attachment/attachment.css",
+	"dist/plugins/copy/copy-plugin.js",
+	"dist/plugins/copy/copy-plugin.d.ts",
+	"dist/plugins/edit/edit-plugin.js",
+	"dist/plugins/edit/edit-plugin.d.ts",
+	"dist/plugins/edit/edit.css",
+	"dist/plugins/settings/settings-plugin.js",
+	"dist/plugins/settings/settings-plugin.d.ts",
+	"dist/plugins/settings/settings.css",
+	"dist/plugins/thinking/thinking-plugin.js",
+	"dist/plugins/thinking/thinking-plugin.d.ts",
+	"dist/plugins/thinking/thinking.css",
+];
+
+const rootPublicExports = [
+	"ChatEngine",
+	"ChatUI",
+	"IndexedDBStorage",
+	"MAX_PINNED_SESSIONS",
+	"OpenAIProvider",
+	"RemoteStorage",
+	"RemoteStorageError",
+];
+
+const coreCssFiles = [
+	"dist/styles/base.css",
+	"dist/styles/dropdown.css",
+	"dist/styles/feed.css",
+	"dist/styles/input.css",
+	"dist/styles/sidebar.css",
+];
+
+const pluginCssFiles = [
 	"dist/plugins/attachment/attachment.css",
 	"dist/plugins/edit/edit.css",
 	"dist/plugins/settings/settings.css",
 	"dist/plugins/thinking/thinking.css",
 ];
 
-const publicExports = [
-	"AttachmentPlugin",
-	"ChatUI",
-	"CopyPlugin",
-	"EditPlugin",
-	"IndexedDBStorage",
-	"OpenAIProvider",
-	"RemoteStorage",
-	"SettingsPlugin",
-	"ThinkingPlugin",
-];
+const requiredSideEffects = ["**/*.css", "./dist/with-css.js", "./dist/plugins/*/*-plugin.js"];
 
 async function assertFile(relativePath) {
 	try {
@@ -59,12 +87,12 @@ if (packageJson.exports?.["."]?.import !== "./dist/index.js") {
 	throw new Error('package.json export "." must point to ./dist/index.js');
 }
 
-if (packageJson.exports?.["./styles/*.css"] !== "./dist/styles/*.css") {
-	throw new Error('package.json must export "./styles/*.css"');
+if (packageJson.exports?.["./with-css"]?.import !== "./dist/with-css.js") {
+	throw new Error('package.json export "./with-css" must point to ./dist/with-css.js');
 }
 
-if (packageJson.exports?.["./plugins/*.css"] !== "./dist/plugins/*.css") {
-	throw new Error('package.json must export "./plugins/*.css"');
+if (packageJson.exports?.["./styles/*.css"] !== "./dist/styles/*.css") {
+	throw new Error('package.json must export "./styles/*.css"');
 }
 
 if (packageJson.exports?.["./highlighter/*.css"] !== "./dist/highlighter/*.css") {
@@ -79,24 +107,131 @@ if (packageJson.exports?.["./highlighter/*"]?.import !== "./dist/highlighter/*.j
 	throw new Error('package.json export "./highlighter/*" must point to ./dist/highlighter/*.js');
 }
 
+if (packageJson.exports?.["./plugins/*.css"] !== "./dist/plugins/*.css") {
+	throw new Error('package.json must export "./plugins/*.css"');
+}
+
+const pluginPatternExport = packageJson.exports?.["./plugins/*"];
+if (
+	pluginPatternExport?.types !== "./dist/plugins/*/*-plugin.d.ts" ||
+	pluginPatternExport?.import !== "./dist/plugins/*/*-plugin.js" ||
+	pluginPatternExport?.default !== "./dist/plugins/*/*-plugin.js"
+) {
+	throw new Error('package.json export "./plugins/*" must point to plugin implementation files');
+}
+
+for (const sideEffectPath of requiredSideEffects) {
+	if (!packageJson.sideEffects?.includes(sideEffectPath)) {
+		throw new Error(`package.json sideEffects must include ${sideEffectPath}`);
+	}
+}
+
 await Promise.all(requiredFiles.map(assertFile));
 
-await build({
-	bundle: true,
-	format: "esm",
-	logLevel: "silent",
-	outdir: "package-smoke",
-	platform: "browser",
-	stdin: {
-		contents: `
-			import { ${publicExports.join(", ")} } from "./dist/index.js";
-			void [${publicExports.join(", ")}];
+function assertInputIncludes(inputs, expectedInput, context) {
+	if (!inputs.includes(expectedInput)) {
+		throw new Error(`${context} should include ${expectedInput}`);
+	}
+}
+
+function assertNoInputMatching(inputs, predicate, context) {
+	const found = inputs.find(predicate);
+	if (found) {
+		throw new Error(`${context} should not include ${found}`);
+	}
+}
+
+function inputPaths(result) {
+	return Object.keys(result.metafile.inputs).sort();
+}
+
+async function bundleSmoke(contents, sourcefile) {
+	return build({
+		bundle: true,
+		format: "esm",
+		logLevel: "silent",
+		metafile: true,
+		outdir: "package-smoke",
+		platform: "browser",
+		stdin: {
+			contents,
+			resolveDir: root,
+			sourcefile,
+		},
+		write: false,
+	});
+}
+
+await bundleSmoke(
+	`
+		import { ${rootPublicExports.join(", ")} } from "murm-ui";
+		void [${rootPublicExports.join(", ")}];
+	`,
+	"package-smoke.js",
+);
+
+const rootChatBundleInputs = inputPaths(
+	await bundleSmoke(
+		`
+			import { ChatUI } from "murm-ui";
+			void ChatUI;
 		`,
-		resolveDir: root,
-		sourcefile: "package-smoke.js",
-	},
-	write: false,
-});
+		"root-chatui-smoke.js",
+	),
+);
+assertNoInputMatching(
+	rootChatBundleInputs,
+	(input) => input.startsWith("dist/plugins/") || input.endsWith(".css"),
+	'root import of "ChatUI"',
+);
+
+const withCssBundleInputs = inputPaths(
+	await bundleSmoke(
+		`
+			import { ChatUI } from "murm-ui/with-css";
+			void ChatUI;
+		`,
+		"with-css-smoke.js",
+	),
+);
+for (const cssFile of coreCssFiles) {
+	assertInputIncludes(withCssBundleInputs, cssFile, 'import from "murm-ui/with-css"');
+}
+assertNoInputMatching(withCssBundleInputs, (input) => input.startsWith("dist/plugins/"), 'with-css import of "ChatUI"');
+
+await bundleSmoke(
+	`
+		import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+		import { CopyPlugin } from "murm-ui/plugins/copy";
+		import { EditPlugin } from "murm-ui/plugins/edit";
+		import { SettingsPlugin } from "murm-ui/plugins/settings";
+		import { ThinkingPlugin } from "murm-ui/plugins/thinking";
+		void [AttachmentPlugin, CopyPlugin, EditPlugin, SettingsPlugin, ThinkingPlugin];
+	`,
+	"plugins-package-smoke.js",
+);
+
+const attachmentBundleInputs = inputPaths(
+	await bundleSmoke(
+		`
+			import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+			void AttachmentPlugin;
+		`,
+		"attachment-plugin-smoke.js",
+	),
+);
+assertInputIncludes(
+	attachmentBundleInputs,
+	"dist/plugins/attachment/attachment.css",
+	'import from "murm-ui/plugins/attachment"',
+);
+for (const cssFile of pluginCssFiles.filter((file) => file !== "dist/plugins/attachment/attachment.css")) {
+	assertNoInputMatching(
+		attachmentBundleInputs,
+		(input) => input === cssFile,
+		'import from "murm-ui/plugins/attachment"',
+	);
+}
 
 await build({
 	bundle: true,
@@ -135,6 +270,7 @@ await build({
 	write: false,
 });
 
+await import("murm-ui");
 await import("murm-ui/highlighter");
 await import("murm-ui/highlighter/chat");
 await import("murm-ui/highlighter/core");

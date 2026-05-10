@@ -276,7 +276,8 @@
 	transition: opacity 0.2s ease;
 }
 
-.mur-message:hover .mur-message-actions {
+.mur-message:hover .mur-message-actions,
+.mur-message:focus-within .mur-message-actions {
 	opacity: 1;
 }
 
