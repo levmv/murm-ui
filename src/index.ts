@@ -1,4 +1,4 @@
-export type { SidebarMenuBuilder, SidebarMenuContext, SidebarMenuItem } from "./components/sidebar";
+export type { DeleteConfirmation, SidebarMenuBuilder, SidebarMenuContext, SidebarMenuItem } from "./components/sidebar";
 export { ChatEngine, type ChatEngineConfig } from "./core/chat-engine";
 export { OpenAIProvider } from "./core/providers/openai";
 export type { ChatSessions } from "./core/session-manager";

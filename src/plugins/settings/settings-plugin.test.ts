@@ -141,6 +141,51 @@ test("SettingsPlugin modal exposes useful names for assistive tech", async () =>
 	plugin.destroy?.();
 });
 
+test("SettingsPlugin custom trigger selector is scoped to the chat container by default", async () => {
+	const container = installDom();
+	const outsideTrigger = document.createElement("button");
+	outsideTrigger.className = "settings-trigger";
+	document.body.prepend(outsideTrigger);
+	const insideTrigger = document.createElement("button");
+	insideTrigger.className = "settings-trigger";
+	container.appendChild(insideTrigger);
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: () => {},
+		setTitleOptions: () => {},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin({ triggerSelector: ".settings-trigger" });
+
+	plugin.onMount?.({ engine, container });
+
+	outsideTrigger.click();
+	assert.equal(container.querySelector(".mur-settings-modal"), null);
+	insideTrigger.click();
+	assert.ok(container.querySelector(".mur-settings-modal"));
+
+	plugin.destroy?.();
+});
+
+test("SettingsPlugin custom trigger selector can opt into document scope", async () => {
+	const container = installDom();
+	const outsideTrigger = document.createElement("button");
+	outsideTrigger.className = "settings-trigger";
+	document.body.prepend(outsideTrigger);
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: () => {},
+		setTitleOptions: () => {},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin({ triggerSelector: ".settings-trigger", triggerSelectorScope: "document" });
+
+	plugin.onMount?.({ engine, container });
+
+	outsideTrigger.click();
+	assert.ok(container.querySelector(".mur-settings-modal"));
+
+	plugin.destroy?.();
+});
+
 test("SettingsPlugin modal focuses the first field and closes on Escape", async () => {
 	const container = installDom();
 	const engine = {
@@ -204,6 +249,63 @@ test("SettingsPlugin modal keeps Tab focus inside the dialog", async () => {
 	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).focus();
 	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
 	assert.equal(document.activeElement, closeBtn);
+
+	plugin.destroy?.();
+});
+
+test("SettingsPlugin keeps the modal open when required endpoint or model is empty", async () => {
+	const container = installDom();
+	const savedStates: SettingsState[] = [];
+	const providerSettings: SettingsState[] = [];
+	const provider: ChatProvider = {
+		async streamChat(): Promise<void> {},
+	};
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: () => {},
+		setTitleOptions: () => {},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin({
+		storage: {
+			async get() {
+				return null;
+			},
+			async set(state) {
+				savedStates.push({ ...state });
+			},
+		},
+		createProvider: (settings) => {
+			providerSettings.push({ ...settings });
+			return provider;
+		},
+	});
+
+	plugin.onMount?.({ engine, container });
+	await waitFor(() => providerSettings.length === 1, "initial settings load");
+
+	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
+	const endpointInput = container.querySelector(".mur-set-endpoint") as HTMLInputElement;
+	const modelInput = container.querySelector(".mur-set-model") as HTMLInputElement;
+	const saveBtn = container.querySelector(".mur-set-save-btn") as HTMLButtonElement;
+
+	endpointInput.value = "";
+	saveBtn.click();
+	assert.equal(endpointInput.getAttribute("aria-invalid"), "true");
+	assert.ok(container.querySelector(".mur-settings-modal"));
+	assert.deepEqual(savedStates, []);
+
+	endpointInput.value = "https://saved.test/chat";
+	modelInput.value = "";
+	saveBtn.click();
+	assert.equal(endpointInput.hasAttribute("aria-invalid"), false);
+	assert.equal(modelInput.getAttribute("aria-invalid"), "true");
+	assert.ok(container.querySelector(".mur-settings-modal"));
+	assert.deepEqual(savedStates, []);
+
+	modelInput.value = "saved-model";
+	saveBtn.click();
+	await waitFor(() => savedStates.length === 1, "valid settings save");
+	assert.equal(container.querySelector(".mur-settings-modal"), null);
 
 	plugin.destroy?.();
 });

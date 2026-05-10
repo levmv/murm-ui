@@ -40,9 +40,11 @@ export interface AttachmentPluginConfig {
 
 	/**
 	 * A CSS selector defining where the image preview tray should be mounted.
+	 * The selector is scoped to the chat container unless previewMountSelectorScope is "document".
 	 * If omitted, it will be inserted just before the chat form.
 	 */
 	previewMountSelector?: string;
+	previewMountSelectorScope?: "container" | "document";
 }
 
 export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
@@ -265,7 +267,8 @@ export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
 
 			ctx.form.prepend(attachBtn);
 			if (config?.previewMountSelector) {
-				const customTarget = document.querySelector(config.previewMountSelector);
+				const selectorRoot = config.previewMountSelectorScope === "document" ? document : ctx.container;
+				const customTarget = selectorRoot.querySelector(config.previewMountSelector);
 				if (customTarget) {
 					customTarget.appendChild(previewContainer);
 				} else {

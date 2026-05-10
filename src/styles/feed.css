@@ -358,7 +358,10 @@
 	font-size: 0.85rem;
 	color: var(--mur-text-muted);
 	margin-bottom: 0.5rem;
-	transition: all 0.2s ease;
+	transition:
+		border-color 0.2s ease,
+		color 0.2s ease,
+		opacity 0.2s ease;
 }
 
 .mur-tool-streaming {

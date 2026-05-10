@@ -161,7 +161,7 @@ export class Input {
 		}
 
 		const textStateChanged = this.refreshTextState();
-		const text = this.input.value.trim();
+		const text = this.input.value;
 
 		if (!this.canSubmit()) {
 			if (textStateChanged) {

@@ -258,7 +258,7 @@ export class OpenAIProvider implements ChatProvider {
 
 			if (!response.ok) return "";
 			const data = await response.json();
-			return data.choices[0]?.message?.content?.trim() || "";
+			return this.normalizeTitle(data.choices[0]?.message?.content);
 		} catch (error) {
 			const isAbort = error instanceof Error && error.name === "AbortError";
 			if (!isAbort && !request.signal.aborted) {
@@ -266,6 +266,16 @@ export class OpenAIProvider implements ChatProvider {
 			}
 			return "";
 		}
+	}
+
+	private normalizeTitle(title: unknown): string {
+		if (typeof title !== "string") return "";
+
+		const normalized = title.replace(/\s+/g, " ").trim();
+		const unquoted = normalized.replace(/^['"]+|['"]+$/g, "").trim();
+
+		if (unquoted.length <= 80) return unquoted;
+		return `${unquoted.slice(0, 77).trimEnd()}...`;
 	}
 
 	private headers(): Record<string, string> {

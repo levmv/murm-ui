@@ -3,7 +3,7 @@ import { afterEach, test } from "node:test";
 import { JSDOM } from "jsdom";
 import type { ChatEngine } from "../core/chat-engine";
 import { closeDropdown } from "./dropdown";
-import { Sidebar, type SidebarMenuBuilder } from "./sidebar";
+import { type DeleteConfirmation, Sidebar, type SidebarMenuBuilder } from "./sidebar";
 
 const originalDocument = globalThis.document;
 const originalIntersectionObserver = globalThis.IntersectionObserver;
@@ -70,6 +70,7 @@ function createSidebar(
 	options: {
 		engine?: ChatEngine;
 		sidebarMenu?: SidebarMenuBuilder;
+		confirmDelete?: DeleteConfirmation;
 	} = {},
 ): Sidebar {
 	return new Sidebar({
@@ -81,6 +82,7 @@ function createSidebar(
 		onClose: () => {},
 		getSessionHref: (id) => `#/chat/${encodeURIComponent(id)}`,
 		sidebarMenu: options.sidebarMenu,
+		confirmDelete: options.confirmDelete,
 	});
 }
 
@@ -179,6 +181,29 @@ test("built-in delete asks for confirmation before deleting", () => {
 
 	assert.deepEqual(prompts, ['Delete chat "Stored Chat"? This cannot be undone.']);
 	assert.deepEqual(deletedIds, []);
+
+	sidebar.destroy();
+});
+
+test("built-in delete can use a custom confirmation callback", async () => {
+	const container = installDom();
+	const deletedIds: string[] = [];
+	const seenSessions: string[] = [];
+	const sidebar = createSidebar(container, {
+		engine: createEngine((id) => deletedIds.push(id)),
+		confirmDelete: async (session) => {
+			seenSessions.push(session.id);
+			return true;
+		},
+	});
+
+	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
+	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
+	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[2]?.click();
+
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.deepEqual(seenSessions, ["chat-1"]);
+	assert.deepEqual(deletedIds, ["chat-1"]);
 
 	sidebar.destroy();
 });

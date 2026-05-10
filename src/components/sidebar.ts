@@ -24,6 +24,8 @@ export type SidebarMenuBuilder = (
 	ctx: SidebarMenuContext,
 ) => readonly SidebarMenuItem[];
 
+export type DeleteConfirmation = (session: ChatSessionMeta) => boolean | Promise<boolean>;
+
 export interface SidebarProps {
 	container: HTMLElement;
 	engine: ChatEngine;
@@ -33,6 +35,7 @@ export interface SidebarProps {
 	onClose: () => void;
 	getSessionHref: (id: string) => string;
 	sidebarMenu?: SidebarMenuBuilder;
+	confirmDelete?: DeleteConfirmation;
 }
 
 export class Sidebar {
@@ -271,8 +274,7 @@ export class Sidebar {
 				iconHtml: ICON_TRASH,
 				danger: true,
 				onClick: () => {
-					if (!confirm(`Delete chat "${session.title}"? This cannot be undone.`)) return;
-					void this.props.engine.sessions.delete(session.id);
+					void this.confirmAndDelete(session);
 				},
 			},
 		];
@@ -280,6 +282,19 @@ export class Sidebar {
 		return (
 			this.props.sidebarMenu?.(defaultItems, { type: "session", session, engine: this.props.engine }) ?? defaultItems
 		);
+	}
+
+	private async confirmAndDelete(session: ChatSessionMeta): Promise<void> {
+		try {
+			const confirmed = this.props.confirmDelete
+				? await this.props.confirmDelete(session)
+				: confirm(`Delete chat "${session.title}"? This cannot be undone.`);
+
+			if (!confirmed) return;
+			await this.props.engine.sessions.delete(session.id);
+		} catch (error) {
+			console.error(`Failed to delete session "${session.id}"`, error);
+		}
 	}
 
 	public setActiveSession(id: string) {

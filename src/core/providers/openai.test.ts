@@ -409,6 +409,22 @@ test("generateTitle omits Authorization when the API key is empty", async () => 
 	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
 });
 
+test("generateTitle normalizes provider title text", async () => {
+	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
+	const rawTitle = `"  ${"Long title ".repeat(12)}  "`;
+	mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: rawTitle } }] })));
+
+	const title = await provider.generateTitle(
+		titleRequest([textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")]),
+	);
+
+	assert.equal(title.length <= 80, true);
+	assert.equal(title.startsWith("Long title Long title"), true);
+	assert.equal(title.endsWith("..."), true);
+	assert.equal(title.includes('"'), false);
+	assert.equal(/\s{2,}/.test(title), false);
+});
+
 test("generateTitle uses a default title system prompt", async () => {
 	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
 	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));

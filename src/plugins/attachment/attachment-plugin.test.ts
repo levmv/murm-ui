@@ -155,6 +155,55 @@ test("file input uses default and custom accepted types", () => {
 	customHarness.destroy();
 });
 
+test("custom preview mount selector is scoped to the chat container by default", () => {
+	const plugin = AttachmentPlugin({ previewMountSelector: ".preview-slot" });
+	const container = installDom();
+	const outsideSlot = document.createElement("div");
+	outsideSlot.className = "preview-slot";
+	document.body.prepend(outsideSlot);
+	const insideSlot = document.createElement("div");
+	insideSlot.className = "preview-slot";
+	container.prepend(insideSlot);
+
+	const inputComponent = new Input(
+		{
+			container,
+			onSubmit: () => true,
+			onStop: () => {},
+		},
+		[plugin],
+	);
+
+	assert.ok(insideSlot.querySelector(".mur-attachment-previews"));
+	assert.equal(outsideSlot.querySelector(".mur-attachment-previews"), null);
+
+	plugin.destroy?.();
+	inputComponent.destroy();
+});
+
+test("custom preview mount selector can opt into document scope", () => {
+	const plugin = AttachmentPlugin({ previewMountSelector: ".preview-slot", previewMountSelectorScope: "document" });
+	const container = installDom();
+	const outsideSlot = document.createElement("div");
+	outsideSlot.className = "preview-slot";
+	document.body.prepend(outsideSlot);
+
+	const inputComponent = new Input(
+		{
+			container,
+			onSubmit: () => true,
+			onStop: () => {},
+		},
+		[plugin],
+	);
+
+	assert.ok(outsideSlot.querySelector(".mur-attachment-previews"));
+	assert.equal(container.querySelector(".mur-attachment-previews"), null);
+
+	plugin.destroy?.();
+	inputComponent.destroy();
+});
+
 test("local image and text fallback succeed while unsupported binaries render errors", async () => {
 	const plugin = AttachmentPlugin();
 	const harness = mountAttachment(plugin);

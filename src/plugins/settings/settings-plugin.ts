@@ -28,8 +28,10 @@ export interface SettingsPluginConfig {
 	 * Optional. A CSS selector for an existing button in your custom HTML.
 	 * If provided, the plugin will NOT create its own button, but will instead
 	 * attach the settings modal click-listener to your existing element.
+	 * The selector is scoped to the chat container unless triggerSelectorScope is "document".
 	 */
 	triggerSelector?: string;
+	triggerSelectorScope?: "container" | "document";
 	/**
 	 * A factory function that returns the correct provider based on the settings.
 	 * Defaults to returning an OpenAIProvider.
@@ -171,11 +173,17 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 
 		overlay.appendChild(modal);
 
-		(modal.querySelector(".mur-set-endpoint") as HTMLInputElement).value = currentSettings.endpoint;
-		(modal.querySelector(".mur-set-apikey") as HTMLInputElement).value = currentSettings.apiKey;
-		(modal.querySelector(".mur-set-model") as HTMLInputElement).value = currentSettings.model;
-		(modal.querySelector(".mur-set-title-model") as HTMLInputElement).value = currentSettings.titleModel;
-		(modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value = currentSettings.systemPrompt;
+		const endpointInput = modal.querySelector(".mur-set-endpoint") as HTMLInputElement;
+		const apiKeyInput = modal.querySelector(".mur-set-apikey") as HTMLInputElement;
+		const modelInput = modal.querySelector(".mur-set-model") as HTMLInputElement;
+		const titleModelInput = modal.querySelector(".mur-set-title-model") as HTMLInputElement;
+		const systemPromptInput = modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement;
+
+		endpointInput.value = currentSettings.endpoint;
+		apiKeyInput.value = currentSettings.apiKey;
+		modelInput.value = currentSettings.model;
+		titleModelInput.value = currentSettings.titleModel;
+		systemPromptInput.value = currentSettings.systemPrompt;
 
 		const restoreFocus = () => {
 			if (triggerEl?.isConnected && typeof (triggerEl as HTMLElement).focus === "function") {
@@ -230,12 +238,18 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		});
 
 		modal.querySelector(".mur-set-save-btn")!.addEventListener("click", () => {
+			const invalidInput = validateRequiredSettings(endpointInput, modelInput);
+			if (invalidInput) {
+				invalidInput.focus();
+				return;
+			}
+
 			const newSettings = {
-				endpoint: (modal.querySelector(".mur-set-endpoint") as HTMLInputElement).value.trim(),
-				apiKey: (modal.querySelector(".mur-set-apikey") as HTMLInputElement).value.trim(),
-				model: (modal.querySelector(".mur-set-model") as HTMLInputElement).value.trim(),
-				titleModel: (modal.querySelector(".mur-set-title-model") as HTMLInputElement).value.trim(),
-				systemPrompt: (modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value.trim(),
+				endpoint: endpointInput.value.trim(),
+				apiKey: apiKeyInput.value.trim(),
+				model: modelInput.value.trim(),
+				titleModel: titleModelInput.value.trim(),
+				systemPrompt: systemPromptInput.value.trim(),
 			};
 			void applySettings(ctx, newSettings).catch((error) => {
 				console.warn("SettingsPlugin: Could not apply settings.", error);
@@ -267,7 +281,8 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 			};
 
 			if (config?.triggerSelector) {
-				const customBtn = document.querySelector(config.triggerSelector);
+				const selectorRoot = config.triggerSelectorScope === "document" ? document : ctx.container;
+				const customBtn = selectorRoot.querySelector(config.triggerSelector);
 				if (customBtn) {
 					customBtn.addEventListener("click", openModal);
 					mountedTriggerEl = customBtn;
@@ -305,4 +320,24 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 			mountedTriggerHandler = null;
 		},
 	};
+}
+
+function validateRequiredSettings(
+	endpointInput: HTMLInputElement,
+	modelInput: HTMLInputElement,
+): HTMLInputElement | null {
+	endpointInput.removeAttribute("aria-invalid");
+	modelInput.removeAttribute("aria-invalid");
+
+	if (!endpointInput.value.trim()) {
+		endpointInput.setAttribute("aria-invalid", "true");
+		return endpointInput;
+	}
+
+	if (!modelInput.value.trim()) {
+		modelInput.setAttribute("aria-invalid", "true");
+		return modelInput;
+	}
+
+	return null;
 }

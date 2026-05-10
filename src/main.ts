@@ -1,6 +1,6 @@
 import { Feed } from "./components/feed";
 import { Input } from "./components/input";
-import { Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
+import { type DeleteConfirmation, Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
 import { ChatEngine } from "./core/chat-engine";
 import type { ChatPlugin, ChatProvider, ChatStorage, CodeHighlighter, RequestOptions } from "./core/types";
 import { AppRouter, type RouterConfig } from "./router";
@@ -27,6 +27,7 @@ export interface ChatUIConfig {
 	 * defaults; keep side effects inside each item's onClick handler.
 	 */
 	sidebarMenu?: SidebarMenuBuilder;
+	confirmDelete?: DeleteConfirmation;
 
 	/**
 	 * Updates the browser window title to match the active chat.
@@ -197,6 +198,7 @@ export class ChatUI {
 				},
 				getSessionHref: (id) => this.router.hrefFor(id),
 				sidebarMenu: this.config.sidebarMenu,
+				confirmDelete: this.config.confirmDelete,
 			});
 			void this.engine.sessions.loadHistory();
 		}

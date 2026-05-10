@@ -260,6 +260,17 @@ test("submit refreshes stale text state from programmatic value changes", () => 
 	harness.destroy();
 });
 
+test("submit preserves raw textarea text after checking trimmed emptiness", () => {
+	const harness = mountInput();
+
+	setInputValue(harness.input, "  indented prompt\n");
+	submit(harness.form);
+
+	assert.deepEqual(harness.submissions, ["  indented prompt\n"]);
+
+	harness.destroy();
+});
+
 test("textarea fallback height uses the computed max-height", () => {
 	const harness = mountInput();
 	harness.input.style.maxHeight = "120px";
