@@ -1,8 +1,8 @@
 {
 	"source": "highlighter",
-	"sourceCommit": "c49624f0cdcd028ad040376ba157ce27bc86c3f2",
+	"sourceCommit": "4f6ffe4748654a4de9afc9d070942d7910dbe728",
 	"sourceDirty": false,
-	"exportedAt": "2026-05-09T15:01:39.894Z",
+	"exportedAt": "2026-05-10T20:39:43.522Z",
 	"managedFiles": [
 		"THIRD_PARTY_NOTICES.md",
 		"chat.ts",

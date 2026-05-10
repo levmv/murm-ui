@@ -2,6 +2,7 @@ export * from "./core";
 
 import {
 	type CreateHighlighterOptions as CoreCreateHighlighterOptions,
+	highlight as coreHighlight,
 	createHighlighter as createCoreHighlighter,
 	type Grammar,
 	type Highlighter,
@@ -11,7 +12,9 @@ import {
 } from "./core";
 import { registerBuiltInLanguages } from "./languages/index";
 
-registerBuiltInLanguages(languages);
+let builtInLanguagesRegistered = false;
+
+ensureBuiltInLanguages();
 
 export type LanguageLoadResult = LanguageDefinition | { default?: LanguageDefinition } | null | undefined;
 
@@ -23,6 +26,11 @@ export interface ChatHighlighter {
 
 export interface CreateHighlighterOptions extends CoreCreateHighlighterOptions {
 	loadLanguage?: (language: string) => Promise<LanguageLoadResult>;
+}
+
+export function highlight(code: string, language: string): string {
+	ensureBuiltInLanguages();
+	return coreHighlight(code, language);
 }
 
 export function createHighlighter(options: CreateHighlighterOptions = {}): ChatHighlighter {
@@ -110,4 +118,13 @@ function isLanguageDefinition(value: unknown): value is LanguageDefinition {
 		typeof (value as LanguageDefinition).id === "string" &&
 		!!(value as LanguageDefinition).grammar
 	);
+}
+
+function ensureBuiltInLanguages(): void {
+	if (builtInLanguagesRegistered) {
+		return;
+	}
+
+	registerBuiltInLanguages(languages);
+	builtInLanguagesRegistered = true;
 }
