@@ -14,6 +14,7 @@ export interface ChatUIConfig {
 	storage: ChatStorage;
 	routing?: RouterConfig | boolean;
 	titleOptions?: Partial<RequestOptions>;
+	titleInstructions?: string;
 
 	enableSidebar?: boolean;
 	initialSessionId?: string;
@@ -92,6 +93,7 @@ export class ChatUI {
 			storage: this.config.storage,
 			initialSessionId,
 			titleOptions: this.config.titleOptions,
+			titleInstructions: this.config.titleInstructions,
 		});
 
 		this.initComponents();

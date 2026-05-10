@@ -181,22 +181,24 @@ const highlighter = createHighlighter({
 
 <h2 id="providers">Providers</h2>
 
-Providers are the boundary between Murm UI and the model. A provider receives normalized chat messages and streams normalized events back into the engine.
+Providers are the boundary between Murm UI and the model. A provider receives a normalized chat request and streams normalized events back into the engine.
 
 ```ts
+interface ChatRequest {
+  messages: Message[];
+  instructions?: string;
+  tools?: Record<string, unknown>[];
+  options: RequestOptions;
+  signal: AbortSignal;
+}
+
 interface ChatProvider {
   streamChat(
-    messages: Message[],
-    options: RequestOptions,
-    signal: AbortSignal,
+    request: ChatRequest,
     onEvent: (event: StreamEvent) => void,
   ): Promise<void>;
 
-  generateTitle?(
-    messages: Message[],
-    options?: RequestOptions,
-    signal?: AbortSignal,
-  ): Promise<string>;
+  generateTitle?(request: ChatRequest): Promise<string>;
 }
 ```
 
@@ -214,7 +216,9 @@ const provider = new OpenAIProvider(
 
 For browser apps, a backend proxy is usually the production boundary. BYOK and local tools can pass user-provided keys directly and keep them on that user's device.
 
-`RequestOptions` is intentionally open-ended. Common options include `model`, `systemPrompt`, `temperature`, `top_p`, `max_tokens`, `tools`, and `stream_options`.
+`instructions` and `tools` are first-class model inputs on `ChatRequest`. Provider adapters decide how to serialize them for a specific API, such as OpenAI-compatible `system` messages and `tools`, Anthropic top-level `system`, or another provider-native shape.
+
+`RequestOptions` is intentionally open-ended for generation controls and provider-specific passthrough fields. Common options include `model`, `temperature`, `top_p`, `max_tokens`, `stream_options`, and provider-specific flags.
 
 The hosted demo uses a mock provider so visitors can try streaming without an API key or backend.
 

@@ -8,6 +8,8 @@ export type {
 	ActionButtonDef,
 	ChatPlugin,
 	ChatProvider,
+	ChatRequest,
+	ChatRequestDefaults,
 	ChatRequestPatch,
 	ChatSession,
 	ChatSessionMeta,
@@ -19,9 +21,10 @@ export type {
 	MessageActionContext,
 	PluginContext,
 	PluginInputContext,
-	ReadonlyChatRequestParams,
+	ReadonlyChatRequest,
 	RequestOptions,
 	TokenUsage,
+	ToolDefinition,
 } from "./core/types";
 export { MAX_PINNED_SESSIONS } from "./core/types";
 export { ChatUI, type ChatUIConfig } from "./main";

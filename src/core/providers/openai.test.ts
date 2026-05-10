@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import type { Message, RequestOptions, StreamEvent } from "../types";
+import type { ChatRequest, Message, RequestOptions, StreamEvent } from "../types";
 import { OpenAIProvider } from "./openai";
 
 const originalFetch = globalThis.fetch;
@@ -36,6 +36,24 @@ function findEvent<T extends StreamEvent["type"]>(events: StreamEvent[], type: T
 	const event = events.find((candidate) => candidate.type === type);
 	assert.ok(event, `Expected ${type} event`);
 	return event as Extract<StreamEvent, { type: T }>;
+}
+
+function chatRequest(
+	messages: Message[],
+	options: RequestOptions = {},
+	signal: AbortSignal = new AbortController().signal,
+	extra: Partial<Pick<ChatRequest, "instructions" | "tools">> = {},
+): ChatRequest {
+	return { messages, options, signal, ...extra };
+}
+
+function titleRequest(
+	messages: Message[],
+	options: RequestOptions = {},
+	signal: AbortSignal = new AbortController().signal,
+	instructions?: string,
+): ChatRequest {
+	return { messages, options, signal, instructions };
 }
 
 test("streamChat parses text, reasoning, tool calls, usage, and finish events", async () => {
@@ -76,11 +94,8 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 	const { calls } = mockFetch(sse(reasoningChunk, textChunk, toolStartChunk, toolDeltaChunk, usageChunk, finishChunk));
 	const events: StreamEvent[] = [];
 
-	await provider.streamChat(
-		[textMessage("user-1", "user", "hello")],
-		{ model: "chosen-model" },
-		new AbortController().signal,
-		(event) => events.push(event),
+	await provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")], { model: "chosen-model" }), (event) =>
+		events.push(event),
 	);
 
 	assert.equal(calls[0].url, "https://example.test/chat");
@@ -121,7 +136,7 @@ test("streamChat omits Authorization when the API key is empty", async () => {
 	});
 	const { calls } = mockFetch(sse(finishChunk));
 
-	await provider.streamChat([textMessage("user-1", "user", "hello")], {}, new AbortController().signal, () => {});
+	await provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")]), () => {});
 
 	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
 });
@@ -138,9 +153,7 @@ test("streamChat marks encrypted reasoning without retaining provider payloads",
 	mockFetch(sse(encryptedObjectChunk, encryptedFieldChunk, "[DONE]"));
 	const events: StreamEvent[] = [];
 
-	await provider.streamChat([textMessage("user-1", "user", "hello")], {}, new AbortController().signal, (event) =>
-		events.push(event),
-	);
+	await provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")]), (event) => events.push(event));
 
 	const reasoningEvents = events.filter(
 		(event): event is Extract<StreamEvent, { type: "reasoning_delta" }> => event.type === "reasoning_delta",
@@ -193,33 +206,45 @@ test("streamChat formats mixed message blocks for OpenAI-compatible requests", a
 		},
 	];
 	const options: RequestOptions = {
-		systemPrompt: "handled by engine",
+		messages: "custom messages passthrough",
+		providerFlag: "custom passthrough",
+		stream: false,
 		temperature: 0.4,
 		stream_options: { extra: true },
 	};
 
-	await provider.streamChat(messages, options, new AbortController().signal, () => {});
+	await provider.streamChat(
+		chatRequest(messages, options, new AbortController().signal, {
+			instructions: "Follow request instructions.",
+			tools: [{ type: "function", function: { name: "lookup" } }],
+		}),
+		() => {},
+	);
 
 	const body = JSON.parse(calls[0].init.body as string);
-	assert.equal(body.systemPrompt, undefined);
+	assert.notEqual(body.messages, "custom messages passthrough");
+	assert.equal(body.stream, true);
+	assert.equal(body.providerFlag, "custom passthrough");
 	assert.equal(body.temperature, 0.4);
+	assert.deepEqual(body.tools, [{ type: "function", function: { name: "lookup" } }]);
 	assert.deepEqual(body.stream_options, { include_usage: true, extra: true });
 
-	assert.equal(body.messages[0].content, "be concise");
-	assert.deepEqual(body.messages[1].content, [
+	assert.deepEqual(body.messages[0], { role: "system", content: "Follow request instructions." });
+	assert.equal(body.messages[1].content, "be concise");
+	assert.deepEqual(body.messages[2].content, [
 		{ type: "text", text: "describe this" },
 		{ type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
 		{ type: "text", text: "\n\n--- File: notes.txt ---\nnotes" },
 	]);
-	assert.equal(body.messages[2].content, "I will call a tool");
-	assert.deepEqual(body.messages[2].tool_calls, [
+	assert.equal(body.messages[3].content, "I will call a tool");
+	assert.deepEqual(body.messages[3].tool_calls, [
 		{
 			id: "call-1",
 			type: "function",
 			function: { name: "lookup", arguments: '{"q":"weather"}' },
 		},
 	]);
-	assert.deepEqual(body.messages[3], { role: "tool", tool_call_id: "call-1", content: "sunny" });
+	assert.deepEqual(body.messages[4], { role: "tool", tool_call_id: "call-1", content: "sunny" });
 });
 
 test("streamChat omits incomplete tool calls from OpenAI-compatible requests", async () => {
@@ -284,7 +309,7 @@ test("streamChat omits incomplete tool calls from OpenAI-compatible requests", a
 		},
 	];
 
-	await provider.streamChat(messages, {}, new AbortController().signal, () => {});
+	await provider.streamChat(chatRequest(messages), () => {});
 
 	const body = JSON.parse(calls[0].init.body as string);
 	assert.deepEqual(body.messages, [
@@ -311,9 +336,7 @@ test("streamChat rejects for non-OK API responses", async () => {
 	const events: StreamEvent[] = [];
 
 	await assert.rejects(
-		provider.streamChat([textMessage("user-1", "user", "hello")], {}, new AbortController().signal, (event) =>
-			events.push(event),
-		),
+		provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")]), (event) => events.push(event)),
 		/API Error 401: bad key/,
 	);
 
@@ -330,7 +353,9 @@ test("streamChat rejects without events when fetch is aborted", async () => {
 	const events: StreamEvent[] = [];
 
 	await assert.rejects(
-		provider.streamChat([textMessage("user-1", "user", "hello")], {}, controller.signal, (event) => events.push(event)),
+		provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")], {}, controller.signal), (event) =>
+			events.push(event),
+		),
 		(error: unknown) => error instanceof Error && error.name === "AbortError",
 	);
 
@@ -342,15 +367,20 @@ test("generateTitle sends non-streaming title request options", async () => {
 	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
 
 	const title = await provider.generateTitle(
-		[textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")],
-		{
-			model: "title-model",
-			systemPrompt: "Name chats plainly.",
-			temperature: 0.2,
-			max_tokens: 8,
-			stream_options: { include_usage: true },
-		},
-		new AbortController().signal,
+		titleRequest(
+			[textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")],
+			{
+				model: "title-model",
+				temperature: 0.2,
+				max_tokens: 8,
+				messages: "custom messages passthrough",
+				providerFlag: "custom title passthrough",
+				stream: true,
+				stream_options: { include_usage: true },
+			},
+			new AbortController().signal,
+			"Name chats plainly.",
+		),
 	);
 
 	assert.equal(title, "Useful Title");
@@ -360,7 +390,8 @@ test("generateTitle sends non-streaming title request options", async () => {
 	assert.equal(body.max_tokens, 8);
 	assert.equal(body.stream, false);
 	assert.equal(body.stream_options, undefined);
-	assert.equal(body.systemPrompt, undefined);
+	assert.equal(body.providerFlag, "custom title passthrough");
+	assert.notEqual(body.messages, "custom messages passthrough");
 	assert.deepEqual(body.messages[0], { role: "system", content: "Name chats plainly." });
 	assert.equal(body.messages.at(-1).role, "user");
 	assert.match(body.messages.at(-1).content, /Summarize the above conversation/);
@@ -370,10 +401,9 @@ test("generateTitle omits Authorization when the API key is empty", async () => 
 	const provider = new OpenAIProvider("", "https://example.test/chat", "fallback-model");
 	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
 
-	const title = await provider.generateTitle([
-		textMessage("user-1", "user", "hello"),
-		textMessage("assistant-1", "assistant", "hello back"),
-	]);
+	const title = await provider.generateTitle(
+		titleRequest([textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")]),
+	);
 
 	assert.equal(title, "Useful Title");
 	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
@@ -384,9 +414,11 @@ test("generateTitle uses a default title system prompt", async () => {
 	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
 
 	await provider.generateTitle(
-		[textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")],
-		{ model: "title-model" },
-		new AbortController().signal,
+		titleRequest(
+			[textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")],
+			{ model: "title-model" },
+			new AbortController().signal,
+		),
 	);
 
 	const body = JSON.parse(calls[0].init.body as string);

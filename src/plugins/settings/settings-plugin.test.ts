@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { JSDOM } from "jsdom";
 import type { ChatEngine } from "../../core/chat-engine";
-import type { ChatProvider, RequestOptions } from "../../core/types";
+import type { ChatProvider, ChatRequestDefaults, RequestOptions } from "../../core/types";
 import { SettingsPlugin, type SettingsState, type SettingsStorage } from "./settings-plugin";
 
 const originalDocument = globalThis.document;
@@ -229,12 +229,12 @@ test("SettingsPlugin loads and saves through a custom storage adapter", async ()
 		},
 	};
 	const providerSettings: SettingsState[] = [];
-	const requestDefaults: Partial<RequestOptions>[] = [];
+	const requestDefaults: Partial<ChatRequestDefaults>[] = [];
 	const titleOptionCalls: Partial<RequestOptions>[] = [];
 	const engine = {
 		setProvider: () => {},
-		setRequestDefaults: (options: Partial<RequestOptions>) => {
-			requestDefaults.push(options);
+		setRequestDefaults: (defaults: Partial<ChatRequestDefaults>) => {
+			requestDefaults.push(defaults);
 		},
 		setTitleOptions: (options: Partial<RequestOptions>) => {
 			titleOptionCalls.push(options);
@@ -264,7 +264,7 @@ test("SettingsPlugin loads and saves through a custom storage adapter", async ()
 		titleModel: "stored-title",
 		systemPrompt: "stored prompt",
 	});
-	assert.deepEqual(requestDefaults[0], { systemPrompt: "stored prompt" });
+	assert.deepEqual(requestDefaults[0], { instructions: "stored prompt" });
 	assert.deepEqual(titleOptionCalls[0], { model: "stored-title" });
 
 	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();

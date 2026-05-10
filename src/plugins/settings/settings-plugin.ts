@@ -109,7 +109,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		}
 
 		ctx.engine.setRequestDefaults({
-			systemPrompt: settings.systemPrompt || undefined,
+			instructions: settings.systemPrompt || undefined,
 		});
 		ctx.engine.setTitleOptions({
 			model: settings.titleModel || undefined,

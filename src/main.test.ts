@@ -5,6 +5,7 @@ import { closeDropdown } from "./components/dropdown";
 import type {
 	ChatPlugin,
 	ChatProvider,
+	ChatRequest,
 	ChatSession,
 	ChatStorage,
 	Message,
@@ -188,10 +189,10 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	let inputContextIsComplete = false;
 
 	const provider: ChatProvider = {
-		async streamChat(messages, _options, signal, onEvent): Promise<void> {
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			providerCalls++;
-			latestSignal = signal;
-			providerMessages.push(messages);
+			latestSignal = request.signal;
+			providerMessages.push(request.messages);
 
 			if (providerCalls === 1) {
 				onEvent({ type: "text_delta", messageId: "assistant-1", blockId: "reply", delta: "hello back" });
@@ -200,7 +201,7 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 			}
 
 			await new Promise<void>((resolve) => {
-				signal.addEventListener("abort", () => resolve(), { once: true });
+				request.signal.addEventListener("abort", () => resolve(), { once: true });
 			});
 		},
 	};
@@ -272,12 +273,12 @@ test("ChatUI passes titleOptions into auto-title generation", async () => {
 	const { ChatUI } = await import("./main");
 	let titleOptions: RequestOptions = {};
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "text_delta", messageId: "assistant-1", blockId: "reply", delta: "hello back" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
-		async generateTitle(_messages, options): Promise<string> {
-			titleOptions = options ?? {};
+		async generateTitle(request): Promise<string> {
+			titleOptions = request.options;
 			return "Smart Title";
 		},
 	};
@@ -308,7 +309,7 @@ test("ChatUI marks the app layout when the chat is empty", async () => {
 		container,
 		enableSidebar: false,
 		provider: {
-			async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 				onEvent({ type: "finish", reason: "stop" });
 			},
 		},
@@ -365,7 +366,7 @@ test("ChatUI keeps the non-empty layout state while switching between stored cha
 	const ui = new ChatUI({
 		container,
 		provider: {
-			async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 				onEvent({ type: "finish", reason: "stop" });
 			},
 		},
@@ -409,7 +410,7 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	]);
 
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "finish", reason: "stop" });
 		},
 	};
@@ -467,7 +468,7 @@ test("ChatUI restores per-chat input drafts when switching sessions", async () =
 		},
 	]);
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "finish", reason: "stop" });
 		},
 	};
@@ -545,7 +546,7 @@ test("ChatUI passes sidebarMenu config into session menus", async () => {
 		},
 	]);
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "finish", reason: "stop" });
 		},
 	};
@@ -602,7 +603,7 @@ test("ChatUI keeps the input available while switching chats", async () => {
 	]);
 
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "finish", reason: "stop" });
 		},
 	};
@@ -692,7 +693,7 @@ test("ChatUI replaces an invalid routed chat URL with the blank chat URL", async
 	const { ChatUI } = await import("./main");
 
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "finish", reason: "stop" });
 		},
 	};
@@ -750,7 +751,7 @@ test("ChatUI keeps a blank route when initial history loads without a URL id", a
 	]);
 
 	const provider: ChatProvider = {
-		async streamChat(_messages, _options, _signal, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "finish", reason: "stop" });
 		},
 	};

@@ -1,6 +1,6 @@
 import { parseSSE } from "../../utils/sse";
 import { uuidv7 } from "../../utils/uuid";
-import type { ChatProvider, FinishReason, Message, RequestOptions, StreamEvent } from "../types";
+import type { ChatProvider, ChatRequest, FinishReason, Message, StreamEvent } from "../types";
 
 type OpenAIStreamDelta = {
 	content?: string | null;
@@ -49,28 +49,24 @@ export class OpenAIProvider implements ChatProvider {
 		private model: string,
 	) {}
 
-	async streamChat(
-		messages: Message[],
-		options: RequestOptions,
-		signal: AbortSignal,
-		onEvent: (event: StreamEvent) => void,
-	): Promise<void> {
-		const { model = this.model, systemPrompt, ...restOptions } = options;
+	async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		const { model = this.model, ...restOptions } = request.options;
 
 		const response = await fetch(this.endpoint, {
 			method: "POST",
 			headers: this.headers(),
 			body: JSON.stringify({
-				model: model,
-				messages: this.formatMessages(messages),
-				stream: true,
 				...restOptions,
+				model,
+				messages: this.formatMessagesWithInstructions(request.messages, request.instructions),
+				stream: true,
+				...(request.tools ? { tools: request.tools } : {}),
 				stream_options: {
 					include_usage: true,
 					...((restOptions.stream_options as object) || {}),
 				},
 			}),
-			signal,
+			signal: request.signal,
 		});
 
 		if (!response.ok) {
@@ -226,17 +222,18 @@ export class OpenAIProvider implements ChatProvider {
 		}
 	}
 
-	async generateTitle(messages: Message[], options?: RequestOptions, signal?: AbortSignal): Promise<string> {
+	async generateTitle(request: ChatRequest): Promise<string> {
 		try {
-			const { model = this.model, systemPrompt, ...restOptions } = options ?? {};
-			delete restOptions.stream_options;
+			const { model = this.model, stream_options: _streamOptions, ...restOptions } = request.options;
 			const titleSystemPrompt =
-				typeof systemPrompt === "string" && systemPrompt.trim().length > 0 ? systemPrompt : DEFAULT_TITLE_SYSTEM_PROMPT;
+				typeof request.instructions === "string" && request.instructions.trim().length > 0
+					? request.instructions
+					: DEFAULT_TITLE_SYSTEM_PROMPT;
 
-			let endIndex = messages.findIndex((m) => m.role === "assistant" && m.blocks.length > 0);
-			if (endIndex === -1) endIndex = Math.min(messages.length - 1, 3);
+			let endIndex = request.messages.findIndex((m) => m.role === "assistant" && m.blocks.length > 0);
+			if (endIndex === -1) endIndex = Math.min(request.messages.length - 1, 3);
 
-			const contextMessages = messages.slice(0, endIndex + 1);
+			const contextMessages = request.messages.slice(0, endIndex + 1);
 			const formattedMessages = [
 				{ role: "system", content: titleSystemPrompt },
 				...this.formatMessages(contextMessages),
@@ -251,12 +248,12 @@ export class OpenAIProvider implements ChatProvider {
 				method: "POST",
 				headers: this.headers(),
 				body: JSON.stringify({
+					...restOptions,
 					model,
 					messages: formattedMessages,
-					...restOptions,
 					stream: false,
 				}),
-				signal,
+				signal: request.signal,
 			});
 
 			if (!response.ok) return "";
@@ -264,7 +261,7 @@ export class OpenAIProvider implements ChatProvider {
 			return data.choices[0]?.message?.content?.trim() || "";
 		} catch (error) {
 			const isAbort = error instanceof Error && error.name === "AbortError";
-			if (!isAbort && !signal?.aborted) {
+			if (!isAbort && !request.signal.aborted) {
 				console.warn("Failed to generate chat title.", error);
 			}
 			return "";
@@ -377,6 +374,12 @@ export class OpenAIProvider implements ChatProvider {
 			result.push(payload);
 		}
 		return result;
+	}
+
+	private formatMessagesWithInstructions(messages: Message[], instructions?: string): Record<string, unknown>[] {
+		const formattedMessages = this.formatMessages(messages);
+		if (!instructions) return formattedMessages;
+		return [{ role: "system", content: instructions }, ...formattedMessages];
 	}
 
 	private extractReasoning(delta: OpenAIStreamDelta): { text: string; encrypted: boolean } | null {

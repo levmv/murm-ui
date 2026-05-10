@@ -167,21 +167,29 @@ export interface ChatStorage {
 
 export const MAX_PINNED_SESSIONS = 3;
 
+export type ToolDefinition = Record<string, unknown>;
+
 export interface RequestOptions {
 	model?: string;
-	systemPrompt?: string;
 	temperature?: number;
 	top_p?: number;
 	max_tokens?: number;
-	tools?: Record<string, unknown>[];
 	stream_options?: Record<string, unknown>;
 	[key: string]: unknown;
 }
 
-export interface ChatRequestParams {
+export interface ChatRequest {
 	messages: Message[];
+	instructions?: string;
+	tools?: ToolDefinition[];
 	options: RequestOptions;
 	signal: AbortSignal;
+}
+
+export interface ChatRequestDefaults {
+	instructions?: string;
+	tools?: ToolDefinition[];
+	options?: Partial<RequestOptions>;
 }
 
 export interface ChatProvider {
@@ -189,14 +197,9 @@ export interface ChatProvider {
 	 * Streams successful provider events to the engine. Provider/API failures should reject
 	 * this promise; ChatEngine converts those failures into UI error state.
 	 */
-	streamChat(
-		messages: Message[],
-		options: RequestOptions,
-		signal: AbortSignal,
-		onEvent: (event: StreamEvent) => void,
-	): Promise<void>;
+	streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void>;
 
-	generateTitle?(messages: Message[], options?: RequestOptions, signal?: AbortSignal): Promise<string>;
+	generateTitle?(request: ChatRequest): Promise<string>;
 }
 
 export type CodeHighlighter = (code: string, lang: string) => string | Promise<string>;
@@ -226,14 +229,18 @@ export type DeepReadonly<T, Depth extends number = 5> = [Depth] extends [never]
 				? { readonly [K in keyof T]: DeepReadonly<T[K], DeepReadonlyDepth[Depth]> }
 				: T;
 
-export interface ReadonlyChatRequestParams {
+export interface ReadonlyChatRequest {
 	readonly messages: readonly DeepReadonly<Message>[];
+	readonly instructions?: string;
+	readonly tools?: readonly DeepReadonly<ToolDefinition>[];
 	readonly options: DeepReadonly<RequestOptions>;
 	readonly signal: AbortSignal;
 }
 
 export interface ChatRequestPatch {
 	messages?: Message[];
+	instructions?: string;
+	tools?: ToolDefinition[];
 	options?: Partial<RequestOptions>;
 }
 
@@ -283,9 +290,7 @@ export interface ChatPlugin {
 	 * Return a ChatRequestPatch to override specific parts, or void if no changes are needed.
 	 * This hook may be async.
 	 */
-	beforeSubmit?: (
-		params: ReadonlyChatRequestParams,
-	) => ChatRequestPatch | undefined | Promise<ChatRequestPatch | undefined>;
+	beforeSubmit?: (request: ReadonlyChatRequest) => ChatRequestPatch | undefined | Promise<ChatRequestPatch | undefined>;
 
 	/**
 	 * Fires when the input area mounts. Use to append/prepend custom UI to the form.

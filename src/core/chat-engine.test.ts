@@ -4,6 +4,7 @@ import { ChatEngine } from "./chat-engine";
 import type {
 	ChatPlugin,
 	ChatProvider,
+	ChatRequest,
 	ChatSession,
 	ChatSessionMeta,
 	ChatStorage,
@@ -122,12 +123,7 @@ async function waitFor(assertion: () => boolean, label: string): Promise<void> {
 
 function replyingProvider(reply: string): ChatProvider {
 	return {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: reply });
 			onEvent({ type: "finish", reason: "stop" });
 		},
@@ -437,12 +433,7 @@ test("overlapping same-session saves are persisted in request order", async () =
 
 	let replyCount = 0;
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			replyCount++;
 			onEvent({
 				type: "text_delta",
@@ -556,12 +547,7 @@ test("auto-title completion is scoped to the generated session after switching a
 	})([otherSession]);
 
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
@@ -608,12 +594,7 @@ test("deleting a session prevents pending auto-title completion from recreating 
 
 	const storage = new MemoryStorage();
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
@@ -660,17 +641,12 @@ test("destroy aborts pending auto-title and ignores late completion", async () =
 
 	const storage = new MemoryStorage();
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
-		async generateTitle(_messages: Message[], _options?: RequestOptions, signal?: AbortSignal): Promise<string> {
-			titleSignal = signal ?? null;
+		async generateTitle(request): Promise<string> {
+			titleSignal = request.signal;
 			titleStarted();
 			await titleReleased;
 			return "Late Title";
@@ -717,12 +693,7 @@ test("destroy aborts pending auto-title before waiting on active generation shut
 	const storage = new MemoryStorage();
 	let streamCalls = 0;
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			streamCalls++;
 			if (streamCalls === 1) {
 				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "first-reply", delta: "answer" });
@@ -732,12 +703,12 @@ test("destroy aborts pending auto-title before waiting on active generation shut
 
 			secondStreamStarted();
 			await secondStreamReleased;
-			if (signal.aborted) {
+			if (request.signal.aborted) {
 				onEvent({ type: "finish", reason: "aborted" });
 			}
 		},
-		async generateTitle(_messages: Message[], _options?: RequestOptions, signal?: AbortSignal): Promise<string> {
-			titleSignal = signal ?? null;
+		async generateTitle(request): Promise<string> {
+			titleSignal = request.signal;
 			titleStarted();
 			await titleReleased;
 			return "Late Title";
@@ -769,7 +740,7 @@ test("sendMessage preserves encrypted reasoning as hidden metadata", async () =>
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_messages, _options, _signal, onEvent): Promise<void> {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 				onEvent({
 					type: "reasoning_delta",
 					messageId: "provider-message",
@@ -800,7 +771,7 @@ test("sendMessage skips empty encrypted reasoning payloads", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_messages, _options, _signal, onEvent): Promise<void> {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 				onEvent({
 					type: "reasoning_delta",
 					messageId: "provider-message",
@@ -857,12 +828,7 @@ test("failed generation marks streaming tool calls as errored", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(
-				_messages: Message[],
-				_options: RequestOptions,
-				_signal: AbortSignal,
-				onEvent: (event: StreamEvent) => void,
-			): Promise<void> {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 				onEvent({
 					type: "tool_call_start",
 					messageId: "provider-message",
@@ -919,7 +885,7 @@ test("sendMessage works while initial history is loading", async () => {
 
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_messages, _options, _signal, onEvent): Promise<void> {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 				providerCalls++;
 				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
 				onEvent({ type: "finish", reason: "stop" });
@@ -1039,12 +1005,7 @@ test("stopping while beforeSubmit is pending prevents the provider request", asy
 	};
 
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			_onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(): Promise<void> {
 			providerCalled = true;
 		},
 	};
@@ -1083,16 +1044,11 @@ test("stopping after streamed content keeps the partial assistant message", asyn
 	});
 
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "partial-text", delta: "partial" });
 			streamStarted();
 			await streamReleased;
-			if (signal.aborted) {
+			if (request.signal.aborted) {
 				onEvent({ type: "finish", reason: "aborted" });
 			}
 		},
@@ -1117,13 +1073,8 @@ test("stopping after streamed content keeps the partial assistant message", asyn
 test("editAndResubmit truncates later history while preserving non-text blocks", async () => {
 	let providerMessages: Message[] = [];
 	const provider: ChatProvider = {
-		async streamChat(
-			messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
-			providerMessages = messages;
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			providerMessages = request.messages;
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "edited-reply", delta: "edited response" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
@@ -1184,12 +1135,7 @@ test("tool call deltas update streamed tool names", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(
-				_messages: Message[],
-				_options: RequestOptions,
-				_signal: AbortSignal,
-				onEvent: (event: StreamEvent) => void,
-			): Promise<void> {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 				onEvent({
 					type: "tool_call_start",
 					messageId: "assistant-1",
@@ -1234,13 +1180,8 @@ test("sendMessage catches plugin onUserSubmit failures and continues", async () 
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(
-				messages: Message[],
-				_options: RequestOptions,
-				_signal: AbortSignal,
-				onEvent: (event: StreamEvent) => void,
-			): Promise<void> {
-				providerMessages = messages;
+			async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+				providerMessages = request.messages;
 				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
 				onEvent({ type: "finish", reason: "stop" });
 			},
@@ -1361,21 +1302,16 @@ test("plugins can add user message data and patch request options", async () => 
 		},
 	};
 	const provider: ChatProvider = {
-		async streamChat(
-			messages: Message[],
-			options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
-			providerMessages = messages;
-			providerOptions = options;
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			providerMessages = request.messages;
+			providerOptions = request.options;
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
 	};
 	const engine = new ChatEngine({ provider, storage: new MemoryStorage() });
 	engine.registerPlugins([plugin]);
-	engine.setRequestDefaults({ model: "base-model" });
+	engine.setRequestDefaults({ options: { model: "base-model" } });
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
@@ -1395,15 +1331,59 @@ test("plugins can add user message data and patch request options", async () => 
 	assert.equal(Object.isFrozen(engine.state.messages[0].blocks), false);
 });
 
+test("structured providers receive semantic fields separately from passthrough options", async () => {
+	let providerRequest: ChatRequest | null = null;
+	const defaultTools = [{ type: "function", function: { name: "default_tool" } }];
+	const pluginTools = [{ type: "function", function: { name: "plugin_tool" } }];
+	const plugin: ChatPlugin = {
+		name: "semantic-request-shaper",
+		beforeSubmit: (params) => {
+			assert.equal(params.instructions, "default instructions");
+			assert.deepEqual(params.tools, defaultTools);
+			return {
+				instructions: "plugin instructions",
+				tools: pluginTools,
+				options: {
+					temperature: 0.2,
+				},
+			};
+		},
+	};
+	const provider: ChatProvider = {
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			providerRequest = request;
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	const engine = new ChatEngine({ provider, storage: new MemoryStorage() });
+	engine.registerPlugins([plugin]);
+	engine.setRequestDefaults({
+		instructions: "default instructions",
+		tools: defaultTools,
+		options: {
+			model: "base-model",
+			providerFlag: "custom passthrough",
+		},
+	});
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && providerRequest !== null, "structured request");
+
+	const request = providerRequest as unknown as ChatRequest;
+	assert.equal(request.instructions, "plugin instructions");
+	assert.deepEqual(request.tools, pluginTools);
+	assert.equal(request.options.model, "base-model");
+	assert.equal(request.options.temperature, 0.2);
+	assert.equal(request.options.providerFlag, "custom passthrough");
+	assert.equal(request.messages[0].role, "user");
+});
+
 test("auto-title updates session metadata after the first assistant reply", async () => {
 	const storage = new MemoryStorage();
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
@@ -1429,18 +1409,13 @@ test("auto-title bypasses beforeSubmit hooks", async () => {
 	let titleOptions: RequestOptions = {};
 
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
-			chatOptions = options;
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			chatOptions = request.options;
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
-		async generateTitle(_messages: Message[], options?: RequestOptions): Promise<string> {
-			titleOptions = options ?? {};
+		async generateTitle(request): Promise<string> {
+			titleOptions = request.options;
 			return "Smart Title";
 		},
 	};
@@ -1453,7 +1428,7 @@ test("auto-title bypasses beforeSubmit hooks", async () => {
 	};
 	const engine = new ChatEngine({ provider, storage });
 	engine.registerPlugins([plugin]);
-	engine.setRequestDefaults({ model: "base-model" });
+	engine.setRequestDefaults({ options: { model: "base-model" } });
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
@@ -1468,6 +1443,7 @@ test("auto-title bypasses beforeSubmit hooks", async () => {
 test("auto-title merges request defaults with live title options", async () => {
 	const storage = new MemoryStorage();
 	let titleOptions: RequestOptions = {};
+	let titleInstructions: string | undefined;
 	let releaseStream!: () => void;
 	const streamReleased = new Promise<void>((resolve) => {
 		releaseStream = resolve;
@@ -1477,40 +1453,44 @@ test("auto-title merges request defaults with live title options", async () => {
 		streamStarted = resolve;
 	});
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			_signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			streamStarted();
 			await streamReleased;
 			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
 			onEvent({ type: "finish", reason: "stop" });
 		},
-		async generateTitle(_messages: Message[], options?: RequestOptions): Promise<string> {
-			titleOptions = options ?? {};
+		async generateTitle(request): Promise<string> {
+			titleOptions = request.options;
+			titleInstructions = request.instructions;
 			return "Smart Title";
 		},
 	};
 	const engine = new ChatEngine({ provider, storage });
 	engine.setRequestDefaults({
-		model: "base-model",
-		systemPrompt: "chat instructions",
-		temperature: 0.7,
-		max_tokens: 100,
+		instructions: "chat instructions",
+		options: {
+			model: "base-model",
+			temperature: 0.7,
+			max_tokens: 100,
+		},
 	});
 	engine.setTitleOptions({ model: "stale-title-model", max_tokens: 12 });
 
 	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await streamStartedPromise;
-	engine.setTitleOptions({ model: "title-model", max_tokens: undefined });
+	engine.setTitleOptions({
+		model: "title-model",
+		max_tokens: undefined,
+		providerFlag: "custom title passthrough",
+	});
+	engine.setTitleInstructions("title instructions");
 	releaseStream();
 	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
 
+	assert.equal(titleInstructions, "title instructions");
 	assert.equal(titleOptions.model, "title-model");
-	assert.equal(titleOptions.systemPrompt, undefined);
+	assert.equal(titleOptions.providerFlag, "custom title passthrough");
 	assert.equal(titleOptions.temperature, 0.7);
 	assert.equal(titleOptions.max_tokens, 100);
 });
@@ -1547,15 +1527,10 @@ test("deleting the active session lets deletion win over the aborted generation 
 	});
 
 	const provider: ChatProvider = {
-		async streamChat(
-			_messages: Message[],
-			_options: RequestOptions,
-			signal: AbortSignal,
-			onEvent: (event: StreamEvent) => void,
-		): Promise<void> {
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 			streamStarted();
 			await streamReleased;
-			if (signal.aborted) {
+			if (request.signal.aborted) {
 				onEvent({ type: "finish", reason: "aborted" });
 			}
 		},

@@ -1,4 +1,4 @@
-import type { ChatProvider, Message, RequestOptions, StreamEvent } from "../../src/core/types";
+import type { ChatProvider, ChatRequest, StreamEvent } from "../../src/core/types";
 import { uuidv7 } from "../../src/utils/uuid";
 
 const RESPONSES = [
@@ -40,12 +40,7 @@ const FUN_TITLES = [
 ];
 
 export class MockProvider implements ChatProvider {
-	async streamChat(
-		messages: Message[],
-		_options: RequestOptions,
-		signal: AbortSignal,
-		onEvent: (event: StreamEvent) => void,
-	): Promise<void> {
+	async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
 		return new Promise((resolve) => {
 			const messageId = uuidv7();
 			const blockId = uuidv7();
@@ -55,14 +50,14 @@ export class MockProvider implements ChatProvider {
 				message: { id: messageId, role: "assistant", blocks: [] },
 			});
 
-			const responseIndex = messages.filter((message) => message.role === "user").length - 1;
+			const responseIndex = request.messages.filter((message) => message.role === "user").length - 1;
 			const chunks = splitIntoChunks(RESPONSES[Math.max(0, responseIndex) % RESPONSES.length]);
 			let index = 0;
 
 			// Dynamic Speed: Aim for ~1.1 seconds total, capped between 15ms (fast) and 45ms (normal)
 			const intervalMs = Math.max(15, Math.min(45, Math.floor(1100 / chunks.length)));
 			const interval = setInterval(() => {
-				if (signal.aborted) {
+				if (request.signal.aborted) {
 					clearInterval(interval);
 					onEvent({ type: "finish", reason: "aborted" });
 					resolve();
@@ -86,7 +81,7 @@ export class MockProvider implements ChatProvider {
 		});
 	}
 
-	async generateTitle(_messages: Message[], _options?: RequestOptions, _signal?: AbortSignal): Promise<string> {
+	async generateTitle(_request: ChatRequest): Promise<string> {
 		const randomTitle = FUN_TITLES[Math.floor(Math.random() * FUN_TITLES.length)];
 		return new Promise((resolve) => setTimeout(() => resolve(randomTitle), 600));
 	}

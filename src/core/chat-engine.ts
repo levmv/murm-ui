@@ -6,11 +6,12 @@ import { applyStreamEventToState, type StreamReducerEvent } from "./stream-reduc
 import type {
 	ChatPlugin,
 	ChatProvider,
-	ChatRequestParams,
+	ChatRequest,
+	ChatRequestDefaults,
 	ChatState,
 	ChatStorage,
 	Message,
-	ReadonlyChatRequestParams,
+	ReadonlyChatRequest,
 	RequestOptions,
 } from "./types";
 
@@ -19,6 +20,7 @@ export interface ChatEngineConfig {
 	storage: ChatStorage;
 	initialSessionId?: string | null;
 	titleOptions?: Partial<RequestOptions>;
+	titleInstructions?: string;
 }
 
 interface ActiveGeneration {
@@ -26,7 +28,7 @@ interface ActiveGeneration {
 	sessionId: string;
 	controller: AbortController;
 	provider: ChatProvider;
-	requestDefaults: Partial<RequestOptions>;
+	requestDefaults: ChatRequestDefaults;
 }
 
 export class ChatEngine {
@@ -36,15 +38,17 @@ export class ChatEngine {
 
 	private provider: ChatProvider;
 	private plugins: ChatPlugin[] = [];
-	private requestDefaults: Partial<RequestOptions> = {};
+	private requestDefaults: ChatRequestDefaults = { options: {} };
 	private titleOptions: Partial<RequestOptions> = {};
+	private titleInstructions?: string;
 	private activeGeneration: ActiveGeneration | null = null;
 	private autoTitleControllers = new Set<AbortController>();
 	private isDestroyed = false;
 
 	constructor(config: ChatEngineConfig) {
 		this.provider = config.provider;
-		this.titleOptions = this.withoutUndefinedOptions(config.titleOptions ?? {});
+		this.titleOptions = this.mergeDefinedOptions({}, config.titleOptions ?? {});
+		this.titleInstructions = config.titleInstructions;
 
 		const startingId = config.initialSessionId || uuidv7();
 
@@ -173,14 +177,23 @@ export class ChatEngine {
 	}
 
 	/**
-	 * Sets global default options (e.g., systemPrompt, temperature) for all outgoing requests.
+	 * Sets global default request parameters for outgoing chat requests.
+	 * `instructions` and `tools` are request-level model inputs; `options` are provider options.
 	 */
-	public setRequestDefaults(defaults: Partial<RequestOptions>) {
-		this.requestDefaults = { ...this.requestDefaults, ...defaults };
+	public setRequestDefaults(defaults: Partial<ChatRequestDefaults>) {
+		this.requestDefaults = {
+			...this.requestDefaults,
+			...defaults,
+			options: this.mergeDefinedOptions(this.requestDefaults.options ?? {}, defaults.options ?? {}),
+		};
 	}
 
 	public setTitleOptions(options: Partial<RequestOptions>) {
 		this.titleOptions = this.mergeDefinedOptions(this.titleOptions, options);
+	}
+
+	public setTitleInstructions(instructions: string | undefined) {
+		this.titleInstructions = instructions;
 	}
 
 	public async stopGeneration() {
@@ -213,7 +226,7 @@ export class ChatEngine {
 			sessionId,
 			controller,
 			provider,
-			requestDefaults: { ...this.requestDefaults },
+			requestDefaults: this.cloneRequestDefaults(),
 		};
 
 		// Instantly create an empty assistant message so the UI shows a loading state
@@ -240,18 +253,7 @@ export class ChatEngine {
 				return;
 			}
 
-			if (payloadParams.options.systemPrompt) {
-				payloadParams.messages = [
-					{
-						id: uuidv7(),
-						role: "system",
-						blocks: [{ id: uuidv7(), type: "text", text: payloadParams.options.systemPrompt }],
-					},
-					...payloadParams.messages,
-				];
-			}
-
-			await provider.streamChat(payloadParams.messages, payloadParams.options, signal, (event) => {
+			await provider.streamChat(payloadParams, (event) => {
 				if (signal.aborted) return;
 				if (event.type === "finish" && event.reason === "aborted") {
 					wasAborted = true;
@@ -290,11 +292,13 @@ export class ChatEngine {
 	private async prepareRequestParams(
 		messages: Message[],
 		signal: AbortSignal,
-		requestDefaults: Partial<RequestOptions> = this.requestDefaults,
-	): Promise<ChatRequestParams> {
-		const payloadParams: ChatRequestParams = {
+		requestDefaults: ChatRequestDefaults = this.requestDefaults,
+	): Promise<ChatRequest> {
+		const payloadParams: ChatRequest = {
 			messages: [...messages],
-			options: { ...requestDefaults },
+			instructions: requestDefaults.instructions,
+			tools: requestDefaults.tools ? [...requestDefaults.tools] : undefined,
+			options: { ...requestDefaults.options },
 			signal,
 		};
 
@@ -302,17 +306,27 @@ export class ChatEngine {
 			if (signal.aborted) return payloadParams;
 
 			if (plugin.beforeSubmit) {
-				const params: ReadonlyChatRequestParams = {
+				const request: ReadonlyChatRequest = {
 					messages: [...payloadParams.messages],
+					instructions: payloadParams.instructions,
+					tools: payloadParams.tools ? [...payloadParams.tools] : undefined,
 					options: { ...payloadParams.options },
 					signal,
 				};
-				const patch = await plugin.beforeSubmit(params);
+				const patch = await plugin.beforeSubmit(request);
 				if (signal.aborted) return payloadParams;
 
 				if (patch) {
 					if (patch.messages) payloadParams.messages = patch.messages;
-					if (patch.options) payloadParams.options = { ...payloadParams.options, ...patch.options };
+					if (Object.hasOwn(patch, "instructions")) {
+						payloadParams.instructions = patch.instructions;
+					}
+					if (Object.hasOwn(patch, "tools")) {
+						payloadParams.tools = patch.tools ? [...patch.tools] : undefined;
+					}
+					if (patch.options) {
+						payloadParams.options = this.mergeDefinedOptions(payloadParams.options, patch.options) as RequestOptions;
+					}
 				}
 			}
 		}
@@ -381,7 +395,7 @@ export class ChatEngine {
 		sessionId: string,
 		messages: Message[],
 		provider: ChatProvider,
-		requestDefaults: Partial<RequestOptions>,
+		requestDefaults: ChatRequestDefaults,
 	) {
 		if (this.isDestroyed || this.sessionManager.isDeleted(sessionId)) return;
 
@@ -390,11 +404,15 @@ export class ChatEngine {
 
 		try {
 			const payloadMessages = dropEphemeralMessages(messages);
-			const titleRequestDefaults = { ...requestDefaults };
-			delete titleRequestDefaults.systemPrompt;
-			const payloadOptions = { ...titleRequestDefaults, ...this.titleOptions };
+			const payloadOptions = { ...requestDefaults.options, ...this.titleOptions };
+			const titleRequest: ChatRequest = {
+				messages: payloadMessages,
+				instructions: this.titleInstructions,
+				options: payloadOptions,
+				signal: controller.signal,
+			};
 
-			const smartTitle = await provider.generateTitle!(payloadMessages, payloadOptions, controller.signal);
+			const smartTitle = await provider.generateTitle!(titleRequest);
 			if (!smartTitle) return;
 			if (controller.signal.aborted || this.isDestroyed || this.sessionManager.isDeleted(sessionId)) return;
 
@@ -426,7 +444,11 @@ export class ChatEngine {
 		return next;
 	}
 
-	private withoutUndefinedOptions(options: Partial<RequestOptions>): Partial<RequestOptions> {
-		return this.mergeDefinedOptions({}, options);
+	private cloneRequestDefaults(defaults: ChatRequestDefaults = this.requestDefaults): ChatRequestDefaults {
+		return {
+			instructions: defaults.instructions,
+			tools: defaults.tools ? [...defaults.tools] : undefined,
+			options: { ...defaults.options },
+		};
 	}
 }
