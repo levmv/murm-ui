@@ -141,6 +141,34 @@ test("SettingsPlugin modal exposes useful names for assistive tech", async () =>
 	plugin.destroy?.();
 });
 
+test("SettingsPlugin modal supports custom placeholders", async () => {
+	const container = installDom();
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: () => {},
+		setTitleOptions: () => {},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin({
+		endpointPlaceholder: "https://provider.example/v1/chat/completions",
+		apiKeyPlaceholder: "Provider API key",
+		modelPlaceholder: "provider-model-name",
+	});
+
+	plugin.onMount?.({ engine, container });
+
+	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
+	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
+
+	assert.equal(
+		(container.querySelector(".mur-set-endpoint") as HTMLInputElement).placeholder,
+		"https://provider.example/v1/chat/completions",
+	);
+	assert.equal((container.querySelector(".mur-set-apikey") as HTMLInputElement).placeholder, "Provider API key");
+	assert.equal((container.querySelector(".mur-set-model") as HTMLInputElement).placeholder, "provider-model-name");
+
+	plugin.destroy?.();
+});
+
 test("SettingsPlugin custom trigger selector is scoped to the chat container by default", async () => {
 	const container = installDom();
 	const outsideTrigger = document.createElement("button");

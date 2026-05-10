@@ -22,6 +22,11 @@ export interface SettingsPluginConfig {
 	defaultModel?: string;
 	defaultTitleModel?: string;
 	defaultSystemPrompt?: string;
+	endpointPlaceholder?: string;
+	apiKeyPlaceholder?: string;
+	modelPlaceholder?: string;
+	titleModelPlaceholder?: string;
+	systemPromptPlaceholder?: string;
 	storage?: SettingsStorage;
 
 	/**
@@ -131,6 +136,11 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		const overlay = el("div", "mur-settings-overlay");
 		const idPrefix = `mur-settings-${++nextSettingsModalId}`;
 		const id = (suffix: string) => `${idPrefix}-${suffix}`;
+		const endpointPlaceholder = escapeAttr(config?.endpointPlaceholder || "https://api.openai.com/v1/chat/completions");
+		const apiKeyPlaceholder = escapeAttr(config?.apiKeyPlaceholder || "sk-...");
+		const modelPlaceholder = escapeAttr(config?.modelPlaceholder || "gpt-4o-mini");
+		const titleModelPlaceholder = escapeAttr(config?.titleModelPlaceholder || "Use chat model");
+		const systemPromptPlaceholder = escapeAttr(config?.systemPromptPlaceholder || "You are a helpful assistant...");
 
 		const modal = el("div", "mur-settings-modal", {
 			innerHTML: `
@@ -141,25 +151,25 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 				<div class="mur-settings-body">
 					<div class="mur-settings-group">
 						<label for="${id("endpoint")}">API Endpoint</label>
-						<input id="${id("endpoint")}" type="text" class="mur-set-endpoint" placeholder="https://api.openai.com/v1/chat/completions" />
+						<input id="${id("endpoint")}" type="text" class="mur-set-endpoint" placeholder="${endpointPlaceholder}" />
 						<div class="mur-settings-hint">Compatible with OpenAI, OpenRouter, LMStudio, Ollama, etc.</div>
 					</div>
 					<div class="mur-settings-group">
 						<label for="${id("apikey")}">API Key</label>
-						<input id="${id("apikey")}" type="password" class="mur-set-apikey" placeholder="sk-..." />
+						<input id="${id("apikey")}" type="password" class="mur-set-apikey" placeholder="${apiKeyPlaceholder}" />
 						<div class="mur-settings-hint">Stored in this browser. Shared deployments usually use a backend proxy.</div>
 					</div>
 					<div class="mur-settings-group">
 						<label for="${id("model")}">Model Name</label>
-						<input id="${id("model")}" type="text" class="mur-set-model" placeholder="gpt-4o-mini" />
+						<input id="${id("model")}" type="text" class="mur-set-model" placeholder="${modelPlaceholder}" />
 					</div>
 					<div class="mur-settings-group">
 						<label for="${id("title-model")}">Title Model</label>
-						<input id="${id("title-model")}" type="text" class="mur-set-title-model" placeholder="Use chat model" />
+						<input id="${id("title-model")}" type="text" class="mur-set-title-model" placeholder="${titleModelPlaceholder}" />
 					</div>
 					<div class="mur-settings-group">
 						<label for="${id("sysprompt")}">System Prompt</label>
-						<textarea id="${id("sysprompt")}" class="mur-set-sysprompt" rows="3" placeholder="You are a helpful assistant..."></textarea>
+						<textarea id="${id("sysprompt")}" class="mur-set-sysprompt" rows="3" placeholder="${systemPromptPlaceholder}"></textarea>
 					</div>
 				</div>
 				<div class="mur-settings-footer">
@@ -340,4 +350,8 @@ function validateRequiredSettings(
 	}
 
 	return null;
+}
+
+function escapeAttr(value: string): string {
+	return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

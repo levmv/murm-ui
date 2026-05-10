@@ -3,40 +3,49 @@ import { uuidv7 } from "../../src/utils/uuid";
 
 const RESPONSES = [
 	[
-		"Hello! I am the local demo provider for Murm UI. 🚀",
+		"Hello! I am the built-in mock provider for the Murm UI demo.",
 		"",
-		"Try sending a few messages, editing your prompt, attaching a small text file, or copying this response. Everything here runs entirely in your browser, so no API keys were harmed in the making of this demo.",
+		"This mode is intentionally local: no network request is made, and no API key is needed. You can still try the core chat interactions: send a few messages, edit a prompt, attach a small text file, copy a response, or open Settings to connect a real provider.",
 	].join("\n"),
 	[
-		"Notice how snappy this feels? That is the beauty of vanilla TypeScript.",
+		"Murm UI is built as a small vanilla TypeScript chat shell.",
 		"",
-		"Because there is no virtual DOM diffing, the UI just updates the exact nodes it needs to using reference-based DOM updates. It is designed to keep your laptop fan quiet, even if I stream a massive wall of text at you.",
+		"This answer streams in small chunks so you can see loading states, scroll behavior, stop handling, and incremental rendering without waiting on a real model. The mock is simple, but the UI path is the same one used by a real ChatProvider.",
 	].join("\n"),
 	[
-		"I also handle markdown parsing right out of the box. I can do **bold text**, *italics*, and even tables:",
+		"Markdown should feel native in the message feed. Murm UI renders **bold text**, *italics*, tables, and fenced code blocks:",
 		"",
-		"| Feature | Status |",
+		"| Markdown feature | Demo status |",
 		"| :--- | :--- |",
-		"| Dependencies | Minimal |",
-		"| Overhead | Low |",
-		"| Vibes | Immaculate |",
+		"| Tables | Rendered inline |",
+		"| Code fences | Highlighted by language |",
+		"| Plain text | Escaped safely |",
 		"",
-		"And of course, code blocks render cleanly. Murm UI ships a built-in highlighter for syntax colors.",
+		"```ts",
+		"const ui = new ChatUI({",
+		'  container: ".mur-app",',
+		"  provider,",
+		"  storage,",
+		"  highlighter: highlight,",
+		"});",
+		"```",
+		"",
+		"The code block above goes through the built-in highlighter, so language-tagged snippets can get readable syntax colors out of the box.",
 	].join("\n"),
 	[
-		"Ultimately, Murm UI just wants to be a boring, reliable chat shell.",
+		"Under the hood, Murm UI keeps the chat UI separate from your model transport.",
 		"",
-		"You bring your own backend, plug in your AI model, and let the UI handle the messy streaming states and scroll locking. Feel free to poke around the source code, or just keep chatting with me!",
+		"Bring a provider for your API, pair it with storage you control, and the shell handles session history, streaming updates, attachments, message actions, and the small UI states that make chat apps feel polished.",
 	].join("\n"),
 ];
 
 const FUN_TITLES = [
-	"Existential AI Crisis",
 	"Zero-Framework Vibes",
-	"Vanilla JS Renaissance",
 	"Look Ma, No React!",
+	"Markdown Mischief",
+	"Streaming Shenanigans",
+	"API Key Side Quest",
 	"Div Soup Avoided",
-	"Just Chillin' Locally",
 ];
 
 export class MockProvider implements ChatProvider {
