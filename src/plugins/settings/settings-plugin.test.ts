@@ -286,6 +286,115 @@ test("SettingsPlugin loads and saves through a custom storage adapter", async ()
 	});
 });
 
+test("SettingsPlugin ignores stale initial storage load after a user save", async () => {
+	const container = installDom();
+	const provider: ChatProvider = {
+		async streamChat(): Promise<void> {},
+	};
+	let resolveGet!: (settings: Partial<SettingsState> | null) => void;
+	const getPromise = new Promise<Partial<SettingsState> | null>((resolve) => {
+		resolveGet = resolve;
+	});
+	const savedStates: SettingsState[] = [];
+	const storage: SettingsStorage = {
+		async get() {
+			return await getPromise;
+		},
+		async set(state) {
+			savedStates.push({ ...state });
+		},
+	};
+	const providerSettings: SettingsState[] = [];
+	const requestDefaults: Partial<ChatRequestDefaults>[] = [];
+	const titleOptionCalls: Partial<RequestOptions>[] = [];
+	const engine = {
+		setProvider: () => {},
+		setRequestDefaults: (defaults: Partial<ChatRequestDefaults>) => {
+			requestDefaults.push(defaults);
+		},
+		setTitleOptions: (options: Partial<RequestOptions>) => {
+			titleOptionCalls.push(options);
+		},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin({
+		storage,
+		createProvider: (settings) => {
+			providerSettings.push({ ...settings });
+			return provider;
+		},
+	});
+
+	plugin.onMount?.({ engine, container });
+	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
+
+	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
+	(container.querySelector(".mur-set-model") as HTMLInputElement).value = "saved-model";
+	(container.querySelector(".mur-set-title-model") as HTMLInputElement).value = "saved-title";
+	(container.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value = "saved prompt";
+	(container.querySelector(".mur-set-save-btn") as HTMLButtonElement).click();
+
+	await waitFor(() => titleOptionCalls.length === 1, "saved settings apply");
+	resolveGet({ model: "stored-model", titleModel: "stored-title", systemPrompt: "stored prompt" });
+	await getPromise;
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.deepEqual(
+		savedStates.map((state) => state.model),
+		["saved-model"],
+	);
+	assert.deepEqual(
+		providerSettings.map((settings) => settings.model),
+		["saved-model"],
+	);
+	assert.deepEqual(requestDefaults.at(-1), { instructions: "saved prompt" });
+	assert.deepEqual(titleOptionCalls.at(-1), { model: "saved-title" });
+});
+
+test("SettingsPlugin waits for provider swaps before applying request defaults", async () => {
+	const container = installDom();
+	const provider: ChatProvider = {
+		async streamChat(): Promise<void> {},
+	};
+	let releaseProvider!: () => void;
+	const providerReleased = new Promise<void>((resolve) => {
+		releaseProvider = resolve;
+	});
+	const calls: string[] = [];
+	const engine = {
+		async setProvider() {
+			calls.push("provider:start");
+			await providerReleased;
+			calls.push("provider:end");
+		},
+		setRequestDefaults: () => {
+			calls.push("defaults");
+		},
+		setTitleOptions: () => {
+			calls.push("title");
+		},
+	} as unknown as ChatEngine;
+	const plugin = SettingsPlugin({
+		storage: {
+			async get() {
+				return null;
+			},
+			async set() {},
+		},
+		createProvider: () => provider,
+	});
+
+	plugin.onMount?.({ engine, container });
+
+	await waitFor(() => calls.includes("provider:start"), "provider swap start");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.deepEqual(calls, ["provider:start"]);
+
+	releaseProvider();
+	await waitFor(() => calls.includes("title"), "settings apply after provider swap");
+
+	assert.deepEqual(calls, ["provider:start", "provider:end", "defaults", "title"]);
+});
+
 test("SettingsPlugin falls back to defaults when storage load fails", async () => {
 	const container = installDom();
 	const warnings = captureWarnings();

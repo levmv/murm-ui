@@ -26,12 +26,12 @@ export class AppRouter {
 		if (this.type === "path") {
 			const path = window.location.pathname;
 			if (path.startsWith(this.prefix)) {
-				return path.slice(this.prefix.length);
+				return this.decodeId(path.slice(this.prefix.length));
 			}
 		} else if (this.type === "hash") {
 			const hash = window.location.hash;
 			if (hash.startsWith(this.prefix)) {
-				return hash.slice(this.prefix.length);
+				return this.decodeId(hash.slice(this.prefix.length));
 			}
 		}
 		return null;
@@ -39,7 +39,7 @@ export class AppRouter {
 
 	public hrefFor(id: string): string {
 		if (this.type === "none") return "#";
-		return `${this.prefix}${id}`;
+		return `${this.prefix}${encodeURIComponent(id)}`;
 	}
 
 	public setUrl(id: string | null, replace = false) {
@@ -48,7 +48,7 @@ export class AppRouter {
 		const currentId = this.getId();
 		if (currentId === id) return;
 
-		const newUrl = id ? `${this.prefix}${id}` : this.type === "path" ? "/" : "#/";
+		const newUrl = id ? this.hrefFor(id) : this.emptyUrl();
 
 		if (replace) {
 			history.replaceState(null, "", newUrl);
@@ -79,5 +79,33 @@ export class AppRouter {
 
 	private eventTypes(): ("hashchange" | "popstate")[] {
 		return this.type === "hash" ? ["hashchange", "popstate"] : ["popstate"];
+	}
+
+	private decodeId(value: string): string | null {
+		try {
+			return decodeURIComponent(value);
+		} catch {
+			return null;
+		}
+	}
+
+	private emptyUrl(): string {
+		if (this.type === "hash") return this.emptyHashUrl();
+		return this.emptyPathUrl();
+	}
+
+	private emptyPathUrl(): string {
+		const trimmed = this.prefix.endsWith("/") ? this.prefix.slice(0, -1) : this.prefix;
+		const slashIndex = trimmed.lastIndexOf("/");
+		if (slashIndex <= 0) return "/";
+		return `${trimmed.slice(0, slashIndex)}/`;
+	}
+
+	private emptyHashUrl(): string {
+		const hashPath = this.prefix.startsWith("#") ? this.prefix.slice(1) : this.prefix;
+		const trimmed = hashPath.endsWith("/") ? hashPath.slice(0, -1) : hashPath;
+		const slashIndex = trimmed.lastIndexOf("/");
+		if (slashIndex <= 0) return "#/";
+		return `#${trimmed.slice(0, slashIndex)}/`;
 	}
 }

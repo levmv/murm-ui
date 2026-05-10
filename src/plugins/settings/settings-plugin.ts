@@ -66,21 +66,29 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 	let mountedTriggerEl: Element | null = null;
 	let mountedTriggerHandler: (() => void) | null = null;
 	let appliedProviderSettings: Pick<SettingsState, "apiKey" | "endpoint" | "model"> | null = null;
+	let settingsRevision = 0;
+	let destroyed = false;
 
 	const storage = config?.storage ?? defaultLocalStorageSettingsStorage;
 	const buildProvider = config?.createProvider ?? ((s) => new OpenAIProvider(s.apiKey, s.endpoint, s.model));
 
 	async function loadInitialSettings(ctx: PluginContext) {
+		const loadRevision = settingsRevision;
+		let settings: SettingsState;
 		try {
 			const saved = await storage.get();
-			applySettings(ctx, { ...defaults, ...(saved ?? {}) }, false);
+			settings = { ...defaults, ...(saved ?? {}) };
 		} catch (error) {
 			console.warn("SettingsPlugin: Could not read settings from storage.", error);
-			applySettings(ctx, { ...defaults }, false);
+			settings = { ...defaults };
 		}
+		if (destroyed || settingsRevision !== loadRevision) return;
+		await applySettings(ctx, settings, false);
 	}
 
-	function applySettings(ctx: PluginContext, settings: SettingsState, persist = true) {
+	async function applySettings(ctx: PluginContext, settings: SettingsState, persist = true) {
+		if (destroyed) return;
+		const applyRevision = ++settingsRevision;
 		currentSettings = settings;
 		if (persist) {
 			try {
@@ -104,7 +112,8 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 			appliedProviderSettings.apiKey !== providerSettings.apiKey ||
 			appliedProviderSettings.model !== providerSettings.model
 		) {
-			ctx.engine.setProvider(buildProvider(settings));
+			await ctx.engine.setProvider(buildProvider(settings));
+			if (destroyed || settingsRevision !== applyRevision) return;
 			appliedProviderSettings = providerSettings;
 		}
 
@@ -228,7 +237,9 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 				titleModel: (modal.querySelector(".mur-set-title-model") as HTMLInputElement).value.trim(),
 				systemPrompt: (modal.querySelector(".mur-set-sysprompt") as HTMLTextAreaElement).value.trim(),
 			};
-			applySettings(ctx, newSettings);
+			void applySettings(ctx, newSettings).catch((error) => {
+				console.warn("SettingsPlugin: Could not apply settings.", error);
+			});
 			close();
 		});
 
@@ -242,7 +253,10 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		name: "settings",
 
 		onMount: (ctx) => {
-			void loadInitialSettings(ctx);
+			destroyed = false;
+			void loadInitialSettings(ctx).catch((error) => {
+				console.warn("SettingsPlugin: Could not apply initial settings.", error);
+			});
 
 			const openModal = () => {
 				if (!modalOverlay) {
@@ -279,6 +293,8 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 		},
 
 		destroy: () => {
+			destroyed = true;
+			settingsRevision++;
 			if (mountedTriggerEl && mountedTriggerHandler) {
 				mountedTriggerEl.removeEventListener("click", mountedTriggerHandler);
 			}
