@@ -1,5 +1,5 @@
 .mur-message {
-	max-width: 85%;
+	max-width: 100%;
 	line-height: 1.6;
 	word-wrap: break-word;
 	overflow-wrap: break-word;
@@ -9,6 +9,7 @@
 
 .mur-message.mur-message-user {
 	align-self: flex-end;
+	max-width: var(--mur-user-message-max-width);
 }
 
 .mur-message.mur-message-assistant {

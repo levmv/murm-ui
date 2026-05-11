@@ -1,6 +1,6 @@
 .mur-chat-form {
 	width: 100%;
-	max-width: 768px;
+	max-width: var(--mur-chat-form-width);
 	pointer-events: auto;
 	border: 1px solid var(--mur-border);
 	border-radius: 24px;
@@ -14,6 +14,23 @@
 	transition:
 		box-shadow 0.2s ease,
 		border-color 0.2s ease;
+}
+
+.mur-chat-form-note {
+	width: 100%;
+	max-width: var(--mur-chat-form-width);
+	padding: 0 0.5rem;
+	color: var(--mur-text-muted);
+	font-size: 0.75rem;
+	line-height: 1.35;
+	text-align: center;
+	pointer-events: auto;
+}
+
+.mur-chat-form-note a {
+	color: inherit;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 
 .mur-app.mur-chat-empty .mur-chat-form-container {
