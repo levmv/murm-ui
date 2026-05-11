@@ -56,6 +56,11 @@ class MemoryStorage implements ChatStorage {
 	}
 }
 
+interface ShellOptions {
+	includeHeaderTitle?: boolean;
+	includeOpenSidebarButton?: boolean;
+}
+
 function setGlobal(name: string, value: unknown): void {
 	Object.defineProperty(globalThis, name, {
 		configurable: true,
@@ -64,8 +69,8 @@ function setGlobal(name: string, value: unknown): void {
 	});
 }
 
-function installDom(url = "https://example.test/"): HTMLElement {
-	const dom = new JSDOM(renderShell(), {
+function installDom(url = "https://example.test/", shellOptions: ShellOptions = {}): HTMLElement {
+	const dom = new JSDOM(renderShell(shellOptions), {
 		pretendToBeVisual: true,
 		url,
 	});
@@ -118,7 +123,10 @@ function installDom(url = "https://example.test/"): HTMLElement {
 	return dom.window.document.querySelector(".mur-app") as HTMLElement;
 }
 
-function renderShell(): string {
+function renderShell(options: ShellOptions = {}): string {
+	const includeHeaderTitle = options.includeHeaderTitle ?? true;
+	const includeOpenSidebarButton = options.includeOpenSidebarButton ?? true;
+
 	return `
 		<div class="mur-app">
 			<aside class="mur-sidebar">
@@ -133,8 +141,8 @@ function renderShell(): string {
 			</aside>
 			<main class="mur-main-area">
 				<header class="mur-main-header">
-					<button type="button" class="mur-open-sidebar-btn">Open</button>
-					<h2 class="mur-header-title">New Chat</h2>
+					${includeOpenSidebarButton ? '<button type="button" class="mur-open-sidebar-btn">Open</button>' : ""}
+					${includeHeaderTitle ? '<h2 class="mur-header-title">New Chat</h2>' : ""}
 				</header>
 				<div class="mur-chat-layout-wrapper">
 					<div class="mur-chat-scroll-area">
@@ -446,6 +454,67 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.state.currentSessionId, previousSessionId);
+
+	await ui.destroy();
+});
+
+test("ChatUI supports headers without visible titles while syncing the window title", async () => {
+	const container = installDom("https://example.test/", { includeHeaderTitle: false });
+	const { ChatUI } = await import("./main");
+	const storage = new MemoryStorage([
+		{
+			id: "chat-1",
+			title: "Stored Chat",
+			updatedAt: 100,
+			messages: [textMessage("msg-1", "user", "stored")],
+		},
+	]);
+
+	const provider: ChatProvider = {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+
+	const ui = new ChatUI({
+		container,
+		provider,
+		routing: false,
+		storage,
+		updateWindowTitle: (title) => `Murm: ${title}`,
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
+	assert.equal(container.querySelector(".mur-header-title"), null);
+	assert.equal(document.title, "Murm: New Chat");
+
+	(container.querySelector(".mur-sidebar-item-link") as HTMLAnchorElement).click();
+	await waitFor(() => ui.engine.state.currentSessionId === "chat-1", "stored session selection");
+
+	assert.equal(document.title, "Murm: Stored Chat");
+
+	await ui.destroy();
+});
+
+test("ChatUI does not require the sidebar opener when the sidebar is disabled", async () => {
+	const container = installDom("https://example.test/", { includeOpenSidebarButton: false });
+	const { ChatUI } = await import("./main");
+
+	const ui = new ChatUI({
+		container,
+		enableSidebar: false,
+		provider: {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		routing: false,
+		storage: new MemoryStorage(),
+	});
+
+	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
+
+	assert.equal(container.querySelector(".mur-open-sidebar-btn"), null);
 
 	await ui.destroy();
 });

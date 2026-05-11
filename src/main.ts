@@ -1,4 +1,5 @@
 import { Feed } from "./components/feed";
+import { Header } from "./components/header";
 import { Input } from "./components/input";
 import { type DeleteConfirmation, Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
 import { ChatEngine } from "./core/chat-engine";
@@ -44,25 +45,21 @@ export class ChatUI {
 
 	private inputComponent!: Input;
 	private feedComponent!: Feed;
+	private headerComponent!: Header;
 	private sidebarComponent?: Sidebar;
 	private plugins: ChatPlugin[] = [];
 	private inputDrafts = new Map<string, string>();
+	private unsubscribeWindowTitle: () => void = () => {};
 
 	private elements!: {
 		mainArea: HTMLElement;
 		sidebarEl: HTMLElement;
-		openSidebarBtn: HTMLButtonElement;
-		headerTitle: HTMLElement;
 		globalError: HTMLElement;
 		globalErrorText: HTMLElement;
 		globalErrorCloseBtn: HTMLButtonElement;
 	};
 
 	private onMainAreaClickBound = () => this.closeSidebar(true);
-	private onOpenSidebarBound = (e: MouseEvent) => {
-		e.stopPropagation();
-		this.openSidebar();
-	};
 	private onGlobalErrorCloseBound = (e: MouseEvent) => {
 		e.stopPropagation();
 		this.engine.clearError();
@@ -104,12 +101,13 @@ export class ChatUI {
 
 	public async destroy() {
 		this.router.destroy();
+		this.unsubscribeWindowTitle();
+		this.headerComponent.destroy();
 		await this.engine.destroy();
 
 		this.elements.globalErrorCloseBtn.removeEventListener("click", this.onGlobalErrorCloseBound);
 
 		if (this.config.enableSidebar) {
-			this.elements.openSidebarBtn.removeEventListener("click", this.onOpenSidebarBound);
 			this.elements.mainArea.removeEventListener("click", this.onMainAreaClickBound);
 		}
 
@@ -127,11 +125,14 @@ export class ChatUI {
 		this.plugins = this.config.plugins ? this.config.plugins(this.engine) : [];
 		this.engine.registerPlugins(this.plugins);
 
-		const mainHeader = queryOrThrow<HTMLElement>(this.container, ".mur-main-header");
-
 		this.elements = {} as typeof this.elements;
 		this.elements.mainArea = queryOrThrow<HTMLElement>(this.container, ".mur-main-area");
-		this.elements.headerTitle = queryOrThrow<HTMLElement>(mainHeader, ".mur-header-title");
+		this.headerComponent = new Header({
+			container: this.container,
+			engine: this.engine,
+			enableSidebar: Boolean(this.config.enableSidebar),
+			onOpenSidebar: () => this.openSidebar(),
+		});
 		this.elements.globalErrorText = el("span", "mur-global-error-text");
 		this.elements.globalErrorCloseBtn = el("button", "mur-global-error-close", {
 			type: "button",
@@ -177,7 +178,6 @@ export class ChatUI {
 
 		if (this.config.enableSidebar) {
 			this.elements.sidebarEl = queryOrThrow<HTMLElement>(this.container, ".mur-sidebar");
-			this.elements.openSidebarBtn = queryOrThrow<HTMLButtonElement>(mainHeader, ".mur-open-sidebar-btn");
 
 			this.sidebarComponent = new Sidebar({
 				container: this.container,
@@ -219,7 +219,6 @@ export class ChatUI {
 		this.elements.globalErrorCloseBtn.addEventListener("click", this.onGlobalErrorCloseBound);
 
 		if (this.config.enableSidebar) {
-			this.elements.openSidebarBtn.addEventListener("click", this.onOpenSidebarBound);
 			this.elements.mainArea.addEventListener("click", this.onMainAreaClickBound);
 		}
 
@@ -230,6 +229,13 @@ export class ChatUI {
 				void this.engine.sessions.create();
 			}
 		});
+
+		if (this.config.updateWindowTitle) {
+			this.unsubscribeWindowTitle = this.engine.subscribe(
+				(state) => state.sessions.find((session) => session.id === state.currentSessionId)?.title ?? "New Chat",
+				(title) => this.syncWindowTitle(title),
+			);
+		}
 
 		this.engine.subscribe(
 			(state) => state.sessions,
@@ -243,7 +249,6 @@ export class ChatUI {
 						state.isLoadingSessions,
 					);
 				}
-				this.updateHeaderTitle();
 			},
 		);
 
@@ -269,7 +274,6 @@ export class ChatUI {
 					this.sidebarComponent.setActiveSession(currentSessionId);
 				}
 				this.syncRouterToState();
-				this.updateHeaderTitle();
 			},
 		);
 
@@ -340,6 +344,12 @@ export class ChatUI {
 		this.renderGlobalError(this.engine.state.error);
 	}
 
+	private syncWindowTitle(title: string) {
+		if (!this.config.updateWindowTitle) return;
+
+		document.title = typeof this.config.updateWindowTitle === "function" ? this.config.updateWindowTitle(title) : title;
+	}
+
 	private renderGlobalError(error: { message: string; id?: string } | null) {
 		if (!error || error.id) {
 			this.elements.globalError.hidden = true;
@@ -349,19 +359,6 @@ export class ChatUI {
 
 		this.elements.globalErrorText.textContent = error.message;
 		this.elements.globalError.hidden = false;
-	}
-
-	private updateHeaderTitle() {
-		const state = this.engine.state;
-		const activeSession = state.sessions.find((s) => s.id === state.currentSessionId);
-		const titleText = activeSession ? activeSession.title : "New Chat";
-
-		this.elements.headerTitle.textContent = titleText;
-
-		if (this.config.updateWindowTitle) {
-			document.title =
-				typeof this.config.updateWindowTitle === "function" ? this.config.updateWindowTitle(titleText) : titleText;
-		}
 	}
 
 	private syncRouterToState() {

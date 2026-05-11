@@ -54,6 +54,8 @@ npm install murm-ui
 </div>
 ```
 
+The `.mur-header-title` element is optional. Omit it when your app does not want a visible in-app chat title; `updateWindowTitle` can still sync the browser title.
+
 For a complete static shell, see `docs/demo/index.html`.
 
 <h2 id="css">CSS</h2>
