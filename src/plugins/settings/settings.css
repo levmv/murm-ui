@@ -116,3 +116,25 @@
 	display: flex;
 	justify-content: flex-end;
 }
+
+.mur-set-save-btn {
+	width: auto;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.6rem 1rem;
+	background-color: var(--mur-bg);
+	color: var(--mur-text);
+	border: 1px solid var(--mur-border);
+	border-radius: 0.5rem;
+	box-shadow: var(--mur-shadow-button);
+	cursor: pointer;
+	font-size: 0.95rem;
+	font-weight: 500;
+	transition: background-color 0.2s;
+}
+
+.mur-set-save-btn:hover {
+	background-color: var(--mur-hover-bg);
+}

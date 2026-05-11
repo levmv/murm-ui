@@ -173,7 +173,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 					</div>
 				</div>
 				<div class="mur-settings-footer">
-					<button type="button" class="mur-set-save-btn mur-btn-primary">Save & Apply</button>
+					<button type="button" class="mur-set-save-btn">Save & Apply</button>
 				</div>
 			`,
 		});
@@ -305,9 +305,9 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 
 			const footer = ctx.container.querySelector(".mur-sidebar-footer");
 			if (footer) {
-				const btn = el("button", "mur-settings-btn", {
+				const btn = el("button", "mur-settings-btn mur-sidebar-nav-btn", {
 					title: "Settings",
-					innerHTML: ICON_SETTINGS + ` Settings`,
+					innerHTML: `${ICON_SETTINGS}<span>Settings</span>`,
 				});
 
 				btn.addEventListener("click", openModal);

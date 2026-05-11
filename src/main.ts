@@ -60,6 +60,7 @@ export class ChatUI {
 	};
 
 	private onMainAreaClickBound = () => this.closeSidebar(true);
+	private onSidebarRailClickBound = (event: MouseEvent) => this.handleSidebarRailClick(event);
 	private onGlobalErrorCloseBound = (e: MouseEvent) => {
 		e.stopPropagation();
 		this.engine.clearError();
@@ -109,6 +110,7 @@ export class ChatUI {
 
 		if (this.config.enableSidebar) {
 			this.elements.mainArea.removeEventListener("click", this.onMainAreaClickBound);
+			this.elements.sidebarEl.removeEventListener("click", this.onSidebarRailClickBound);
 		}
 
 		for (const plugin of this.plugins) {
@@ -220,6 +222,7 @@ export class ChatUI {
 
 		if (this.config.enableSidebar) {
 			this.elements.mainArea.addEventListener("click", this.onMainAreaClickBound);
+			this.elements.sidebarEl.addEventListener("click", this.onSidebarRailClickBound);
 		}
 
 		this.router.listen((id) => {
@@ -406,6 +409,17 @@ export class ChatUI {
 		this.elements.sidebarEl.classList.add("mur-hidden-desktop");
 		this.container.classList.add("mur-sidebar-closed");
 		lsSetItem("mur_sidebar_closed", "true");
+	}
+
+	private handleSidebarRailClick(event: MouseEvent) {
+		if (window.innerWidth <= 768) return;
+		if (!this.elements.sidebarEl.classList.contains("mur-hidden-desktop")) return;
+
+		const target = event.target;
+		if (!(target instanceof Element)) return;
+		if (target.closest("button, a, input, textarea, select, [role='button']")) return;
+
+		this.openSidebar();
 	}
 }
 

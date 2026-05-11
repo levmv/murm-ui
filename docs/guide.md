@@ -23,9 +23,10 @@ npm install murm-ui
 <h2 id="html-shell">HTML Shell</h2>
 
 `ChatUI` expects a small set of class names so it can attach the sidebar, feed, and input behavior.
+Add `mur-sidebar-animated` to `.mur-app` if you want the desktop sidebar rail transition; omit it for instant desktop layout changes.
 
 ```html
-<div class="mur-app">
+<div class="mur-app mur-sidebar-animated">
   <aside class="mur-sidebar">
     <div class="mur-sidebar-header">...</div>
     <div class="mur-sidebar-actions">...</div>

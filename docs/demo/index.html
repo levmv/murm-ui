@@ -25,15 +25,15 @@
             display: flex;
             font-size: 0.8rem;
             font-weight: 700;
-            height: 23px;
+            height: 24px;
             justify-content: center;
-            width: 23px;
+            width: 24px;
         }
     </style>
 </head>
 
 <body>
-    <div class="mur-app">
+    <div class="mur-app mur-sidebar-animated">
         <!-- Sidebar -->
         <aside class="mur-sidebar">
             <div class="mur-sidebar-header">
@@ -47,11 +47,13 @@
                 </button>
             </div>
             <div class="mur-sidebar-actions">
-                <button type="button" class="mur-new-chat-btn mur-btn-primary">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 5v14m-7-7h14" />
+                <button type="button" class="mur-new-chat-btn mur-sidebar-nav-btn" title="New chat">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+                        <path d="M13 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8" />
+                        <path d="M15.7 5.8a1.2 1.2 0 0 1 1.7 1.7l-6.6 6.6-2.8.8.8-2.8z" />
                     </svg>
-                    New Chat
+                    <span>New Chat</span>
                 </button>
             </div>
             <div class="mur-sidebar-content">
