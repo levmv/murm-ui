@@ -8,6 +8,7 @@ export function CopyPlugin(): ChatPlugin {
 		getActionButtons: (msg) => {
 			if (msg.role !== "assistant") return [];
 			if (typeof navigator === "undefined" || !navigator.clipboard) return [];
+			if (!extractPlainText(msg).trim()) return [];
 
 			return [
 				{

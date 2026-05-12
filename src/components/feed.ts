@@ -101,7 +101,7 @@ export class Feed {
 				this.historyContainer.insertBefore(node.el, this.historyContainer.children[i]);
 			}
 
-			node.update(msg, isGenerating, targetError);
+			node.update(msg, isGenerating, targetError, messages);
 		}
 
 		// Cleanup removed messages

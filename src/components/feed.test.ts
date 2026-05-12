@@ -548,6 +548,43 @@ test("copy action reads the latest message for a reused node", async () => {
 
 	feed.destroy();
 });
+
+test("copy action is omitted for assistant messages without text blocks", () => {
+	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
+
+	setGlobal("navigator", {
+		clipboard: {
+			writeText: async () => {},
+		},
+	});
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [
+					{
+						id: "tool-1",
+						type: "tool_call",
+						toolCallId: "call-1",
+						name: "list_files",
+						argsText: '{"path":"src"}',
+						status: "complete",
+					},
+				],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(root.querySelector(".mur-message-actions"), null);
+
+	feed.destroy();
+});
+
 test("message actions are shown again when they become applicable", () => {
 	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
 

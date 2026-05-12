@@ -206,7 +206,8 @@ await bundleSmoke(
 		import { EditPlugin } from "murm-ui/plugins/edit";
 		import { SettingsPlugin } from "murm-ui/plugins/settings";
 		import { ThinkingPlugin } from "murm-ui/plugins/thinking";
-		void [AttachmentPlugin, CopyPlugin, EditPlugin, SettingsPlugin, ThinkingPlugin];
+		import { ToolsPlugin } from "murm-ui/plugins/tools";
+		void [AttachmentPlugin, CopyPlugin, EditPlugin, SettingsPlugin, ThinkingPlugin, ToolsPlugin];
 	`,
 	"plugins-package-smoke.js",
 );

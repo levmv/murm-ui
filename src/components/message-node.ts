@@ -1,5 +1,5 @@
 import { marked } from "marked";
-import type { ActionButtonDef, ContentBlock, Message, RenderConfig } from "../core/types";
+import type { ActionButtonDef, BlockRenderContext, ContentBlock, Message, RenderConfig } from "../core/types";
 import { el, syncDOMChildren } from "../utils/dom";
 import { renderSafeHTML } from "../utils/html";
 
@@ -44,7 +44,7 @@ export class MessageNode {
 		this.el.appendChild(this.blocksContainer);
 	}
 
-	public update(msg: Message, isGenerating: boolean, error: string | null) {
+	public update(msg: Message, isGenerating: boolean, error: string | null, messages: readonly Message[]) {
 		this.currentMsg = msg;
 
 		if (this.cacheIsGenerating !== isGenerating) {
@@ -52,7 +52,7 @@ export class MessageNode {
 			this.cacheIsGenerating = isGenerating;
 		}
 
-		this.renderBlocks(msg, isGenerating);
+		this.renderBlocks(msg, isGenerating, messages);
 		this.renderLoading(msg, isGenerating, error);
 		this.renderActions(msg, isGenerating);
 		this.renderError(error);
@@ -89,7 +89,7 @@ export class MessageNode {
 		}
 	}
 
-	private renderBlocks(msg: Message, isGenerating: boolean) {
+	private renderBlocks(msg: Message, isGenerating: boolean, messages: readonly Message[]) {
 		const visibleBlockIds = new Set<string>();
 		let displayIndex = 0;
 
@@ -110,8 +110,12 @@ export class MessageNode {
 			const container = state.container;
 
 			let handledByPlugin = false;
+			let blockRenderCtx: BlockRenderContext | undefined;
 			for (const plugin of this.config.plugins) {
-				if (plugin.onBlockRender?.(block, container, isGeneratingBlock)) {
+				if (!plugin.onBlockRender) continue;
+
+				blockRenderCtx ??= { message: msg, messages, blockIndex: i };
+				if (plugin.onBlockRender(block, container, isGeneratingBlock, blockRenderCtx)) {
 					handledByPlugin = true;
 					break;
 				}

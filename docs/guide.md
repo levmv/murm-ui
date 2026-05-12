@@ -91,6 +91,7 @@ import { AttachmentPlugin } from "murm-ui/plugins/attachment";
 import { CopyPlugin } from "murm-ui/plugins/copy";
 import { EditPlugin } from "murm-ui/plugins/edit";
 import { ThinkingPlugin } from "murm-ui/plugins/thinking";
+import { ToolsPlugin } from "murm-ui/plugins/tools";
 
 new ChatUI({
   container: ".mur-app",
@@ -100,6 +101,7 @@ new ChatUI({
   plugins: (chatApi) => [
     AttachmentPlugin(),
     ThinkingPlugin(),
+    ToolsPlugin(),
     CopyPlugin(),
     EditPlugin({ onSave: (id, text) => chatApi.editAndResubmit(id, text) }),
   ],
@@ -233,6 +235,7 @@ Plugins add behavior around input, rendering, request preparation, and message a
 
 - `AttachmentPlugin()` adds file attachment handling and previews.
 - `ThinkingPlugin()` renders reasoning blocks behind an expandable control.
+- `ToolsPlugin()` renders tool calls and matching tool results as compact expandable blocks.
 - `CopyPlugin()` adds message copy actions.
 - `EditPlugin()` lets users edit a prior user message and resubmit from that point.
 - `SettingsPlugin()` adds browser-side provider settings for apps that want user-configurable endpoints. Its default storage keeps settings in this browser; shared deployments usually pair it with custom storage or a backend proxy.
@@ -250,6 +253,7 @@ new ChatUI({
   plugins: (chatApi) => [
     AttachmentPlugin(),
     ThinkingPlugin(),
+    ToolsPlugin(),
     CopyPlugin(),
     EditPlugin({
       onSave: (id, text) => chatApi.editAndResubmit(id, text),

@@ -6,6 +6,7 @@ import { CopyPlugin } from "../src/plugins/copy/copy-plugin";
 import { EditPlugin } from "../src/plugins/edit/edit-plugin";
 import { SettingsPlugin } from "../src/plugins/settings/settings-plugin";
 import { ThinkingPlugin } from "../src/plugins/thinking/thinking-plugin";
+import { ToolsPlugin } from "../src/plugins/tools/tools-plugin";
 
 new ChatUI({
 	container: ".mur-app",
@@ -14,6 +15,7 @@ new ChatUI({
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
 		ThinkingPlugin(),
+		ToolsPlugin(),
 		CopyPlugin(),
 		EditPlugin({ onSave: (id, text) => chatApi.editAndResubmit(id, text) }),
 		SettingsPlugin({

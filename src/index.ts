@@ -6,6 +6,7 @@ export { IndexedDBStorage } from "./core/storage/indexed-db";
 export { RemoteStorage, RemoteStorageError, type RemoteStorageOptions } from "./core/storage/remote";
 export type {
 	ActionButtonDef,
+	BlockRenderContext,
 	ChatPlugin,
 	ChatProvider,
 	ChatRequest,
@@ -32,3 +33,4 @@ export { ChatUI, type ChatUIConfig } from "./main";
 export type { AttachmentPluginConfig, FileHandler } from "./plugins/attachment/attachment-plugin";
 export type { EditConfig } from "./plugins/edit/edit-plugin";
 export type { SettingsPluginConfig, SettingsState, SettingsStorage } from "./plugins/settings/settings-plugin";
+export type { ToolRenderContext, ToolRenderer, ToolsPluginConfig } from "./plugins/tools/tools-plugin";

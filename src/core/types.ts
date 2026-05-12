@@ -293,6 +293,12 @@ export interface ActionButtonDef {
 	onClick: (ctx: MessageActionContext) => void;
 }
 
+export interface BlockRenderContext {
+	message: Message;
+	messages: readonly Message[];
+	blockIndex: number;
+}
+
 export interface ChatPlugin {
 	name: string;
 
@@ -356,7 +362,13 @@ export interface ChatPlugin {
 	 * * @param block The content block data.
 	 * @param containerEl The DOM element wrapping this specific block.
 	 * @param isGenerating True if the LLM is actively streaming this block.
+	 * @param ctx Render-time context for the current block and transcript.
 	 * @returns `true` if the plugin handled the render, preventing the core UI from overwriting it.
 	 */
-	onBlockRender?: (block: ContentBlock, containerEl: HTMLElement, isGenerating: boolean) => boolean;
+	onBlockRender?: (
+		block: ContentBlock,
+		containerEl: HTMLElement,
+		isGenerating: boolean,
+		ctx?: BlockRenderContext,
+	) => boolean;
 }

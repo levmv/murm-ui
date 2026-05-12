@@ -6,6 +6,7 @@ import { CopyPlugin } from "../../src/plugins/copy/copy-plugin";
 import { EditPlugin } from "../../src/plugins/edit/edit-plugin";
 import { SettingsPlugin, type SettingsState, type SettingsStorage } from "../../src/plugins/settings/settings-plugin";
 import { ThinkingPlugin } from "../../src/plugins/thinking/thinking-plugin";
+import { ToolsPlugin } from "../../src/plugins/tools/tools-plugin";
 import { MockProvider } from "./mock-provider";
 
 const DEFAULT_API_ENDPOINT = "";
@@ -36,6 +37,7 @@ new ChatUI({
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
 		ThinkingPlugin(),
+		ToolsPlugin(),
 		CopyPlugin(),
 		EditPlugin({ onSave: (id, text) => chatApi.editAndResubmit(id, text) }),
 		SettingsPlugin({

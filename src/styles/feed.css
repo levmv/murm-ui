@@ -364,17 +364,17 @@
 		opacity 0.2s ease;
 }
 
-.mur-tool-streaming {
+.mur-block-tool.mur-tool-streaming {
 	border-color: var(--mur-text-muted);
 	opacity: 0.8;
 }
 
-.mur-tool-complete {
+.mur-block-tool.mur-tool-complete {
 	border-left: 4px solid var(--mur-success);
 	color: var(--mur-text);
 }
 
-.mur-tool-error {
+.mur-block-tool.mur-tool-error {
 	border-left: 4px solid var(--mur-danger);
 	color: var(--mur-danger);
 }
