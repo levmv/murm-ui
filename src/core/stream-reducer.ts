@@ -12,20 +12,104 @@ function clearEphemeralFlag(msg: Message): void {
 	delete msg.ephemeral;
 }
 
-export function applyStreamEventToState(state: ChatState, pendingId: string, event: StreamReducerEvent): void {
-	let msg: Message | undefined = state.messages[state.messages.length - 1];
-	if (msg?.id !== pendingId) {
-		msg = state.messages.find((m) => m.id === pendingId);
+function updateStreamingToolCalls(msg: Message, status: Extract<ContentBlock, { type: "tool_call" }>["status"]): void {
+	for (const block of msg.blocks) {
+		if (block.type === "tool_call" && block.status === "streaming") {
+			block.status = status;
+		}
 	}
-	if (!msg) return; // Only happens if user rapidly deleted the chat during stream
+}
 
+function findMessage(state: ChatState, messageId: string | null | undefined): Message | undefined {
+	if (!messageId) return undefined;
+
+	const lastMessage = state.messages[state.messages.length - 1];
+	if (lastMessage?.id === messageId) return lastMessage;
+
+	return state.messages.find((m) => m.id === messageId);
+}
+
+function adoptMessageId(state: ChatState, msg: Message, nextId: string): void {
+	const previousId = msg.id;
+	msg.id = nextId;
+	if (state.generatingMessageId === previousId) {
+		state.generatingMessageId = nextId;
+	}
+}
+
+function canAdoptMessageId(state: ChatState, msg: Message, nextId: string): boolean {
+	if (!msg.ephemeral) return false;
+	if (msg.blocks.length > 0) return false;
+	return findMessage(state, nextId) === undefined;
+}
+
+function pushStreamMessage(state: ChatState, message: Pick<Message, "id" | "role" | "blocks" | "meta">): Message {
+	const msg: Message = {
+		id: message.id,
+		role: message.role,
+		blocks: [],
+		...(message.role === "assistant" && message.blocks.length === 0 ? { ephemeral: true } : {}),
+	};
+	state.messages.push(msg);
+	if (msg.role === "assistant") {
+		state.generatingMessageId = msg.id;
+	}
+	return msg;
+}
+
+function eventMessageId(event: StreamReducerEvent): string | null {
 	switch (event.type) {
 		case "message_start":
-			// We already pushed a placeholder. We can optionally merge metadata.
+			return event.message.id;
+		case "usage":
+		case "finish":
+		case "error":
+			return null;
+		default:
+			return event.messageId;
+	}
+}
+
+export function applyStreamEventToState(state: ChatState, currentMessageId: string, event: StreamReducerEvent): string {
+	let msg = findMessage(state, currentMessageId) ?? findMessage(state, state.generatingMessageId);
+	if (!msg) return currentMessageId;
+
+	// Let the empty local placeholder take the provider/adaptor message id,
+	// or switch to a new stream message when a later event starts one.
+	const nextMessageId = eventMessageId(event);
+	if (nextMessageId && msg.id !== nextMessageId) {
+		if (canAdoptMessageId(state, msg, nextMessageId)) {
+			adoptMessageId(state, msg, nextMessageId);
+		} else if (!findMessage(state, nextMessageId)) {
+			updateStreamingToolCalls(msg, "complete");
+			msg =
+				event.type === "message_start"
+					? pushStreamMessage(state, event.message)
+					: pushStreamMessage(state, { id: nextMessageId, role: "assistant", blocks: [] });
+		} else if (event.type === "message_start") {
+			return msg.id;
+		}
+	}
+
+	switch (event.type) {
+		case "message_start": {
+			msg.role = event.message.role;
+			if (event.message.blocks.length > 0 || msg.blocks.length === 0) {
+				msg.blocks = event.message.blocks;
+			}
 			if (event.message.meta) {
 				msg.meta = { ...msg.meta, ...event.message.meta };
 			}
+			if (event.message.blocks.length > 0) {
+				clearEphemeralFlag(msg);
+			} else if (msg.role === "assistant" && msg.blocks.length === 0) {
+				msg.ephemeral = true;
+			}
+			if (msg.role === "assistant") {
+				state.generatingMessageId = msg.id;
+			}
 			break;
+		}
 
 		case "text_delta": {
 			let tb = msg.blocks.find((b) => b.id === event.blockId) as Extract<ContentBlock, { type: "text" }>;
@@ -89,20 +173,14 @@ export function applyStreamEventToState(state: ChatState, pendingId: string, eve
 			break;
 		case "finish": {
 			const finalStatus = event.reason === "error" || event.reason === "aborted" ? "error" : "complete";
-			for (const b of msg.blocks) {
-				if (b.type === "tool_call" && b.status === "streaming") {
-					b.status = finalStatus;
-				}
-			}
+			updateStreamingToolCalls(msg, finalStatus);
 			break;
 		}
 		case "error":
-			state.error = { message: event.message, id: pendingId };
-			for (const b of msg.blocks) {
-				if (b.type === "tool_call" && b.status === "streaming") {
-					b.status = "error";
-				}
-			}
+			state.error = { message: event.message, id: msg.id };
+			updateStreamingToolCalls(msg, "error");
 			break;
 	}
+
+	return msg.id;
 }

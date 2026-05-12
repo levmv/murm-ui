@@ -75,8 +75,10 @@ export class Feed {
 			this.isStickyToBottom = true;
 		}
 
-		// Skip heavy DOM syncs if the array reference hasn't changed (e.g. during streaming)
-		const structureChanged = this.lastMessagesRef !== messages || this.nodes.size > messages.length;
+		// Skip heavy DOM syncs if the array reference hasn't changed (e.g. during streaming).
+		// Hot stream updates can still adopt a placeholder id or append another assistant
+		// message in-place, so discovering a missing node below also marks structure dirty.
+		let structureChanged = this.lastMessagesRef !== messages || this.nodes.size > messages.length;
 		this.lastMessagesRef = messages;
 
 		for (let i = 0; i < messages.length; i++) {
@@ -91,6 +93,7 @@ export class Feed {
 			if (!node) {
 				node = new MessageNode(msg, this.config);
 				this.nodes.set(msg.id, node);
+				structureChanged = true;
 			}
 
 			// Ensure physical DOM order matches array order

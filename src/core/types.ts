@@ -70,6 +70,23 @@ export interface Message {
 
 export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "error" | "aborted";
 
+/**
+ * Normalized streaming events emitted by ChatProvider implementations.
+ *
+ * Stream contract:
+ * - Providers/adapters own upstream quirks and emit Murm message ids.
+ * - The engine creates a temporary empty assistant message before streaming starts.
+ *   The first event with a new message id may replace that placeholder id.
+ * - `message_start` starts a logical streamed message. A single `streamChat`
+ *   call may emit multiple assistant `message_start` events with different ids;
+ *   the engine appends each as a new message and continues streaming into it.
+ * - Delta/block events should be ordered by message. Once an event starts a new
+ *   message id, later deltas are treated as belonging to the active message.
+ *   Adapters should not interleave deltas for older messages after switching.
+ * - If an adapter cannot emit `message_start`, the first delta/block event with
+ *   a new message id can still start an assistant message as a fallback.
+ * - `usage` and `finish` apply to the current active streamed message/run.
+ */
 export type StreamEvent =
 	| {
 			type: "message_start";
@@ -194,8 +211,13 @@ export interface ChatRequestDefaults {
 
 export interface ChatProvider {
 	/**
-	 * Streams successful provider events to the engine. Provider/API failures should reject
-	 * this promise; ChatEngine converts those failures into UI error state.
+	 * Streams normalized events to the engine. Provider/API failures should reject
+	 * this promise; ChatEngine converts rejected provider calls into UI error state.
+	 *
+	 * Implementations should translate provider-native responses into the StreamEvent
+	 * contract above. In particular, they should generate stable message ids when the
+	 * upstream provider does not supply them, and should emit a new id for each logical
+	 * assistant message produced during the run.
 	 */
 	streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void>;
 

@@ -359,6 +359,38 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(state.sessions[0].id, state.currentSessionId);
 });
 
+test("sendMessage streams multiple assistant messages from one provider run", async () => {
+	const storage = new MemoryStorage();
+	const provider: ChatProvider = {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({
+				type: "message_start",
+				message: { id: "assistant-1", role: "assistant", blocks: [] },
+			});
+			onEvent({ type: "text_delta", messageId: "assistant-1", blockId: "text-1", delta: "first" });
+			onEvent({
+				type: "message_start",
+				message: { id: "assistant-2", role: "assistant", blocks: [] },
+			});
+			onEvent({ type: "text_delta", messageId: "assistant-2", blockId: "text-2", delta: "second" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	const engine = new ChatEngine({ provider, storage });
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
+
+	const state = engine.state;
+	assert.equal(state.messages.length, 3);
+	assert.equal(state.messages[1].id, "assistant-1");
+	assert.equal(getText(state.messages[1]), "first");
+	assert.equal(state.messages[2].id, "assistant-2");
+	assert.equal(getText(state.messages[2]), "second");
+	assert.equal(storage.saved[0].messages.length, 3);
+});
+
 test("generation save completion does not disturb a session switched during persistence", async () => {
 	let releaseSave!: () => void;
 	const saveReleased = new Promise<void>((resolve) => {

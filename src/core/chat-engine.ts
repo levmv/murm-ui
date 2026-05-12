@@ -26,6 +26,7 @@ export interface ChatEngineConfig {
 interface ActiveGeneration {
 	id: string;
 	sessionId: string;
+	currentMessageId: string;
 	controller: AbortController;
 	provider: ChatProvider;
 	requestDefaults: ChatRequestDefaults;
@@ -216,14 +217,16 @@ export class ChatEngine {
 	}
 
 	private async startGeneration(contextMessages: Message[]) {
-		const pendingId = uuidv7();
+		const generationId = uuidv7();
+		const initialMessageId = generationId;
 		const sessionId = this.state.currentSessionId;
 		const provider = this.provider;
 		const controller = new AbortController();
 		const signal = controller.signal;
 		this.activeGeneration = {
-			id: pendingId,
+			id: generationId,
 			sessionId,
+			currentMessageId: initialMessageId,
 			controller,
 			provider,
 			requestDefaults: this.cloneRequestDefaults(),
@@ -231,7 +234,7 @@ export class ChatEngine {
 
 		// Instantly create an empty assistant message so the UI shows a loading state
 		const assistantMsg: Message = {
-			id: pendingId,
+			id: initialMessageId,
 			role: "assistant",
 			blocks: [],
 			ephemeral: true,
@@ -241,7 +244,7 @@ export class ChatEngine {
 
 		this.store.set({
 			messages: updatedMessages,
-			generatingMessageId: pendingId,
+			generatingMessageId: initialMessageId,
 			error: null,
 		});
 
@@ -258,7 +261,7 @@ export class ChatEngine {
 				if (event.type === "finish" && event.reason === "aborted") {
 					wasAborted = true;
 				}
-				this.applyStreamEvent(pendingId, event);
+				this.applyStreamEvent(generationId, event);
 			});
 		} catch (err: unknown) {
 			if (signal.aborted) {
@@ -273,20 +276,25 @@ export class ChatEngine {
 						? JSON.stringify(err)
 						: String(err);
 
-			this.applyStreamEvent(pendingId, { type: "error", message: errorMessage });
+			this.applyStreamEvent(generationId, { type: "error", message: errorMessage });
 		} finally {
-			await this.finalizeGeneration(pendingId, wasAborted || signal.aborted);
+			await this.finalizeGeneration(generationId, wasAborted || signal.aborted);
 		}
 	}
 
 	/**
 	 * Applies reducer events without cloning active stream blocks.
-	 * @param pendingId The ID we generated locally to track the active response.
+	 * @param generationId The ID we generated locally to track the active generation.
 	 */
-	private applyStreamEvent(pendingId: string, event: StreamReducerEvent) {
+	private applyStreamEvent(generationId: string, event: StreamReducerEvent) {
+		const generation = this.activeGeneration;
+		if (generation?.id !== generationId) return;
+
+		let currentMessageId = generation.currentMessageId;
 		this.store.mutateHot((state) => {
-			applyStreamEventToState(state, pendingId, event);
+			currentMessageId = applyStreamEventToState(state, generation.currentMessageId, event);
 		});
+		generation.currentMessageId = currentMessageId;
 	}
 
 	private async prepareRequestParams(
@@ -336,16 +344,16 @@ export class ChatEngine {
 		return payloadParams;
 	}
 
-	private async finalizeGeneration(pendingId: string, wasAborted: boolean = false) {
+	private async finalizeGeneration(generationId: string, wasAborted: boolean = false) {
 		const generation = this.activeGeneration;
-		if (generation?.id !== pendingId) return;
+		if (generation?.id !== generationId) return;
 		this.activeGeneration = null;
 
 		if (wasAborted) {
-			this.removeAbortedEphemeralMessage(pendingId);
+			this.removeAbortedEphemeralMessage(generation.currentMessageId);
 		}
 
-		if (this.state.generatingMessageId === pendingId) {
+		if (this.state.generatingMessageId !== null) {
 			this.store.set({ generatingMessageId: null });
 		}
 

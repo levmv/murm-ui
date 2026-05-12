@@ -205,6 +205,8 @@ interface ChatProvider {
 }
 ```
 
+Provider adapters should hide provider-specific streaming quirks. Emit stable Murm message ids, synthesizing them when the upstream provider does not provide ids. Prefer `message_start` before deltas; a single `streamChat` call may emit multiple assistant `message_start` events with different ids, and Murm UI will append them as separate assistant messages. Deltas should be ordered by message rather than interleaved after switching to another message id.
+
 Use `OpenAIProvider` for OpenAI-compatible chat completion endpoints.
 
 ```ts

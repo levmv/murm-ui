@@ -323,6 +323,43 @@ test("streaming update does not downgrade a pending smooth scroll", () => {
 	feed.destroy();
 });
 
+test("hot update inserts a message appended to the same array reference", async () => {
+	const { feed, root } = createFeedHarness();
+	const currentMessages = messages();
+
+	feed.update(currentMessages, "assistant-1", false, true);
+	currentMessages.push({
+		id: "assistant-2",
+		role: "assistant",
+		blocks: [{ id: "assistant-2-text", type: "text", text: "final answer" }],
+	});
+	feed.update(currentMessages, null, false, false);
+	await flushMicrotasks();
+
+	const renderedMessages = root.querySelectorAll(".mur-message");
+	assert.equal(renderedMessages.length, 3);
+	assert.match(renderedMessages[2].textContent ?? "", /final answer/);
+
+	feed.destroy();
+});
+
+test("hot update replaces a placeholder node after message id adoption", async () => {
+	const { feed, root } = createFeedHarness();
+	const currentMessages = messages();
+
+	feed.update(currentMessages, "assistant-1", false, true);
+	currentMessages[1].id = "provider-message";
+	currentMessages[1].blocks = [{ id: "provider-text", type: "text", text: "adopted answer" }];
+	feed.update(currentMessages, null, false, false);
+	await flushMicrotasks();
+
+	const renderedMessages = root.querySelectorAll(".mur-message");
+	assert.equal(renderedMessages.length, 2);
+	assert.match(renderedMessages[1].textContent ?? "", /adopted answer/);
+
+	feed.destroy();
+});
+
 test("resize observer scrolls through the scheduler", () => {
 	const { feed, frameCount, flushFrames, scrollCalls, triggerResize } = createFeedHarness({ resizeObserver: true });
 
