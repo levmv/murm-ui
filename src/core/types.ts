@@ -61,6 +61,8 @@ export interface Message {
 	id: string;
 	role: Role;
 	blocks: ContentBlock[];
+	createdAt?: number;
+	updatedAt?: number;
 	// Used to prevent this message from being sent to the LLM or persisted
 	ephemeral?: boolean;
 	usage?: TokenUsage;
@@ -90,7 +92,7 @@ export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "
 export type StreamEvent =
 	| {
 			type: "message_start";
-			message: Pick<Message, "id" | "role" | "blocks" | "meta">;
+			message: Pick<Message, "id" | "role" | "blocks" | "meta" | "createdAt" | "updatedAt">;
 	  }
 	| {
 			type: "text_delta";
@@ -299,6 +301,21 @@ export interface BlockRenderContext {
 	blockIndex: number;
 }
 
+export interface FeedContext {
+	messages: readonly Message[];
+	generatingMessageId: string | null;
+	generationStarted: boolean;
+}
+
+export interface FeedProjectionContext extends FeedContext {
+	visibleMessages: readonly Message[];
+}
+
+export interface FeedRenderContext extends FeedProjectionContext {
+	getMessageEl: (messageId: string) => HTMLElement | undefined;
+	requestRender: () => void;
+}
+
 export interface ChatPlugin {
 	name: string;
 
@@ -342,19 +359,26 @@ export interface ChatPlugin {
 	onUserSubmit?: (msg: Message) => void;
 
 	/**
-	 * Intercept the rendering of an entire message container.
-	 * Ideal for adding message-level UI (e.g., action buttons) to the outer wrapper.
-	 * * @param msg The full message data.
-	 * @param parentEl The outer DOM element wrapping the entire message.
-	 * @param isGenerating True if the LLM is actively streaming this message.
-	 */
-	onMessageRender?: (msg: Message, parentEl: HTMLElement, isGenerating: boolean) => void;
-
-	/**
 	 * Declaratively registers static icon buttons for a message action bar.
 	 * Called when the action bar is first initialized for a message node.
 	 */
 	getActionButtons?: (msg: Message) => ActionButtonDef[];
+
+	/**
+	 * Fires after the feed has synced message DOM nodes for the current render pass.
+	 * Use this for transcript-level decoration that depends on multiple messages.
+	 */
+	onFeedRender?: (ctx: FeedRenderContext) => void;
+
+	/**
+	 * Allows plugins to map the full transcript into the message list rendered by the feed.
+	 * Projected-away messages remain in the transcript and provider payload; they are only
+	 * omitted from the current feed view.
+	 *
+	 * For hot-path performance, return the same array instance while the projection has
+	 * not changed, and return a new array when it does.
+	 */
+	projectFeedMessages?: (ctx: FeedProjectionContext) => readonly Message[] | undefined;
 
 	/**
 	 * Intercept the rendering of an individual content block (e.g., text, reasoning, tool_call).

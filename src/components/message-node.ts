@@ -56,12 +56,6 @@ export class MessageNode {
 		this.renderLoading(msg, isGenerating, error);
 		this.renderActions(msg, isGenerating);
 		this.renderError(error);
-
-		for (const plugin of this.config.plugins) {
-			if (plugin.onMessageRender) {
-				plugin.onMessageRender(msg, this.el, isGenerating);
-			}
-		}
 	}
 
 	public destroy() {

@@ -113,11 +113,14 @@ export class ChatEngine {
 		if (this.isBusy || this.state.isLoadingSession) return false;
 
 		const currentMessages = dropEphemeralMessages(this.state.messages);
+		const now = Date.now();
 
 		const userMsg: Message = {
 			id: uuidv7(),
 			role: "user",
 			blocks: content ? [{ id: uuidv7(), type: "text", text: content }] : [],
+			createdAt: now,
+			updatedAt: now,
 		};
 
 		for (const plugin of this.plugins) {
@@ -151,12 +154,15 @@ export class ChatEngine {
 		const preservedBlocks = updatedMessages[targetIndex].blocks.filter((b) => b.type !== "text");
 		const newTextBlock = newContent ? [{ id: uuidv7(), type: "text" as const, text: newContent }] : [];
 		const finalBlocks = [...preservedBlocks, ...newTextBlock];
+		const now = Date.now();
 
 		if (finalBlocks.length === 0) return false;
 
 		updatedMessages[targetIndex] = {
 			...updatedMessages[targetIndex],
 			blocks: finalBlocks,
+			createdAt: updatedMessages[targetIndex].createdAt ?? now,
+			updatedAt: now,
 		};
 
 		void this.startGeneration(updatedMessages);
@@ -233,10 +239,13 @@ export class ChatEngine {
 		};
 
 		// Instantly create an empty assistant message so the UI shows a loading state
+		const now = Date.now();
 		const assistantMsg: Message = {
 			id: initialMessageId,
 			role: "assistant",
 			blocks: [],
+			createdAt: now,
+			updatedAt: now,
 			ephemeral: true,
 		};
 

@@ -12,6 +12,11 @@ function clearEphemeralFlag(msg: Message): void {
 	delete msg.ephemeral;
 }
 
+function touchMessage(msg: Message, timestamp = Date.now()): void {
+	msg.createdAt ??= timestamp;
+	msg.updatedAt = timestamp;
+}
+
 function updateStreamingToolCalls(msg: Message, status: Extract<ContentBlock, { type: "tool_call" }>["status"]): void {
 	for (const block of msg.blocks) {
 		if (block.type === "tool_call" && block.status === "streaming") {
@@ -43,11 +48,18 @@ function canAdoptMessageId(state: ChatState, msg: Message, nextId: string): bool
 	return findMessage(state, nextId) === undefined;
 }
 
-function pushStreamMessage(state: ChatState, message: Pick<Message, "id" | "role" | "blocks" | "meta">): Message {
+function pushStreamMessage(
+	state: ChatState,
+	message: Pick<Message, "id" | "role" | "blocks" | "meta" | "createdAt" | "updatedAt">,
+): Message {
+	const timestamp = Date.now();
+	const createdAt = message.createdAt ?? timestamp;
 	const msg: Message = {
 		id: message.id,
 		role: message.role,
 		blocks: [],
+		createdAt,
+		updatedAt: message.updatedAt ?? createdAt,
 		...(message.role === "assistant" && message.blocks.length === 0 ? { ephemeral: true } : {}),
 	};
 	state.messages.push(msg);
@@ -82,6 +94,7 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 			adoptMessageId(state, msg, nextMessageId);
 		} else if (!findMessage(state, nextMessageId)) {
 			updateStreamingToolCalls(msg, "complete");
+			touchMessage(msg);
 			msg =
 				event.type === "message_start"
 					? pushStreamMessage(state, event.message)
@@ -93,6 +106,10 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 
 	switch (event.type) {
 		case "message_start": {
+			msg.createdAt ??= event.message.createdAt ?? Date.now();
+			if (event.message.updatedAt !== undefined) {
+				msg.updatedAt = event.message.updatedAt;
+			}
 			msg.role = event.message.role;
 			if (event.message.blocks.length > 0 || msg.blocks.length === 0) {
 				msg.blocks = event.message.blocks;
@@ -108,6 +125,7 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 			if (msg.role === "assistant") {
 				state.generatingMessageId = msg.id;
 			}
+			touchMessage(msg, event.message.updatedAt ?? Date.now());
 			break;
 		}
 
@@ -118,7 +136,10 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 				msg.blocks.push(tb);
 			}
 			tb.text += event.delta;
-			if (event.delta.length > 0) clearEphemeralFlag(msg);
+			if (event.delta.length > 0) {
+				clearEphemeralFlag(msg);
+				touchMessage(msg);
+			}
 			break;
 		}
 
@@ -136,13 +157,17 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 			} else {
 				rb.text += event.delta;
 			}
-			if (event.delta.length > 0) clearEphemeralFlag(msg);
+			if (event.delta.length > 0) {
+				clearEphemeralFlag(msg);
+				touchMessage(msg);
+			}
 			break;
 		}
 
 		case "tool_call_start":
 			msg.blocks.push(event.block);
 			clearEphemeralFlag(msg);
+			touchMessage(msg);
 			break;
 
 		case "tool_call_delta": {
@@ -151,7 +176,10 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 				if (event.name !== undefined) tcb.name = event.name;
 				if (event.argsDelta) tcb.argsText += event.argsDelta;
 				if (event.status) tcb.status = event.status;
-				if (event.name !== undefined || event.argsDelta || event.status) clearEphemeralFlag(msg);
+				if (event.name !== undefined || event.argsDelta || event.status) {
+					clearEphemeralFlag(msg);
+					touchMessage(msg);
+				}
 			}
 			break;
 		}
@@ -160,6 +188,7 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 		case "artifact":
 			msg.blocks.push(event.block);
 			clearEphemeralFlag(msg);
+			touchMessage(msg);
 			break;
 		case "usage":
 			msg.usage = {
@@ -170,15 +199,18 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 				...(event.cacheWrite !== undefined ? { cacheWrite: event.cacheWrite } : {}),
 				...(event.details !== undefined ? { details: event.details } : {}),
 			};
+			touchMessage(msg);
 			break;
 		case "finish": {
 			const finalStatus = event.reason === "error" || event.reason === "aborted" ? "error" : "complete";
 			updateStreamingToolCalls(msg, finalStatus);
+			touchMessage(msg);
 			break;
 		}
 		case "error":
 			state.error = { message: event.message, id: msg.id };
 			updateStreamingToolCalls(msg, "error");
+			touchMessage(msg);
 			break;
 	}
 

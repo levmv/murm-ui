@@ -23,6 +23,19 @@ function getText(message: Message): string {
 		.join("\n\n");
 }
 
+function withMockNow<T>(timestamp: number, fn: (setNow: (nextTimestamp: number) => void) => T): T {
+	const originalNow = Date.now;
+	let currentTimestamp = timestamp;
+	Date.now = () => currentTimestamp;
+	try {
+		return fn((nextTimestamp) => {
+			currentTimestamp = nextTimestamp;
+		});
+	} finally {
+		Date.now = originalNow;
+	}
+}
+
 test("applyStreamEventToState appends text and reasoning deltas to the pending message", () => {
 	const assistant: Message = {
 		id: "assistant-1",
@@ -65,6 +78,35 @@ test("applyStreamEventToState appends text and reasoning deltas to the pending m
 	]);
 	assert.equal(state.messages[0].ephemeral, undefined);
 	assert.deepEqual(state.messages[0].meta, { local: true });
+});
+
+test("applyStreamEventToState tracks message timestamps through streaming", () => {
+	withMockNow(1000, (setNow) => {
+		const assistant: Message = {
+			id: "assistant-1",
+			role: "assistant",
+			blocks: [],
+			createdAt: 500,
+			updatedAt: 500,
+			ephemeral: true,
+		};
+		const state = stateWith([assistant]);
+
+		applyStreamEventToState(state, assistant.id, {
+			type: "text_delta",
+			messageId: assistant.id,
+			blockId: "text-1",
+			delta: "hello",
+		});
+		assert.equal(state.messages[0].createdAt, 500);
+		assert.equal(state.messages[0].updatedAt, 1000);
+
+		setNow(2500);
+		applyStreamEventToState(state, assistant.id, { type: "finish", reason: "stop" });
+
+		assert.equal(state.messages[0].createdAt, 500);
+		assert.equal(state.messages[0].updatedAt, 2500);
+	});
 });
 
 test("applyStreamEventToState keeps pending messages ephemeral for empty deltas", () => {
