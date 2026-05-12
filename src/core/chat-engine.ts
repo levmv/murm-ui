@@ -114,11 +114,13 @@ export class ChatEngine {
 
 		const currentMessages = dropEphemeralMessages(this.state.messages);
 		const now = Date.now();
+		const userMessageId = uuidv7();
 
 		const userMsg: Message = {
-			id: uuidv7(),
+			id: userMessageId,
 			role: "user",
 			blocks: content ? [{ id: uuidv7(), type: "text", text: content }] : [],
+			runId: userMessageId,
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -161,6 +163,7 @@ export class ChatEngine {
 		updatedMessages[targetIndex] = {
 			...updatedMessages[targetIndex],
 			blocks: finalBlocks,
+			runId: updatedMessages[targetIndex].runId ?? updatedMessages[targetIndex].id,
 			createdAt: updatedMessages[targetIndex].createdAt ?? now,
 			updatedAt: now,
 		};
@@ -240,10 +243,12 @@ export class ChatEngine {
 
 		// Instantly create an empty assistant message so the UI shows a loading state
 		const now = Date.now();
+		const runId = findLastUserRunId(contextMessages) ?? initialMessageId;
 		const assistantMsg: Message = {
 			id: initialMessageId,
 			role: "assistant",
 			blocks: [],
+			runId,
 			createdAt: now,
 			updatedAt: now,
 			ephemeral: true,
@@ -468,4 +473,13 @@ export class ChatEngine {
 			options: { ...defaults.options },
 		};
 	}
+}
+
+function findLastUserRunId(messages: readonly Message[]): string | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.role === "user") return message.runId ?? message.id;
+	}
+
+	return undefined;
 }

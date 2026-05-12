@@ -172,6 +172,60 @@ function messages(): Message[] {
 	];
 }
 
+function agentRunMessages(options: { runId?: boolean } = { runId: true }): Message[] {
+	const runId = options.runId === false ? undefined : "user-1";
+	return [
+		{
+			id: "user-1",
+			role: "user",
+			runId,
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [{ id: "user-text", type: "text", text: "List files" }],
+		},
+		{
+			id: "assistant-tool",
+			role: "assistant",
+			runId,
+			createdAt: 1500,
+			updatedAt: 2500,
+			blocks: [
+				{
+					id: "tool-call",
+					type: "tool_call",
+					toolCallId: "call-1",
+					name: "list_files",
+					argsText: '{"path":"src"}',
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-result",
+			role: "tool",
+			runId,
+			createdAt: 3000,
+			updatedAt: 3000,
+			blocks: [
+				{
+					id: "tool-result-block",
+					type: "tool_result",
+					toolCallId: "call-1",
+					outputText: "src/index.ts",
+				},
+			],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId,
+			createdAt: 4000,
+			updatedAt: 120000,
+			blocks: [{ id: "final-text", type: "text", text: "Found src/index.ts." }],
+		},
+	];
+}
+
 function setScrollMetrics(
 	scrollArea: HTMLElement,
 	metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
@@ -664,6 +718,89 @@ test("plugin action buttons are initialized once for a message node", () => {
 
 	assert.equal(callCount, 1);
 	assert.equal(root.querySelectorAll(".mur-action-icon-btn").length, 1);
+
+	feed.destroy();
+});
+
+test("agent runs collapse intermediate messages after generation finishes", async () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(agentRunMessages(), null, false, false);
+	await flushMicrotasks();
+
+	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
+	assert.ok(summary);
+	assert.equal(summary.textContent, "Worked for 1m 59s");
+	assert.equal(summary.getAttribute("aria-expanded"), "false");
+	assert.equal(root.querySelector(".mur-agent-run-steps")?.childElementCount, 0);
+	assert.equal(root.querySelectorAll(".mur-message").length, 2);
+	assert.match(root.querySelector(".mur-message-assistant")?.textContent ?? "", /Found src\/index\.ts/);
+
+	summary.click();
+	await flushMicrotasks();
+
+	assert.equal(summary.textContent, "Worked for 1m 59s");
+	assert.equal(summary.getAttribute("aria-expanded"), "true");
+	assert.equal(root.querySelectorAll(".mur-agent-run-steps .mur-message").length, 2);
+	assert.equal(root.querySelectorAll(".mur-message").length, 4);
+
+	feed.destroy();
+});
+
+test("agent run grouping falls back to user boundaries for old transcripts without run ids", async () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(agentRunMessages({ runId: false }), null, false, false);
+	await flushMicrotasks();
+
+	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "Worked for 1m 59s");
+	assert.equal(root.querySelectorAll(".mur-message").length, 2);
+
+	feed.destroy();
+});
+
+test("agent run messages stay flat while generation is active", () => {
+	const { feed, root } = createFeedHarness();
+	const transcript = agentRunMessages();
+
+	feed.update(transcript.slice(0, 3), "assistant-tool", false, false);
+
+	assert.equal(root.querySelector(".mur-agent-run-summary"), null);
+	assert.equal(root.querySelectorAll(".mur-message").length, 3);
+
+	feed.destroy();
+});
+
+test("text-only multi-assistant replies stay flat", async () => {
+	const { feed, root } = createFeedHarness();
+	const transcript: Message[] = [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "user-1",
+			blocks: [{ id: "user-text", type: "text", text: "Explain" }],
+		},
+		{
+			id: "assistant-1",
+			role: "assistant",
+			runId: "user-1",
+			blocks: [{ id: "text-1", type: "text", text: "Part one." }],
+		},
+		{
+			id: "assistant-2",
+			role: "assistant",
+			runId: "user-1",
+			blocks: [{ id: "text-2", type: "text", text: "Part two." }],
+		},
+	];
+
+	feed.update(transcript, null, false, false);
+	await flushMicrotasks();
+
+	assert.equal(root.querySelector(".mur-agent-run-summary"), null);
+	assert.equal(root.querySelectorAll(".mur-message").length, 3);
+	assert.match(root.textContent ?? "", /Part one/);
+	assert.match(root.textContent ?? "", /Part two/);
 
 	feed.destroy();
 });

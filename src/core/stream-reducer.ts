@@ -50,7 +50,8 @@ function canAdoptMessageId(state: ChatState, msg: Message, nextId: string): bool
 
 function pushStreamMessage(
 	state: ChatState,
-	message: Pick<Message, "id" | "role" | "blocks" | "meta" | "createdAt" | "updatedAt">,
+	message: Pick<Message, "id" | "role" | "blocks" | "meta" | "runId" | "createdAt" | "updatedAt">,
+	fallbackRunId?: string,
 ): Message {
 	const timestamp = Date.now();
 	const createdAt = message.createdAt ?? timestamp;
@@ -58,6 +59,7 @@ function pushStreamMessage(
 		id: message.id,
 		role: message.role,
 		blocks: [],
+		runId: message.runId ?? fallbackRunId,
 		createdAt,
 		updatedAt: message.updatedAt ?? createdAt,
 		...(message.role === "assistant" && message.blocks.length === 0 ? { ephemeral: true } : {}),
@@ -97,8 +99,8 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 			touchMessage(msg);
 			msg =
 				event.type === "message_start"
-					? pushStreamMessage(state, event.message)
-					: pushStreamMessage(state, { id: nextMessageId, role: "assistant", blocks: [] });
+					? pushStreamMessage(state, event.message, msg.runId)
+					: pushStreamMessage(state, { id: nextMessageId, role: "assistant", blocks: [] }, msg.runId);
 		} else if (event.type === "message_start") {
 			return msg.id;
 		}
@@ -106,6 +108,7 @@ export function applyStreamEventToState(state: ChatState, currentMessageId: stri
 
 	switch (event.type) {
 		case "message_start": {
+			msg.runId = event.message.runId ?? msg.runId;
 			msg.createdAt ??= event.message.createdAt ?? Date.now();
 			if (event.message.updatedAt !== undefined) {
 				msg.updatedAt = event.message.updatedAt;

@@ -125,7 +125,7 @@ test("applyStreamEventToState keeps pending messages ephemeral for empty deltas"
 });
 
 test("applyStreamEventToState adopts provider message ids during message_start", () => {
-	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], ephemeral: true };
+	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], runId: "run-1", ephemeral: true };
 	const state = stateWith([assistant]);
 	state.generatingMessageId = assistant.id;
 
@@ -141,6 +141,7 @@ test("applyStreamEventToState adopts provider message ids during message_start",
 
 	assert.equal(currentMessageId, "provider-message");
 	assert.equal(state.messages[0].id, "provider-message");
+	assert.equal(state.messages[0].runId, "run-1");
 	assert.equal(state.generatingMessageId, "provider-message");
 	assert.equal(state.messages[0].ephemeral, true);
 	assert.deepEqual(state.messages[0].meta, { providerMessage: true });
@@ -166,7 +167,7 @@ test("applyStreamEventToState adopts provider message ids from first delta when 
 });
 
 test("applyStreamEventToState starts another assistant message from a later message_start", () => {
-	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], ephemeral: true };
+	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], runId: "run-1", ephemeral: true };
 	const state = stateWith([assistant]);
 	state.generatingMessageId = assistant.id;
 
@@ -206,15 +207,17 @@ test("applyStreamEventToState starts another assistant message from a later mess
 	assert.equal(currentMessageId, "provider-message-2");
 	assert.equal(state.messages.length, 2);
 	assert.equal(state.messages[0].id, "provider-message-1");
+	assert.equal(state.messages[0].runId, "run-1");
 	assert.equal(getText(state.messages[0]), "first");
 	assert.equal((state.messages[0].blocks[1] as Extract<ContentBlock, { type: "tool_call" }>).status, "complete");
 	assert.equal(state.messages[1].id, "provider-message-2");
+	assert.equal(state.messages[1].runId, "run-1");
 	assert.equal(getText(state.messages[1]), "second");
 	assert.equal(state.generatingMessageId, "provider-message-2");
 });
 
 test("applyStreamEventToState starts another assistant message from a later delta without message_start", () => {
-	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], ephemeral: true };
+	const assistant: Message = { id: "assistant-1", role: "assistant", blocks: [], runId: "run-1", ephemeral: true };
 	const state = stateWith([assistant]);
 	state.generatingMessageId = assistant.id;
 
@@ -233,6 +236,8 @@ test("applyStreamEventToState starts another assistant message from a later delt
 
 	assert.equal(currentMessageId, "provider-message-2");
 	assert.equal(state.messages.length, 2);
+	assert.equal(state.messages[0].runId, "run-1");
+	assert.equal(state.messages[1].runId, "run-1");
 	assert.equal(getText(state.messages[0]), "first");
 	assert.equal(getText(state.messages[1]), "second");
 });

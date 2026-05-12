@@ -61,6 +61,9 @@ export interface Message {
 	id: string;
 	role: Role;
 	blocks: ContentBlock[];
+	// Groups messages that belong to the same user-triggered run/turn.
+	// Core-generated run ids default to the user message id.
+	runId?: string;
 	createdAt?: number;
 	updatedAt?: number;
 	// Used to prevent this message from being sent to the LLM or persisted
@@ -77,6 +80,8 @@ export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "
  *
  * Stream contract:
  * - Providers/adapters own upstream quirks and emit Murm message ids.
+ * - `runId` is optional on streamed events. When omitted, the engine keeps the
+ *   locally generated run id from the user message that started this generation.
  * - The engine creates a temporary empty assistant message before streaming starts.
  *   The first event with a new message id may replace that placeholder id.
  * - `message_start` starts a logical streamed message. A single `streamChat`
@@ -92,7 +97,7 @@ export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "
 export type StreamEvent =
 	| {
 			type: "message_start";
-			message: Pick<Message, "id" | "role" | "blocks" | "meta" | "createdAt" | "updatedAt">;
+			message: Pick<Message, "id" | "role" | "blocks" | "meta" | "runId" | "createdAt" | "updatedAt">;
 	  }
 	| {
 			type: "text_delta";
@@ -301,21 +306,6 @@ export interface BlockRenderContext {
 	blockIndex: number;
 }
 
-export interface FeedContext {
-	messages: readonly Message[];
-	generatingMessageId: string | null;
-	generationStarted: boolean;
-}
-
-export interface FeedProjectionContext extends FeedContext {
-	visibleMessages: readonly Message[];
-}
-
-export interface FeedRenderContext extends FeedProjectionContext {
-	getMessageEl: (messageId: string) => HTMLElement | undefined;
-	requestRender: () => void;
-}
-
 export interface ChatPlugin {
 	name: string;
 
@@ -363,22 +353,6 @@ export interface ChatPlugin {
 	 * Called when the action bar is first initialized for a message node.
 	 */
 	getActionButtons?: (msg: Message) => ActionButtonDef[];
-
-	/**
-	 * Fires after the feed has synced message DOM nodes for the current render pass.
-	 * Use this for transcript-level decoration that depends on multiple messages.
-	 */
-	onFeedRender?: (ctx: FeedRenderContext) => void;
-
-	/**
-	 * Allows plugins to map the full transcript into the message list rendered by the feed.
-	 * Projected-away messages remain in the transcript and provider payload; they are only
-	 * omitted from the current feed view.
-	 *
-	 * For hot-path performance, return the same array instance while the projection has
-	 * not changed, and return a new array when it does.
-	 */
-	projectFeedMessages?: (ctx: FeedProjectionContext) => readonly Message[] | undefined;
 
 	/**
 	 * Intercept the rendering of an individual content block (e.g., text, reasoning, tool_call).

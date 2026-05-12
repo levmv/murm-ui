@@ -354,6 +354,8 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(getText(state.messages[0]), "hello");
 	assert.equal(state.messages[1].role, "assistant");
 	assert.equal(getText(state.messages[1]), "hello back");
+	assert.equal(state.messages[0].runId, state.messages[0].id);
+	assert.equal(state.messages[1].runId, state.messages[0].id);
 	assert.equal(state.messages[1].ephemeral, undefined);
 	assert.equal(storage.saved[0].title, "hello");
 	assert.equal(state.sessions[0].id, state.currentSessionId);
@@ -384,9 +386,12 @@ test("sendMessage streams multiple assistant messages from one provider run", as
 
 	const state = engine.state;
 	assert.equal(state.messages.length, 3);
+	assert.equal(state.messages[0].runId, state.messages[0].id);
 	assert.equal(state.messages[1].id, "assistant-1");
+	assert.equal(state.messages[1].runId, state.messages[0].id);
 	assert.equal(getText(state.messages[1]), "first");
 	assert.equal(state.messages[2].id, "assistant-2");
+	assert.equal(state.messages[2].runId, state.messages[0].id);
 	assert.equal(getText(state.messages[2]), "second");
 	assert.equal(storage.saved[0].messages.length, 3);
 });
@@ -1127,12 +1132,15 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 	assert.equal(accepted, true);
 	assert.equal(providerMessages.length, 1);
 	assert.equal(getText(providerMessages[0]), "new text");
+	assert.equal(providerMessages[0].runId, "user-1");
 	assert.ok(providerMessages[0].blocks.some((block) => block.type === "file" && block.name === "notes.txt"));
 
 	const state = engine.state;
 	assert.equal(state.messages.length, 2);
 	assert.equal(state.messages[0].id, "user-1");
+	assert.equal(state.messages[0].runId, "user-1");
 	assert.equal(getText(state.messages[0]), "new text");
+	assert.equal(state.messages[1].runId, "user-1");
 	assert.equal(getText(state.messages[1]), "edited response");
 });
 

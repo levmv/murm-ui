@@ -1,7 +1,8 @@
 import type { Message, RenderConfig } from "../core/types";
 import { el, queryOrThrow } from "../utils/dom";
 import { ICON_CHECK, ICON_COPY } from "../utils/icons";
-import { MessageNode } from "./message-node";
+import { buildFeedItems, type FeedItem, feedItemType } from "./feed-items";
+import { createFeedNode, type FeedNode } from "./feed-node";
 
 const STICKY_THRESHOLD = 50;
 const MOBILE_SCROLL_QUERY = "(max-width: 768px)";
@@ -11,13 +12,26 @@ export class Feed {
 	private historyContainer: HTMLElement;
 	private spinnerEl: HTMLElement;
 
-	private nodes = new Map<string, MessageNode>();
+	private nodes = new Map<string, FeedNode>();
+	private expandedRunIds = new Set<string>();
+	private feedItemsCache: {
+		messages: Message[];
+		messageCount: number;
+		generatingMessageId: string | null;
+		items: readonly FeedItem[];
+	} | null = null;
 	private lastMessagesRef: Message[] | null = null;
 	private isStickyToBottom = true;
 	private isHistoryBusy = false;
 	private lastScrollTop = 0;
 	private isDestroyed = false;
-
+	private readonly onToggleRun = (runId: string) => this.toggleRun(runId);
+	private lastUpdateRequest: {
+		messages: Message[];
+		generatingMessageId: string | null;
+		isLoadingSession: boolean;
+		error: { message: string; id?: string } | null;
+	} | null = null;
 	private pendingScrollFrame: number | null = null;
 	private pendingScrollBehavior: ScrollBehavior | null = null;
 	private resizeObserver?: ResizeObserver;
@@ -60,6 +74,7 @@ export class Feed {
 		generationStarted: boolean,
 		error: { message: string; id?: string } | null = null,
 	) {
+		this.lastUpdateRequest = { messages, generatingMessageId, isLoadingSession, error };
 		this.syncHistoryBusy(generatingMessageId !== null);
 		this.spinnerEl.hidden = !isLoadingSession;
 
@@ -78,21 +93,24 @@ export class Feed {
 		// Skip heavy DOM syncs if the array reference hasn't changed (e.g. during streaming).
 		// Hot stream updates can still adopt a placeholder id or append another assistant
 		// message in-place, so discovering a missing node below also marks structure dirty.
-		let structureChanged = this.lastMessagesRef !== messages || this.nodes.size > messages.length;
+		const items = this.getFeedItems(messages, generatingMessageId);
+		let structureChanged = this.lastMessagesRef !== messages || this.nodes.size > items.length;
 		this.lastMessagesRef = messages;
+		const nodeUpdateCtx = {
+			messages,
+			generatingMessageId,
+			error,
+			onToggleRun: this.onToggleRun,
+		};
 
-		for (let i = 0; i < messages.length; i++) {
-			const msg = messages[i];
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
 
-			const isGenerating = msg.id === generatingMessageId;
-			const isTargetOfError = error && error.id === msg.id;
-			const targetError = isTargetOfError ? error.message : null;
-
-			let node = this.nodes.get(msg.id);
-
-			if (!node) {
-				node = new MessageNode(msg, this.config);
-				this.nodes.set(msg.id, node);
+			let node = this.nodes.get(item.id);
+			if (!node || node.type !== feedItemType(item)) {
+				node?.destroy();
+				node = createFeedNode(item, this.config);
+				this.nodes.set(item.id, node);
 				structureChanged = true;
 			}
 
@@ -101,12 +119,15 @@ export class Feed {
 				this.historyContainer.insertBefore(node.el, this.historyContainer.children[i]);
 			}
 
-			node.update(msg, isGenerating, targetError, messages);
+			node.update(item, nodeUpdateCtx);
 		}
 
-		// Cleanup removed messages
+		// Cleanup removed feed items
 		if (structureChanged) {
-			const currentIds = new Set(messages.map((m) => m.id));
+			const currentIds = new Set<string>();
+			for (const item of items) {
+				currentIds.add(item.id);
+			}
 			for (const [id, node] of this.nodes.entries()) {
 				if (!currentIds.has(id)) {
 					node.destroy();
@@ -117,6 +138,43 @@ export class Feed {
 
 		const isActivelyStreaming = generatingMessageId !== null && !generationStarted;
 		this.requestBottomScroll(isActivelyStreaming ? "auto" : "smooth");
+	}
+
+	private toggleRun(runId: string): void {
+		if (this.expandedRunIds.has(runId)) {
+			this.expandedRunIds.delete(runId);
+		} else {
+			this.expandedRunIds.add(runId);
+		}
+		this.feedItemsCache = null;
+
+		const request = this.lastUpdateRequest;
+		if (!request || this.isDestroyed) return;
+		this.update(request.messages, request.generatingMessageId, request.isLoadingSession, false, request.error);
+	}
+
+	private getFeedItems(messages: Message[], generatingMessageId: string | null): readonly FeedItem[] {
+		const cached = this.feedItemsCache;
+		if (
+			cached &&
+			cached.messages === messages &&
+			cached.messageCount === messages.length &&
+			cached.generatingMessageId === generatingMessageId
+		) {
+			return cached.items;
+		}
+
+		const items = buildFeedItems(messages, {
+			generatingMessageId,
+			isRunExpanded: (runId) => this.expandedRunIds.has(runId),
+		});
+		this.feedItemsCache = {
+			messages,
+			messageCount: messages.length,
+			generatingMessageId,
+			items,
+		};
+		return items;
 	}
 
 	private syncHistoryBusy(isBusy: boolean): void {
@@ -149,6 +207,7 @@ export class Feed {
 			node.destroy();
 		}
 		this.nodes.clear();
+		this.feedItemsCache = null;
 		this.historyContainer.innerHTML = "";
 	}
 

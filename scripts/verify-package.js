@@ -40,6 +40,9 @@ const requiredFiles = [
 	"dist/plugins/thinking/thinking-plugin.js",
 	"dist/plugins/thinking/thinking-plugin.d.ts",
 	"dist/plugins/thinking/thinking.css",
+	"dist/plugins/tools/tools-plugin.js",
+	"dist/plugins/tools/tools-plugin.d.ts",
+	"dist/plugins/tools/tools.css",
 ];
 
 const rootPublicExports = [
@@ -65,6 +68,7 @@ const pluginCssFiles = [
 	"dist/plugins/edit/edit.css",
 	"dist/plugins/settings/settings.css",
 	"dist/plugins/thinking/thinking.css",
+	"dist/plugins/tools/tools.css",
 ];
 
 const requiredSideEffects = ["**/*.css", "./dist/with-css.js", "./dist/plugins/*/*-plugin.js"];
