@@ -81,7 +81,8 @@
                 <!-- Form Container -->
                 <div class="mur-chat-form-container">
                     <form class="mur-chat-form">
-                        <textarea class="mur-chat-input" placeholder="Message AI..." rows="1"></textarea>
+                        <!-- biome-ignore lint/a11y/noAutofocus: Fullscreen demo should focus the prompt on first load. -->
+                        <textarea class="mur-chat-input" placeholder="Message AI..." rows="1" autofocus></textarea>
                         <div class="mur-form-footer-right">
                             <button type="submit" class="mur-send-btn mur-form-icon-btn mur-action-btn">
                                 <svg class="mur-send-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"

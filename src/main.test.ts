@@ -113,6 +113,7 @@ function installDom(url = "https://example.test/", shellOptions: ShellOptions = 
 	setGlobal("DOMParser", dom.window.DOMParser);
 	setGlobal("Node", dom.window.Node);
 	setGlobal("NodeFilter", dom.window.NodeFilter);
+	setGlobal("Element", dom.window.Element);
 	setGlobal("HTMLElement", dom.window.HTMLElement);
 	setGlobal("MouseEvent", dom.window.MouseEvent);
 	setGlobal("SubmitEvent", dom.window.SubmitEvent);
@@ -504,11 +505,15 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	const previousSessionId = ui.engine.state.currentSessionId;
 
 	closeBtn.click();
-	assert.equal(sidebar.classList.contains("mur-hidden-desktop"), true);
+	assert.equal(container.classList.contains("mur-sidebar-closed"), true);
+
+	sidebar.click();
+	assert.equal(container.classList.contains("mur-sidebar-closed"), false);
+
+	closeBtn.click();
 	assert.equal(container.classList.contains("mur-sidebar-closed"), true);
 
 	openBtn.click();
-	assert.equal(sidebar.classList.contains("mur-hidden-desktop"), false);
 	assert.equal(container.classList.contains("mur-sidebar-closed"), false);
 
 	storedChatLink.click();
@@ -517,6 +522,37 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 
 	(container.querySelector(".mur-new-chat-btn") as HTMLButtonElement).click();
 	assert.notEqual(ui.engine.state.currentSessionId, previousSessionId);
+
+	await ui.destroy();
+});
+
+test("ChatUI restores the persisted desktop sidebar state before enabling transitions", async () => {
+	const container = installDom("https://example.test/", { rootClass: "mur-sidebar-animated" });
+	localStorage.setItem("mur_sidebar_closed", "true");
+	const sidebar = container.querySelector(".mur-sidebar") as HTMLElement;
+	let restoredBeforeAnimation = false;
+	const getBoundingClientRect = sidebar.getBoundingClientRect.bind(sidebar);
+	sidebar.getBoundingClientRect = () => {
+		restoredBeforeAnimation =
+			container.classList.contains("mur-sidebar-closed") && !container.classList.contains("mur-sidebar-animated");
+		return getBoundingClientRect();
+	};
+
+	const { ChatUI } = await import("./main");
+	const ui = new ChatUI({
+		container,
+		provider: {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		routing: false,
+		storage: new MemoryStorage(),
+	});
+
+	assert.equal(container.classList.contains("mur-sidebar-closed"), true);
+	assert.equal(container.classList.contains("mur-sidebar-animated"), true);
+	assert.equal(restoredBeforeAnimation, true);
 
 	await ui.destroy();
 });

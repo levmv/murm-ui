@@ -106,7 +106,6 @@ export class ChatUI {
 		});
 
 		this.initComponents();
-		this.applyConfig();
 		this.bindEvents();
 	}
 
@@ -194,6 +193,7 @@ export class ChatUI {
 
 		if (this.config.enableSidebar) {
 			this.elements.sidebarEl = queryOrThrow<HTMLElement>(this.container, ".mur-sidebar");
+			this.restoreSidebarState();
 
 			this.sidebarComponent = new Sidebar({
 				container: this.container,
@@ -220,14 +220,21 @@ export class ChatUI {
 		}
 	}
 
-	private applyConfig() {
-		if (this.config.enableSidebar) {
-			const isDesktopClosed = lsGetItem("mur_sidebar_closed") === "true";
+	private restoreSidebarState() {
+		const isDesktopClosed = lsGetItem("mur_sidebar_closed") === "true";
+		if (!isDesktopClosed || window.innerWidth <= 768) return;
 
-			if (isDesktopClosed && window.innerWidth > 768) {
-				this.elements.sidebarEl.classList.add("mur-hidden-desktop");
-				this.container.classList.add("mur-sidebar-closed");
-			}
+		const hadAnimatedSidebar = this.container.classList.contains("mur-sidebar-animated");
+		if (hadAnimatedSidebar) {
+			this.container.classList.remove("mur-sidebar-animated");
+		}
+
+		this.container.classList.add("mur-sidebar-closed");
+
+		if (hadAnimatedSidebar) {
+			// Commit the restored state before re-enabling sidebar transitions.
+			this.elements.sidebarEl.getBoundingClientRect();
+			this.container.classList.add("mur-sidebar-animated");
 		}
 	}
 
@@ -404,7 +411,6 @@ export class ChatUI {
 		if (isMobile) {
 			this.elements.sidebarEl.classList.add("mur-mobile-open");
 		} else {
-			this.elements.sidebarEl.classList.remove("mur-hidden-desktop");
 			this.container.classList.remove("mur-sidebar-closed");
 			lsSetItem("mur_sidebar_closed", "false");
 		}
@@ -420,14 +426,13 @@ export class ChatUI {
 
 		if (isNavigation) return;
 
-		this.elements.sidebarEl.classList.add("mur-hidden-desktop");
 		this.container.classList.add("mur-sidebar-closed");
 		lsSetItem("mur_sidebar_closed", "true");
 	}
 
 	private handleSidebarRailClick(event: MouseEvent) {
 		if (window.innerWidth <= 768) return;
-		if (!this.elements.sidebarEl.classList.contains("mur-hidden-desktop")) return;
+		if (!this.container.classList.contains("mur-sidebar-closed")) return;
 
 		const target = event.target;
 		if (!(target instanceof Element)) return;

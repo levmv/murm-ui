@@ -263,10 +263,6 @@
 	background: var(--mur-hover-bg);
 }
 
-.mur-app:not(.mur-sidebar-closed) .mur-open-sidebar-btn {
-	display: none;
-}
-
 .mur-chat-layout-wrapper {
 	flex: 1;
 	position: relative;
@@ -382,7 +378,7 @@
 		text-overflow: ellipsis;
 	}
 
-	.mur-app:not(.mur-app-embedded):not(.mur-sidebar-closed) .mur-open-sidebar-btn {
+	.mur-app:not(.mur-app-embedded) .mur-open-sidebar-btn {
 		display: flex;
 	}
 
