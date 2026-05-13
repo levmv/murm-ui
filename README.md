@@ -80,6 +80,7 @@ import "murm-ui/highlighter/theme.css";
 Plugin entrypoints such as `murm-ui/plugins/attachment` import their own CSS, so apps only ship styles for plugins they enable.
 
 You provide the HTML skeleton. See `example/index.html` for the standard class names expected by `ChatUI`.
+The `.mur-app` root is a full-viewport shell by default. For embedded use, add `mur-app-embedded` to the root and pass `fullscreen: false` to `ChatUI`.
 
 Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-theme="light"` or `data-theme="dark"` on `.mur-app` for an explicit theme, or omit `data-theme` to follow the user's `prefers-color-scheme` setting.
 

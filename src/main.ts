@@ -8,6 +8,7 @@ import { AppRouter, type RouterConfig } from "./router";
 import { el, queryOrThrow } from "./utils/dom";
 
 const PAGE_SCROLL_CLASS = "mur-chat-page-scroll";
+let pageScrollAttachCount = 0;
 
 export interface ChatUIConfig {
 	container: HTMLElement | string;
@@ -17,6 +18,11 @@ export interface ChatUIConfig {
 	titleOptions?: Partial<RequestOptions>;
 	titleInstructions?: string;
 
+	/**
+	 * Whether Murm UI owns the viewport and uses page-level scrolling on mobile.
+	 * Defaults to true. Pass false when rendering inside a containing element.
+	 */
+	fullscreen?: boolean;
 	enableSidebar?: boolean;
 	initialSessionId?: string;
 
@@ -50,6 +56,7 @@ export class ChatUI {
 	private plugins: ChatPlugin[] = [];
 	private inputDrafts = new Map<string, string>();
 	private unsubscribeWindowTitle: () => void = () => {};
+	private usesFullscreenLayout = false;
 
 	private elements!: {
 		mainArea: HTMLElement;
@@ -68,6 +75,7 @@ export class ChatUI {
 
 	constructor(config: ChatUIConfig) {
 		this.config = { enableSidebar: true, ...config };
+		this.usesFullscreenLayout = this.config.fullscreen !== false;
 
 		let routerConfig: RouterConfig = { type: "hash" };
 		if (this.config.routing === false) {
@@ -83,7 +91,9 @@ export class ChatUI {
 
 		if (!el) throw new Error(`Chat container not found: ${this.config.container}`);
 		this.container = el as HTMLElement;
-		attachPageScrollClass();
+		if (this.usesFullscreenLayout) {
+			attachPageScrollClass();
+		}
 
 		const initialSessionId = this.config.initialSessionId || this.router.getId() || null;
 
@@ -120,7 +130,10 @@ export class ChatUI {
 		this.sidebarComponent?.destroy();
 		this.feedComponent.destroy();
 		this.inputComponent.destroy();
-		detachPageScrollClass();
+		if (this.usesFullscreenLayout) {
+			detachPageScrollClass();
+			this.usesFullscreenLayout = false;
+		}
 	}
 
 	private initComponents() {
@@ -176,6 +189,7 @@ export class ChatUI {
 		this.feedComponent = new Feed(this.container, {
 			highlighter: this.config.highlighter,
 			plugins: this.plugins,
+			fullscreen: this.usesFullscreenLayout,
 		});
 
 		if (this.config.enableSidebar) {
@@ -440,9 +454,13 @@ function lsSetItem(key: string, value: string): void {
 }
 
 function attachPageScrollClass(): void {
+	pageScrollAttachCount++;
 	document.documentElement.classList.add(PAGE_SCROLL_CLASS);
 }
 
 function detachPageScrollClass(): void {
-	document.documentElement.classList.remove(PAGE_SCROLL_CLASS);
+	pageScrollAttachCount = Math.max(0, pageScrollAttachCount - 1);
+	if (pageScrollAttachCount === 0) {
+		document.documentElement.classList.remove(PAGE_SCROLL_CLASS);
+	}
 }

@@ -27,11 +27,15 @@ function setGlobal(name: string, value: unknown): void {
 }
 
 function createFeedHarness(
-	options: { mobile?: boolean; resizeObserver?: boolean; plugins?: ChatPlugin[] } = {},
+	options: { fullscreen?: boolean; mobile?: boolean; resizeObserver?: boolean; plugins?: ChatPlugin[] } = {},
 ): FeedHarness {
+	const isFullscreen = options.fullscreen !== false;
+	const rootClass = `mur-app${isFullscreen ? "" : " mur-app-embedded"}`;
 	const dom = new JSDOM(`
-		<div class="mur-chat-scroll-area">
-			<div class="mur-chat-history"></div>
+		<div class="${rootClass}">
+			<div class="mur-chat-scroll-area">
+				<div class="mur-chat-history"></div>
+			</div>
 		</div>
 	`);
 
@@ -132,11 +136,13 @@ function createFeedHarness(
 			dispatchEvent: () => false,
 		}) as MediaQueryList;
 
-	const feed = new Feed(dom.window.document.body, { plugins: options.plugins ?? [] });
+	const root = dom.window.document.querySelector<HTMLElement>(".mur-app");
+	assert.ok(root);
+	const feed = new Feed(root, { plugins: options.plugins ?? [], fullscreen: isFullscreen });
 
 	return {
 		feed,
-		root: dom.window.document.body,
+		root,
 		frameCount: () => frames.size,
 		flushFrames: () => {
 			const pending = [...frames.values()];
@@ -311,6 +317,14 @@ test("mobile feed listens only to window scroll", () => {
 	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
 });
 
+test("mobile embedded feed listens only to the scroll area", () => {
+	const { feed, scrollListenerCounts } = createFeedHarness({ fullscreen: false, mobile: true });
+
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
+	feed.destroy();
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
+});
+
 test("feed swaps scroll listener targets when the mobile query changes", () => {
 	const { feed, scrollListenerCounts, triggerMediaChange } = createFeedHarness();
 
@@ -359,6 +373,22 @@ test("mobile generation scrolls the window", () => {
 	flushFrames();
 	assert.deepEqual(scrollCalls, []);
 	assert.deepEqual(windowScrollCalls, ["smooth"]);
+
+	feed.destroy();
+});
+
+test("mobile embedded generation scrolls the scroll area", () => {
+	const { feed, frameCount, flushFrames, scrollCalls, windowScrollCalls } = createFeedHarness({
+		fullscreen: false,
+		mobile: true,
+	});
+
+	feed.update(messages(), "assistant-1", false, true);
+
+	assert.equal(frameCount(), 1);
+	flushFrames();
+	assert.deepEqual(scrollCalls, ["smooth"]);
+	assert.deepEqual(windowScrollCalls, []);
 
 	feed.destroy();
 });

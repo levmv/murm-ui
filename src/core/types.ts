@@ -244,6 +244,7 @@ export interface RenderConfig {
 	 */
 	highlighter?: CodeHighlighter;
 	plugins: ChatPlugin[];
+	fullscreen?: boolean;
 }
 
 type AnyFn = (...args: never[]) => unknown;

@@ -59,6 +59,7 @@ class MemoryStorage implements ChatStorage {
 interface ShellOptions {
 	includeHeaderTitle?: boolean;
 	includeOpenSidebarButton?: boolean;
+	rootClass?: string;
 }
 
 function setGlobal(name: string, value: unknown): void {
@@ -126,9 +127,10 @@ function installDom(url = "https://example.test/", shellOptions: ShellOptions = 
 function renderShell(options: ShellOptions = {}): string {
 	const includeHeaderTitle = options.includeHeaderTitle ?? true;
 	const includeOpenSidebarButton = options.includeOpenSidebarButton ?? true;
+	const rootClass = ["mur-app", options.rootClass].filter(Boolean).join(" ");
 
 	return `
-		<div class="mur-app">
+		<div class="${rootClass}">
 			<aside class="mur-sidebar">
 				<div class="mur-sidebar-header">
 					<button type="button" class="mur-close-sidebar-btn">Close</button>
@@ -274,6 +276,67 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	submit(form);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	assert.equal(providerCalls, 2);
+});
+
+test("ChatUI skips page-scroll when fullscreen is false", async () => {
+	const container = installDom("https://example.test/", { rootClass: "mur-app-embedded" });
+	const { ChatUI } = await import("./main");
+
+	const ui = new ChatUI({
+		container,
+		enableSidebar: false,
+		fullscreen: false,
+		provider: {
+			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+				onEvent({ type: "finish", reason: "stop" });
+			},
+		},
+		routing: false,
+		storage: new MemoryStorage(),
+	});
+
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
+
+	await ui.destroy();
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
+});
+
+test("ChatUI ref-counts the fullscreen page-scroll class", async () => {
+	const containerA = installDom();
+	const containerB = document.createElement("div");
+	containerB.innerHTML = renderShell();
+	document.body.appendChild(containerB.firstElementChild as HTMLElement);
+	const appB = document.querySelectorAll<HTMLElement>(".mur-app")[1];
+	assert.ok(appB);
+
+	const { ChatUI } = await import("./main");
+	const provider: ChatProvider = {
+		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	const uiA = new ChatUI({
+		container: containerA,
+		enableSidebar: false,
+		provider,
+		routing: false,
+		storage: new MemoryStorage(),
+	});
+	const uiB = new ChatUI({
+		container: appB,
+		enableSidebar: false,
+		provider,
+		routing: false,
+		storage: new MemoryStorage(),
+	});
+
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), true);
+
+	await uiA.destroy();
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), true);
+
+	await uiB.destroy();
+	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
 });
 
 test("ChatUI passes titleOptions into auto-title generation", async () => {

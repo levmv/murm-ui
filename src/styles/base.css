@@ -144,8 +144,15 @@
 	display: none;
 }
 
+.mur-app.mur-app-embedded {
+	height: 100%;
+	width: 100%;
+	min-height: 0;
+	min-width: 0;
+}
+
 @supports (height: 100dvh) {
-	.mur-app {
+	.mur-app:not(.mur-app-embedded) {
 		height: 100dvh;
 		width: 100dvw;
 	}
@@ -317,7 +324,7 @@
 		overflow-y: auto;
 	}
 
-	.mur-app {
+	.mur-app:not(.mur-app-embedded) {
 		min-height: 100vh;
 		height: auto;
 		width: 100%;
@@ -325,47 +332,47 @@
 	}
 
 	@supports (min-height: 100svh) {
-		.mur-app {
+		.mur-app:not(.mur-app-embedded) {
 			min-height: 100svh;
 		}
 	}
 
 	@supports (min-height: 100dvh) {
-		.mur-app {
+		.mur-app:not(.mur-app-embedded) {
 			min-height: 100dvh;
 			height: auto;
 		}
 	}
 
-	.mur-main-area {
+	.mur-app:not(.mur-app-embedded) .mur-main-area {
 		min-height: 100vh;
 	}
 
 	@supports (min-height: 100svh) {
-		.mur-main-area {
+		.mur-app:not(.mur-app-embedded) .mur-main-area {
 			min-height: 100svh;
 		}
 	}
 
 	@supports (min-height: 100dvh) {
-		.mur-main-area {
+		.mur-app:not(.mur-app-embedded) .mur-main-area {
 			min-height: 100dvh;
 		}
 	}
 
-	.mur-main-header {
+	.mur-app:not(.mur-app-embedded) .mur-main-header {
 		position: sticky;
 		background-color: var(--mur-bg);
 		border-bottom: 1px solid var(--mur-border);
 		pointer-events: auto;
 	}
 
-	.mur-main-header > button {
+	.mur-app:not(.mur-app-embedded) .mur-main-header > button {
 		background-color: transparent;
 		backdrop-filter: none;
 	}
 
-	.mur-header-title {
+	.mur-app:not(.mur-app-embedded) .mur-header-title {
 		display: block;
 		font-size: 1.1rem;
 		flex: 1;
@@ -375,39 +382,39 @@
 		text-overflow: ellipsis;
 	}
 
-	.mur-app:not(.mur-sidebar-closed) .mur-open-sidebar-btn {
+	.mur-app:not(.mur-app-embedded):not(.mur-sidebar-closed) .mur-open-sidebar-btn {
 		display: flex;
 	}
 
-	.mur-chat-layout-wrapper {
+	.mur-app:not(.mur-app-embedded) .mur-chat-layout-wrapper {
 		min-height: calc(100vh - var(--mur-header-height));
 		overflow: visible;
 	}
 
 	@supports (min-height: 100svh) {
-		.mur-chat-layout-wrapper {
+		.mur-app:not(.mur-app-embedded) .mur-chat-layout-wrapper {
 			min-height: calc(100svh - var(--mur-header-height));
 		}
 	}
 
 	@supports (min-height: 100dvh) {
-		.mur-chat-layout-wrapper {
+		.mur-app:not(.mur-app-embedded) .mur-chat-layout-wrapper {
 			min-height: calc(100dvh - var(--mur-header-height));
 		}
 	}
 
-	.mur-chat-scroll-area {
+	.mur-app:not(.mur-app-embedded) .mur-chat-scroll-area {
 		flex: 1;
 		min-height: 0;
 		overflow: visible;
 		scrollbar-gutter: auto;
 	}
 
-	.mur-chat-history {
+	.mur-app:not(.mur-app-embedded) .mur-chat-history {
 		padding: 1rem 1rem 7rem;
 	}
 
-	.mur-chat-form-container {
+	.mur-app:not(.mur-app-embedded) .mur-chat-form-container {
 		--mur-chat-form-bottom-space: max(1rem, env(safe-area-inset-bottom));
 
 		position: sticky;

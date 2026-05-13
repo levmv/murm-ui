@@ -36,8 +36,9 @@ export class Feed {
 	private pendingScrollBehavior: ScrollBehavior | null = null;
 	private resizeObserver?: ResizeObserver;
 	private mediaQueryList: MediaQueryList;
-	private isMobileScroll = false;
+	private usesWindowScroll = false;
 	private activeScrollTarget: "scrollArea" | "window" | null = null;
+	private readonly usesFullscreenLayout: boolean;
 
 	constructor(
 		container: HTMLElement,
@@ -46,7 +47,8 @@ export class Feed {
 		this.scrollArea = queryOrThrow<HTMLElement>(container, ".mur-chat-scroll-area");
 		this.historyContainer = queryOrThrow<HTMLElement>(container, ".mur-chat-history");
 		this.mediaQueryList = window.matchMedia(MOBILE_SCROLL_QUERY);
-		this.isMobileScroll = this.mediaQueryList.matches;
+		this.usesFullscreenLayout = config.fullscreen !== false;
+		this.usesWindowScroll = this.usesFullscreenLayout && this.mediaQueryList.matches;
 
 		this.historyContainer.addEventListener("click", this.onHistoryClick);
 		this.syncScrollListener();
@@ -237,7 +239,7 @@ export class Feed {
 
 			if (this.isDestroyed || !this.isStickyToBottom) return;
 
-			if (this.isMobileScroll) {
+			if (this.usesWindowScroll) {
 				window.scrollTo({
 					top: document.documentElement.scrollHeight,
 					behavior,
@@ -304,7 +306,7 @@ export class Feed {
 	}
 
 	private getScrollMetrics(): { scrollTop: number; scrollHeight: number; clientHeight: number } {
-		if (this.isMobileScroll) {
+		if (this.usesWindowScroll) {
 			const doc = document.documentElement;
 
 			return {
@@ -322,13 +324,13 @@ export class Feed {
 	}
 
 	private onMediaChange = (event: MediaQueryListEvent) => {
-		this.isMobileScroll = event.matches;
+		this.usesWindowScroll = this.usesFullscreenLayout && event.matches;
 		this.syncScrollListener();
 		this.lastScrollTop = this.getScrollMetrics().scrollTop;
 	};
 
 	private syncScrollListener(): void {
-		const nextTarget = this.isMobileScroll ? "window" : "scrollArea";
+		const nextTarget = this.usesWindowScroll ? "window" : "scrollArea";
 		if (this.activeScrollTarget === nextTarget) return;
 
 		this.removeActiveScrollListener();
