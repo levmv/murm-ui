@@ -69,8 +69,9 @@ export interface Message {
 	// Used to prevent this message from being sent to the LLM or persisted
 	ephemeral?: boolean;
 	usage?: TokenUsage;
-	// Escape hatch for plugin developers to store custom state
-	meta?: Record<string, unknown>;
+	// Durable provider/plugin metadata. Must stay JSON-serializable because it
+	// can be persisted with chat history.
+	meta?: Record<string, JsonValue>;
 }
 
 export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "error" | "aborted";
@@ -268,7 +269,15 @@ export interface ReadonlyChatRequest {
 
 export interface ChatRequestPatch {
 	messages?: Message[];
+	/**
+	 * Omit to keep the accumulated request instructions unchanged.
+	 * Return `instructions: undefined` to clear inherited instructions.
+	 */
 	instructions?: string;
+	/**
+	 * Omit to keep the accumulated request tools unchanged.
+	 * Return `tools: undefined` to clear inherited tools.
+	 */
 	tools?: ToolDefinition[];
 	options?: Partial<RequestOptions>;
 }

@@ -49,7 +49,6 @@ const rootPublicExports = [
 	"ChatEngine",
 	"ChatUI",
 	"IndexedDBStorage",
-	"MAX_PINNED_SESSIONS",
 	"OpenAIProvider",
 	"RemoteStorage",
 	"RemoteStorageError",

@@ -8,6 +8,7 @@ import type {
 	ChatProvider,
 	ChatRequest,
 	ChatRequestDefaults,
+	ChatRequestPatch,
 	ChatState,
 	ChatStorage,
 	Message,
@@ -340,10 +341,10 @@ export class ChatEngine {
 
 				if (patch) {
 					if (patch.messages) payloadParams.messages = patch.messages;
-					if (Object.hasOwn(patch, "instructions")) {
+					if (hasPatchField(patch, "instructions")) {
 						payloadParams.instructions = patch.instructions;
 					}
-					if (Object.hasOwn(patch, "tools")) {
+					if (hasPatchField(patch, "tools")) {
 						payloadParams.tools = patch.tools ? [...patch.tools] : undefined;
 					}
 					if (patch.options) {
@@ -482,4 +483,9 @@ function findLastUserRunId(messages: readonly Message[]): string | undefined {
 	}
 
 	return undefined;
+}
+
+function hasPatchField(patch: ChatRequestPatch, key: keyof ChatRequestPatch): boolean {
+	// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is ES2022, but core targets ES2018.
+	return Object.prototype.hasOwnProperty.call(patch, key);
 }

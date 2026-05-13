@@ -14,6 +14,12 @@ Built for developers who need a functional chat UI without framework overhead. N
 
 ---
 
+### Install
+
+```sh
+npm install murm-ui
+```
+
 ### Usage
 
 The UI is heavily decoupled. You assemble the chat by passing in a **Provider** (how it talks to the AI), **Storage** (how it saves history), and **Plugins** (extra UI features).
@@ -55,15 +61,19 @@ The built-in highlighter escapes plain or unknown-language code blocks.
 The root package entry is side-effect-free. For bundlers that support CSS imports, `murm-ui/with-css` includes the core styles automatically. You can also import the CSS assets explicitly:
 
 ```typescript
+// Core styles
 import "murm-ui/styles/base.css";
 import "murm-ui/styles/sidebar.css";
 import "murm-ui/styles/input.css";
 import "murm-ui/styles/feed.css";
 import "murm-ui/styles/dropdown.css";
+
+// Plugin styles (import only what you use)
 import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
-import "murm-ui/plugins/settings/settings.css";
 import "murm-ui/plugins/thinking/thinking.css";
+
+// Highlighter theme (optional)
 import "murm-ui/highlighter/theme.css";
 ```
 

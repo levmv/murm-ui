@@ -25,7 +25,7 @@ export function cloneMessages(messages: Message[]): Message[] {
 			};
 		}
 		if (message.meta) {
-			cloned.meta = { ...message.meta };
+			cloned.meta = cloneJsonValue(message.meta);
 		}
 		return cloned;
 	});

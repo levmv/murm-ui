@@ -17,20 +17,20 @@ export type {
 	ChatState,
 	ChatStorage,
 	CodeHighlighter,
+	ContentBlock,
+	FinishReason,
 	JsonValue,
 	Message,
 	MessageActionContext,
+	PaginatedSessions,
 	PluginContext,
 	PluginInputContext,
 	ReadonlyChatRequest,
 	RequestOptions,
+	Role,
+	StreamEvent,
 	TokenUsage,
 	ToolDefinition,
 } from "./core/types";
-export { MAX_PINNED_SESSIONS } from "./core/types";
 export { ChatUI, type ChatUIConfig } from "./main";
-
-export type { AttachmentPluginConfig, FileHandler } from "./plugins/attachment/attachment-plugin";
-export type { EditConfig } from "./plugins/edit/edit-plugin";
-export type { SettingsPluginConfig, SettingsState, SettingsStorage } from "./plugins/settings/settings-plugin";
-export type { ToolRenderContext, ToolRenderer, ToolsPluginConfig } from "./plugins/tools/tools-plugin";
+export type { RouterConfig, RouterType } from "./router";

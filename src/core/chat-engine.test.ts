@@ -1420,6 +1420,44 @@ test("structured providers receive semantic fields separately from passthrough o
 	assert.equal(request.messages[0].role, "user");
 });
 
+test("plugins can explicitly clear semantic request defaults", async () => {
+	let providerRequest: ChatRequest | null = null;
+	const defaultTools = [{ type: "function", function: { name: "default_tool" } }];
+	const plugin: ChatPlugin = {
+		name: "semantic-request-clearer",
+		beforeSubmit: (params) => {
+			assert.equal(params.instructions, "default instructions");
+			assert.deepEqual(params.tools, defaultTools);
+			return {
+				instructions: undefined,
+				tools: undefined,
+			};
+		},
+	};
+	const provider: ChatProvider = {
+		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			providerRequest = request;
+			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
+			onEvent({ type: "finish", reason: "stop" });
+		},
+	};
+	const engine = new ChatEngine({ provider, storage: new MemoryStorage() });
+	engine.registerPlugins([plugin]);
+	engine.setRequestDefaults({
+		instructions: "default instructions",
+		tools: defaultTools,
+	});
+
+	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	engine.sendMessage("hello");
+	await waitFor(() => engine.state.generatingMessageId === null && providerRequest !== null, "structured request");
+
+	const request = providerRequest as unknown as ChatRequest;
+	assert.equal(request.instructions, undefined);
+	assert.equal(request.tools, undefined);
+	assert.equal(request.messages[0].role, "user");
+});
+
 test("auto-title updates session metadata after the first assistant reply", async () => {
 	const storage = new MemoryStorage();
 	const provider: ChatProvider = {

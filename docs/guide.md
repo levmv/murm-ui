@@ -14,13 +14,13 @@ Murm UI is a zero-framework TypeScript chat interface for LLM apps. It handles t
 - [Storage](#storage)
 - [Browser Support](#browser-support)
 
-<h2 id="install">Install</h2>
+## Install
 
 ```sh
 npm install murm-ui
 ```
 
-<h2 id="html-shell">HTML Shell</h2>
+## HTML Shell
 
 `ChatUI` expects a small set of class names so it can attach the sidebar, feed, and input behavior.
 Add `mur-sidebar-animated` to `.mur-app` if you want the desktop sidebar rail transition; omit it for instant desktop layout changes.
@@ -59,7 +59,7 @@ The `.mur-header-title` element is optional. Omit it when your app does not want
 
 For a complete static shell, see `docs/demo/index.html`.
 
-<h2 id="css">CSS</h2>
+## CSS
 
 The root `murm-ui` entry does not import CSS. For bundlers that support CSS imports, use `murm-ui/with-css` to include the core styles automatically. You can also import CSS explicitly.
 
@@ -73,12 +73,13 @@ import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
 import "murm-ui/plugins/settings/settings.css";
 import "murm-ui/plugins/thinking/thinking.css";
+import "murm-ui/plugins/tools/tools.css";
 import "murm-ui/highlighter/theme.css";
 ```
 
 Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-theme="light"` or `data-theme="dark"` on `.mur-app`, or omit `data-theme` to follow `prefers-color-scheme`.
 
-<h2 id="create-the-ui">Create The UI</h2>
+## Create The UI
 
 ```ts
 import {
@@ -126,7 +127,7 @@ new ChatUI({
 
 The `sidebarMenu` builder should stay pure. Return the final item list from the defaults and context, and put side effects inside item `onClick` handlers.
 
-<h2 id="syntax-highlighting">Syntax Highlighting</h2>
+## Syntax Highlighting
 
 Syntax highlighting is optional. If you omit `highlighter`, Murm UI still renders safe code blocks with language labels and copy buttons; it just leaves the code text uncolored.
 
@@ -184,7 +185,7 @@ const highlighter = createHighlighter({
 });
 ```
 
-<h2 id="providers">Providers</h2>
+## Providers
 
 Providers are the boundary between Murm UI and the model. A provider receives a normalized chat request and streams normalized events back into the engine.
 
@@ -229,7 +230,7 @@ For browser apps, a backend proxy is usually the production boundary. BYOK and l
 
 The hosted demo uses a mock provider so visitors can try streaming without an API key or backend.
 
-<h2 id="plugins">Plugins</h2>
+## Plugins
 
 Plugins add behavior around input, rendering, request preparation, and message actions.
 
@@ -264,7 +265,7 @@ new ChatUI({
 
 Plugin entrypoints import their own CSS. If you do not import a plugin entrypoint, its code and styles stay out of the app bundle. Plugin CSS files are also exported separately for apps that manage styles explicitly.
 
-<h2 id="storage">Storage</h2>
+## Storage
 
 Storage adapters persist chat sessions and metadata. Murm UI ships with browser-local IndexedDB storage and a REST-oriented remote storage adapter.
 
@@ -289,6 +290,6 @@ Chat metadata may include `isPinned?: boolean`. If your app exposes the built-in
 
 For long chats, pass `{ saveLimit: 20 }` to send only the most recent messages. Partial saves include `X-Murm-Save-Mode: partial`; backends should merge those messages instead of replacing the full stored chat.
 
-<h2 id="browser-support">Browser Support</h2>
+## Browser Support
 
 Murm UI emits ES2018 JavaScript. Runtime support depends on streaming and storage APIs: `fetch`, `ReadableStream`, `TextDecoder`, `AbortController`, `crypto.getRandomValues`, and IndexedDB or custom storage.
