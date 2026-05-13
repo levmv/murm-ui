@@ -1,5 +1,5 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { marked } from "marked";
+import { Marked } from "marked";
 
 const outDir = "docs/dist";
 
@@ -19,6 +19,52 @@ function escapeHtml(value) {
 		.replace(/>/g, "&gt;")
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&#39;");
+}
+
+function textFromTokens(tokens) {
+	return tokens
+		.map((token) => {
+			if (typeof token.text === "string") return token.text;
+			if (Array.isArray(token.tokens)) return textFromTokens(token.tokens);
+			return "";
+		})
+		.join("");
+}
+
+function slugifyHeading(value) {
+	const slug = value
+		.trim()
+		.toLowerCase()
+		.normalize("NFKD")
+		.replace(/[\u0300-\u036f]/g, "")
+		.replace(/[^a-z0-9\s-]/g, "")
+		.trim()
+		.replace(/\s+/g, "-")
+		.replace(/-+/g, "-");
+
+	return slug || "section";
+}
+
+function uniqueSlug(base, seenSlugs) {
+	const count = seenSlugs.get(base) ?? 0;
+	seenSlugs.set(base, count + 1);
+	return count === 0 ? base : `${base}-${count}`;
+}
+
+function renderMarkdown(markdown) {
+	const seenSlugs = new Map();
+	const parser = new Marked({
+		renderer: {
+			heading({ tokens, depth }) {
+				const text = textFromTokens(tokens);
+				const slug = uniqueSlug(slugifyHeading(text), seenSlugs);
+				const html = escapeHtml(text);
+				return `<h${depth} id="${escapeHtml(slug)}">${html}</h${depth}>\n`;
+			},
+		},
+	});
+
+	return parser.parse(markdown, { async: false });
 }
 
 function renderNav(currentHref) {
@@ -226,11 +272,12 @@ function renderPage({ title, body, currentHref }) {
 await rm(outDir, { recursive: true, force: true });
 await mkdir(`${outDir}/demo`, { recursive: true });
 await cp("docs/index.html", `${outDir}/index.html`);
+await cp("docs/chat-shell.html", `${outDir}/chat-shell.html`);
 await cp("docs/demo/index.html", `${outDir}/demo/index.html`);
 
 for (const page of pages) {
 	const markdown = await readFile(page.source, "utf8");
-	const body = marked.parse(markdown, { async: false });
+	const body = renderMarkdown(markdown);
 	await writeFile(`${outDir}/${page.output}`, renderPage({ title: page.title, body, currentHref: page.output }));
 }
 

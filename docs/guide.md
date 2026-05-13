@@ -25,6 +25,7 @@ npm install murm-ui
 `ChatUI` expects a small set of class names so it can attach the sidebar, feed, and input behavior.
 Add `mur-sidebar-animated` to `.mur-app` if you want the desktop sidebar rail transition; omit it for instant desktop layout changes.
 By default, `.mur-app` is a full-viewport app shell. For contained panels, sidebars, docs pages, or app sections, add `mur-app-embedded` to the root and pass `fullscreen: false` to `ChatUI`.
+For a complete copy-paste shell, see [`chat-shell.html`](chat-shell.html).
 
 ```html
 <div class="mur-app mur-sidebar-animated">
@@ -57,8 +58,7 @@ By default, `.mur-app` is a full-viewport app shell. For contained panels, sideb
 ```
 
 The `.mur-header-title` element is optional. Omit it when your app does not want a visible in-app chat title; `updateWindowTitle` can still sync the browser title.
-
-For a complete static shell, see `docs/demo/index.html`.
+Button contents and icons are replaceable. Keep the class hooks that Murm UI queries: `.mur-sidebar`, `.mur-sidebar-content`, `.mur-main-area`, `.mur-open-sidebar-btn`, `.mur-chat-history`, `.mur-chat-form`, `.mur-chat-input`, and `.mur-send-btn`. The stock CSS also toggles `.mur-send-icon` and `.mur-stop-icon` inside the send button while a response is generating.
 
 ## CSS
 

@@ -2,7 +2,7 @@
 
 A zero-framework, vanilla TypeScript chat interface for LLMs.
 
-Documentation and the static mock demo live at https://levmv.github.io/murm-ui/.
+Documentation and the static mock demo live at https://levmv.github.io/murm-ui/. The npm package also includes local reference files under `docs/`.
 
 Built for developers who need a functional chat UI without framework overhead. No React, no virtual DOM, no build pipeline complexity—just a small, composable library that handles chat state, rendering, and user interaction.
 

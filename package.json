@@ -58,8 +58,13 @@
 	},
 	"types": "./dist/index.d.ts",
 	"files": [
-		"dist"
+		"dist",
+		"docs/guide.md",
+		"docs/chat-shell.html"
 	],
+	"directories": {
+		"doc": "docs"
+	},
 	"sideEffects": [
 		"**/*.css",
 		"./dist/with-css.js",
