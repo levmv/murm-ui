@@ -39,12 +39,16 @@ export class Input {
 
 		for (const plugin of plugins) {
 			if (plugin.onInputMount) {
-				plugin.onInputMount({
-					container: this.props.container,
-					form: this.form,
-					input: this.input,
-					requestSubmitStateSync: () => this.syncSubmitState(),
-				});
+				try {
+					plugin.onInputMount({
+						container: this.props.container,
+						form: this.form,
+						input: this.input,
+						requestSubmitStateSync: () => this.syncSubmitState(),
+					});
+				} catch (error) {
+					console.error(`Plugin "${plugin.name}" failed during onInputMount`, error);
+				}
 			}
 		}
 
@@ -207,11 +211,25 @@ export class Input {
 	}
 
 	private isSubmitBlocked(): boolean {
-		return this.plugins.some((p) => p.isSubmitBlocked?.());
+		return this.plugins.some((p) => {
+			try {
+				return Boolean(p.isSubmitBlocked?.());
+			} catch (error) {
+				console.error(`Plugin "${p.name}" failed during isSubmitBlocked`, error);
+				return false;
+			}
+		});
 	}
 
 	private hasPendingPluginData(): boolean {
-		return this.plugins.some((p) => p.hasPendingData?.());
+		return this.plugins.some((p) => {
+			try {
+				return Boolean(p.hasPendingData?.());
+			} catch (error) {
+				console.error(`Plugin "${p.name}" failed during hasPendingData`, error);
+				return false;
+			}
+		});
 	}
 
 	private refreshTextState(): boolean {

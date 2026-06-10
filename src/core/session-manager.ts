@@ -104,24 +104,28 @@ export class SessionManager implements ChatSessions {
 		if (this.deletedSessionIds.has(sessionId)) return false;
 
 		const messagesToSave = dropEphemeralMessages(messages);
-		const existingMeta = this.state.sessions.find((s) => s.id === sessionId);
-		const title = existingMeta?.title ?? this.createFallbackTitle(messagesToSave);
-		const updatedAt = Date.now();
-		const isPinned =
-			existingMeta?.isPinned ??
-			(this.activeSessionMeta?.id === sessionId ? this.activeSessionMeta.isPinned : undefined);
-
-		const sessionToSave: ChatSession = {
-			id: sessionId,
-			title,
-			updatedAt,
-			...(typeof isPinned === "boolean" ? { isPinned } : {}),
-			messages: messagesToSave,
-		};
 
 		try {
 			return await this.enqueueSessionWrite(sessionId, async () => {
 				if (this.deletedSessionIds.has(sessionId)) return false;
+
+				// Resolve title/isPinned here, not at enqueue time: an earlier queued
+				// write (e.g. auto-title's updateTitle) may change them before this
+				// operation runs, and a stale snapshot would overwrite that update.
+				const existingMeta = this.state.sessions.find((s) => s.id === sessionId);
+				const title = existingMeta?.title ?? this.createFallbackTitle(messagesToSave);
+				const isPinned =
+					existingMeta?.isPinned ??
+					(this.activeSessionMeta?.id === sessionId ? this.activeSessionMeta.isPinned : undefined);
+
+				const sessionToSave: ChatSession = {
+					id: sessionId,
+					title,
+					updatedAt: Date.now(),
+					...(typeof isPinned === "boolean" ? { isPinned } : {}),
+					messages: messagesToSave,
+				};
+
 				await this.storage.save(sessionToSave);
 
 				if (this.deletedSessionIds.has(sessionId)) return false;

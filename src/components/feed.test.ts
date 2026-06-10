@@ -1006,3 +1006,41 @@ test("message-scoped errors render only on the matching message", () => {
 
 	feed.destroy();
 });
+
+test("a throwing plugin does not break block rendering or other plugins' actions", async () => {
+	const brokenPlugin: ChatPlugin = {
+		name: "broken",
+		onBlockRender: () => {
+			throw new Error("render boom");
+		},
+		getActionButtons: () => {
+			throw new Error("actions boom");
+		},
+	};
+	const { feed, root } = createFeedHarness({ plugins: [brokenPlugin, CopyPlugin()] });
+
+	setGlobal("navigator", {
+		clipboard: {
+			writeText: async () => {},
+		},
+	});
+
+	feed.update(
+		[
+			{
+				id: "assistant-1",
+				role: "assistant",
+				blocks: [{ id: "text-1", type: "text", text: "Still **rendered**" }],
+			},
+		],
+		null,
+		false,
+		false,
+	);
+	await flushMicrotasks();
+
+	assert.match(root.querySelector(".mur-block-text")?.textContent ?? "", /Still rendered/);
+	assert.ok(root.querySelector(".mur-action-icon-btn"));
+
+	feed.destroy();
+});

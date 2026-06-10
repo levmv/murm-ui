@@ -72,6 +72,15 @@ export async function parseSSE(response: Response, onMessage: (data: string) => 
 			const data = parseEventData(buffer);
 			if (data !== null) onMessage(data);
 		}
+	} catch (error) {
+		// Tear down the connection on the error path too; releaseLock() alone
+		// leaves the HTTP response streaming until the server closes it.
+		try {
+			await reader.cancel();
+		} catch {
+			// Surfacing the original error matters more.
+		}
+		throw error;
 	} finally {
 		reader.releaseLock();
 	}

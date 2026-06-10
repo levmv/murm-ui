@@ -439,3 +439,24 @@ test("destroy cancels a pending focus timeout", () => {
 		setGlobal("clearTimeout", originalClearTimeout);
 	}
 });
+
+test("throwing plugin submit hooks do not block submission", () => {
+	const brokenPlugin: ChatPlugin = {
+		name: "broken",
+		isSubmitBlocked: () => {
+			throw new Error("blocked boom");
+		},
+		hasPendingData: () => {
+			throw new Error("pending boom");
+		},
+	};
+	const harness = mountInput([brokenPlugin]);
+
+	setInputValue(harness.input, "hello");
+	assert.equal(harness.sendBtn.disabled, false);
+
+	submit(harness.form);
+	assert.deepEqual(harness.submissions, ["hello"]);
+
+	harness.destroy();
+});

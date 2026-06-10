@@ -109,9 +109,13 @@ export class MessageNode {
 				if (!plugin.onBlockRender) continue;
 
 				blockRenderCtx ??= { message: msg, messages, blockIndex: i };
-				if (plugin.onBlockRender(block, container, isGeneratingBlock, blockRenderCtx)) {
-					handledByPlugin = true;
-					break;
+				try {
+					if (plugin.onBlockRender(block, container, isGeneratingBlock, blockRenderCtx)) {
+						handledByPlugin = true;
+						break;
+					}
+				} catch (error) {
+					console.error(`Plugin "${plugin.name}" failed during onBlockRender`, error);
 				}
 			}
 
@@ -262,7 +266,12 @@ export class MessageNode {
 		const actionButtons: HTMLElement[] = [];
 
 		for (const plugin of this.config.plugins) {
-			const defs = plugin.getActionButtons?.(msg) ?? [];
+			let defs: ActionButtonDef[] = [];
+			try {
+				defs = plugin.getActionButtons?.(msg) ?? [];
+			} catch (error) {
+				console.error(`Plugin "${plugin.name}" failed during getActionButtons`, error);
+			}
 			for (const def of defs) {
 				actionButtons.push(this.createActionButton(plugin.name, def));
 			}

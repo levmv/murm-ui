@@ -1631,3 +1631,36 @@ test("deleting the active session lets deletion win over the aborted generation 
 	assert.equal(storage.deleted.length, 1);
 	assert.notEqual(engine.state.currentSessionId, "active-session");
 });
+
+test("session save enqueued behind a pending title update keeps the new title", async () => {
+	let releaseMetadata = () => {};
+	const metadataGate = new Promise<void>((resolve) => {
+		releaseMetadata = resolve;
+	});
+	const storage = new (class extends MemoryStorage {
+		override async updateMetadata(id: string, meta: Partial<ChatSessionMeta>): Promise<void> {
+			await metadataGate;
+			await super.updateMetadata(id, meta);
+		}
+	})();
+
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	const sessionId = engine.state.currentSessionId;
+
+	// First save creates the session meta with a fallback title.
+	await engine.setMessages([textMessage("m1", "user", "first question")]);
+
+	// The title update parks inside storage.updateMetadata while a snapshot
+	// save is enqueued behind it.
+	const titleUpdate = engine.sessions.updateTitle(sessionId, "Smart Title");
+	const snapshotSave = engine.setMessages([
+		textMessage("m1", "user", "first question"),
+		textMessage("m2", "assistant", "an answer"),
+	]);
+
+	releaseMetadata();
+	await Promise.all([titleUpdate, snapshotSave]);
+
+	assert.equal(storage.sessions.get(sessionId)?.title, "Smart Title");
+	assert.equal(engine.state.sessions.find((s) => s.id === sessionId)?.title, "Smart Title");
+});

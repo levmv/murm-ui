@@ -123,7 +123,12 @@ export class ChatUI {
 		}
 
 		for (const plugin of this.plugins) {
-			if (plugin.destroy) plugin.destroy();
+			if (!plugin.destroy) continue;
+			try {
+				plugin.destroy();
+			} catch (error) {
+				console.error(`Plugin "${plugin.name}" failed during destroy`, error);
+			}
 		}
 
 		this.sidebarComponent?.destroy();
@@ -171,7 +176,12 @@ export class ChatUI {
 		};
 
 		for (const plugin of this.plugins) {
-			if (plugin.onMount) plugin.onMount(pluginCtx);
+			if (!plugin.onMount) continue;
+			try {
+				plugin.onMount(pluginCtx);
+			} catch (error) {
+				console.error(`Plugin "${plugin.name}" failed during onMount`, error);
+			}
 		}
 
 		this.inputComponent = new Input(
