@@ -1664,3 +1664,61 @@ test("session save enqueued behind a pending title update keeps the new title", 
 	assert.equal(storage.sessions.get(sessionId)?.title, "Smart Title");
 	assert.equal(engine.state.sessions.find((s) => s.id === sessionId)?.title, "Smart Title");
 });
+
+test("sessions.loadOlderMessages prepends a backend page and tracks hasMore", async () => {
+	const older = [textMessage("m1", "user", "first"), textMessage("m2", "assistant", "second")];
+	const storage = new (class extends MemoryStorage {
+		public olderCalls: { before: string; limit: number }[] = [];
+		async loadOlderMessages(_id: string, before: string, limit: number) {
+			this.olderCalls.push({ before, limit });
+			return { messages: older, hasMore: false };
+		}
+	})([
+		{
+			id: "chat-1",
+			title: "Chat 1",
+			updatedAt: 1,
+			messages: [textMessage("m3", "user", "third")],
+			hasMoreMessages: true,
+		},
+	]);
+
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	await engine.sessions.switch("chat-1");
+
+	assert.equal(engine.state.hasMoreMessages, true);
+	assert.deepEqual(
+		engine.state.messages.map((m) => m.id),
+		["m3"],
+	);
+
+	await engine.sessions.loadOlderMessages();
+
+	assert.deepEqual(storage.olderCalls, [{ before: "m3", limit: 100 }]);
+	assert.deepEqual(
+		engine.state.messages.map((m) => m.id),
+		["m1", "m2", "m3"],
+	);
+	assert.equal(engine.state.hasMoreMessages, false);
+	assert.equal(engine.state.isLoadingMessages, false);
+
+	// Nothing older remains: further calls are no-ops (storage is not hit again).
+	await engine.sessions.loadOlderMessages();
+	assert.equal(storage.olderCalls.length, 1);
+});
+
+test("sessions.loadOlderMessages is a no-op when storage has no pagination", async () => {
+	// Plain MemoryStorage does not implement loadOlderMessages.
+	const storage = new MemoryStorage([
+		{ id: "chat-1", title: "Chat 1", updatedAt: 1, messages: [textMessage("m1", "user", "only")] },
+	]);
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	await engine.sessions.switch("chat-1");
+
+	assert.equal(engine.state.hasMoreMessages, false);
+	await engine.sessions.loadOlderMessages();
+	assert.deepEqual(
+		engine.state.messages.map((m) => m.id),
+		["m1"],
+	);
+});

@@ -1,13 +1,19 @@
 import type { Message, RenderConfig } from "../core/types";
 import { ICON_CHEVRON } from "../utils/icons";
-import { type FeedAgentRunItem, type FeedItem, isAgentRunItem } from "./feed-items";
+import {
+	type FeedAgentRunItem,
+	type FeedAgentRunSegment,
+	type FeedAgentRunWorkSegment,
+	type FeedItem,
+	isAgentRunItem,
+} from "./feed-items";
 import { MessageNode } from "./message-node";
 
 export interface FeedNodeUpdateContext {
 	messages: readonly Message[];
 	generatingMessageId: string | null;
 	error: { message: string; id?: string } | null;
-	onToggleRun: (runId: string) => void;
+	onToggleWorkSegment: (segmentId: string) => void;
 }
 
 export interface FeedNode {
@@ -45,18 +51,10 @@ class AgentRunFeedNode implements FeedNode {
 	public readonly type = "agent_run";
 	public readonly el = document.createElement("div");
 
-	private readonly summaryEl = document.createElement("button");
-	private readonly chevronEl = document.createElement("span");
-	private readonly labelEl = document.createElement("span");
-	private readonly stepsEl = document.createElement("div");
-	private readonly stepNodes = new Map<string, MessageNode>();
+	private readonly segmentNodes = new Map<string, AgentRunSegmentNode>();
 
 	private userNode?: MessageNode;
 	private userMessageId?: string;
-	private finalNode?: MessageNode;
-	private finalMessageId?: string;
-	private currentRunId?: string;
-	private onToggleRun?: (runId: string) => void;
 
 	constructor(
 		item: FeedAgentRunItem,
@@ -64,39 +62,23 @@ class AgentRunFeedNode implements FeedNode {
 	) {
 		this.el.className = "mur-agent-run";
 		this.el.dataset.runId = item.runId;
-
-		this.summaryEl.type = "button";
-		this.summaryEl.className = "mur-agent-run-summary";
-		this.summaryEl.addEventListener("click", () => {
-			if (this.currentRunId) this.onToggleRun?.(this.currentRunId);
-		});
-
-		this.chevronEl.className = "mur-agent-run-summary-chevron";
-		this.chevronEl.innerHTML = ICON_CHEVRON;
-		this.labelEl.className = "mur-agent-run-summary-label";
-		this.summaryEl.append(this.chevronEl, this.labelEl);
-
-		this.stepsEl.className = "mur-agent-run-steps";
-		this.el.append(this.summaryEl, this.stepsEl);
 	}
 
 	public update(item: FeedItem, ctx: FeedNodeUpdateContext): void {
 		if (!isAgentRunItem(item)) return;
 
-		this.currentRunId = item.runId;
-		this.onToggleRun = ctx.onToggleRun;
 		this.el.dataset.runId = item.runId;
 
 		this.renderUserMessage(item.userMessage, ctx);
-		this.renderSummary(item);
-		this.renderSteps(item, ctx);
-		this.renderFinalMessage(item.finalMessage, ctx);
+		this.renderSegments(item.segments, ctx);
 	}
 
 	public destroy(): void {
 		this.userNode?.destroy();
-		this.finalNode?.destroy();
-		clearMessageNodes(this.stepNodes);
+		for (const node of this.segmentNodes.values()) {
+			node.destroy();
+		}
+		this.segmentNodes.clear();
 		this.el.remove();
 	}
 
@@ -108,32 +90,173 @@ class AgentRunFeedNode implements FeedNode {
 		}
 
 		updateMessageNode(this.userNode, message, ctx);
-		if (this.summaryEl.previousElementSibling !== this.userNode.el) {
-			this.el.insertBefore(this.userNode.el, this.summaryEl);
+		if (this.el.firstElementChild !== this.userNode.el) {
+			this.el.insertBefore(this.userNode.el, this.el.firstChild);
 		}
 	}
 
-	private renderSummary(item: FeedAgentRunItem): void {
-		this.labelEl.textContent =
-			item.durationMs === undefined ? "Worked" : `Worked for ${formatDuration(item.durationMs)}`;
-		this.summaryEl.setAttribute("aria-expanded", String(!item.collapsed));
+	private renderSegments(segments: readonly FeedAgentRunSegment[], ctx: FeedNodeUpdateContext): void {
+		let previousEl: Element | null = this.userNode?.el ?? null;
+
+		for (const segment of segments) {
+			let node = this.segmentNodes.get(segment.id);
+
+			if (!node || node.type !== segment.type) {
+				node?.destroy();
+				node = createAgentRunSegmentNode(segment, this.config);
+				this.segmentNodes.set(segment.id, node);
+			}
+
+			if (node.el.parentElement !== this.el || node.el.previousElementSibling !== previousEl) {
+				this.el.insertBefore(node.el, previousEl ? previousEl.nextSibling : this.el.firstChild);
+			}
+
+			node.update(segment, ctx);
+			previousEl = node.el;
+		}
+
+		const currentIds = new Set<string>();
+		for (const segment of segments) {
+			currentIds.add(segment.id);
+		}
+		for (const [id, node] of this.segmentNodes) {
+			if (currentIds.has(id)) continue;
+			node.destroy();
+			this.segmentNodes.delete(id);
+		}
+	}
+}
+
+interface AgentRunSegmentNode {
+	type: FeedAgentRunSegment["type"];
+	el: HTMLElement;
+	update(segment: FeedAgentRunSegment, ctx: FeedNodeUpdateContext): void;
+	destroy(): void;
+}
+
+function createAgentRunSegmentNode(segment: FeedAgentRunSegment, config: RenderConfig): AgentRunSegmentNode {
+	return segment.type === "work"
+		? new AgentRunWorkSegmentNode(segment, config)
+		: new AgentRunMessagesSegmentNode(config);
+}
+
+class AgentRunMessagesSegmentNode implements AgentRunSegmentNode {
+	public readonly type = "messages";
+	public readonly el = document.createElement("div");
+
+	private readonly messageNodes = new Map<string, MessageNode>();
+
+	constructor(private readonly config: RenderConfig) {
+		this.el.className = "mur-agent-run-messages";
 	}
 
-	private renderSteps(item: FeedAgentRunItem, ctx: FeedNodeUpdateContext): void {
-		this.stepsEl.hidden = item.collapsed;
+	public update(segment: FeedAgentRunSegment, ctx: FeedNodeUpdateContext): void {
+		if (segment.type !== "messages") return;
 
-		if (item.collapsed) {
+		for (let index = 0; index < segment.messages.length; index++) {
+			const message = segment.messages[index];
+			const key = messageNodeKey(message);
+			let node = this.messageNodes.get(key);
+
+			if (!node) {
+				node = new MessageNode(message, this.config);
+				this.messageNodes.set(key, node);
+			}
+
+			if (this.el.children[index] !== node.el) {
+				this.el.insertBefore(node.el, this.el.children[index]);
+			}
+			updateMessageNode(node, message, ctx);
+		}
+
+		const currentIds = new Set<string>();
+		for (const message of segment.messages) {
+			currentIds.add(messageNodeKey(message));
+		}
+		for (const [id, node] of this.messageNodes) {
+			if (currentIds.has(id)) continue;
+			node.destroy();
+			this.messageNodes.delete(id);
+		}
+	}
+
+	public destroy(): void {
+		clearMessageNodes(this.messageNodes);
+		this.el.remove();
+	}
+}
+
+class AgentRunWorkSegmentNode implements AgentRunSegmentNode {
+	public readonly type = "work";
+	public readonly el = document.createElement("div");
+
+	private readonly summaryEl = document.createElement("button");
+	private readonly chevronEl = document.createElement("span");
+	private readonly labelEl = document.createElement("span");
+	private readonly stepsEl = document.createElement("div");
+	private readonly stepNodes = new Map<string, MessageNode>();
+	private currentSegmentId?: string;
+	private onToggleWorkSegment?: (segmentId: string) => void;
+
+	constructor(
+		segment: FeedAgentRunWorkSegment,
+		private readonly config: RenderConfig,
+	) {
+		this.currentSegmentId = segment.id;
+		this.el.className = "mur-agent-run-work";
+		this.el.dataset.segmentId = segment.id;
+
+		this.summaryEl.type = "button";
+		this.summaryEl.className = "mur-agent-run-summary";
+		this.summaryEl.addEventListener("click", () => {
+			if (this.currentSegmentId) this.onToggleWorkSegment?.(this.currentSegmentId);
+		});
+
+		this.chevronEl.className = "mur-agent-run-summary-chevron";
+		this.chevronEl.innerHTML = ICON_CHEVRON;
+		this.labelEl.className = "mur-agent-run-summary-label";
+		this.summaryEl.append(this.chevronEl, this.labelEl);
+
+		this.stepsEl.className = "mur-agent-run-steps";
+		this.el.append(this.summaryEl, this.stepsEl);
+	}
+
+	public update(segment: FeedAgentRunSegment, ctx: FeedNodeUpdateContext): void {
+		if (segment.type !== "work") return;
+
+		this.currentSegmentId = segment.id;
+		this.el.dataset.segmentId = segment.id;
+		this.onToggleWorkSegment = ctx.onToggleWorkSegment;
+		this.renderSummary(segment);
+		this.renderSteps(segment, ctx);
+	}
+
+	public destroy(): void {
+		clearMessageNodes(this.stepNodes);
+		this.el.remove();
+	}
+
+	private renderSummary(segment: FeedAgentRunWorkSegment): void {
+		this.labelEl.textContent = formatWorkSummary(segment);
+		this.summaryEl.setAttribute("aria-expanded", String(!segment.collapsed));
+	}
+
+	private renderSteps(segment: FeedAgentRunWorkSegment, ctx: FeedNodeUpdateContext): void {
+		this.stepsEl.hidden = segment.collapsed;
+
+		if (segment.collapsed) {
 			clearMessageNodes(this.stepNodes);
 			return;
 		}
 
-		for (let index = 0; index < item.stepMessages.length; index++) {
-			const message = item.stepMessages[index];
-			let node = this.stepNodes.get(message.id);
+		for (let index = 0; index < segment.stepMessages.length; index++) {
+			const message = segment.stepMessages[index];
+			const key = messageNodeKey(message);
+			let node = this.stepNodes.get(key);
 
 			if (!node) {
 				node = new MessageNode(message, this.config);
-				this.stepNodes.set(message.id, node);
+				this.stepNodes.set(key, node);
 			}
 
 			if (this.stepsEl.children[index] !== node.el) {
@@ -144,26 +267,13 @@ class AgentRunFeedNode implements FeedNode {
 		}
 
 		const currentIds = new Set<string>();
-		for (const message of item.stepMessages) {
-			currentIds.add(message.id);
+		for (const message of segment.stepMessages) {
+			currentIds.add(messageNodeKey(message));
 		}
 		for (const [id, node] of this.stepNodes) {
 			if (currentIds.has(id)) continue;
 			node.destroy();
 			this.stepNodes.delete(id);
-		}
-	}
-
-	private renderFinalMessage(message: Message, ctx: FeedNodeUpdateContext): void {
-		if (!this.finalNode || this.finalMessageId !== message.id) {
-			this.finalNode?.destroy();
-			this.finalNode = new MessageNode(message, this.config);
-			this.finalMessageId = message.id;
-		}
-
-		updateMessageNode(this.finalNode, message, ctx);
-		if (this.finalNode.el.parentElement !== this.el || this.finalNode.el.previousElementSibling !== this.stepsEl) {
-			this.el.insertBefore(this.finalNode.el, this.stepsEl.nextSibling);
 		}
 	}
 }
@@ -173,6 +283,10 @@ function updateMessageNode(node: MessageNode, message: Message, ctx: FeedNodeUpd
 	node.update(message, message.id === ctx.generatingMessageId, targetError, ctx.messages);
 }
 
+function messageNodeKey(message: Message): string {
+	return `${message.id}:${message.blocks.map((block) => block.id).join(",")}`;
+}
+
 function clearMessageNodes(nodes: Map<string, MessageNode>): void {
 	for (const node of nodes.values()) {
 		node.destroy();
@@ -180,8 +294,39 @@ function clearMessageNodes(nodes: Map<string, MessageNode>): void {
 	nodes.clear();
 }
 
+function formatWorkSummary(segment: FeedAgentRunWorkSegment): string {
+	const durationText =
+		segment.durationMs === undefined || segment.durationMs <= 0 ? undefined : formatDuration(segment.durationMs);
+	const toolCallCount = countToolCalls(segment);
+
+	if (toolCallCount > 0) {
+		return durationText
+			? `${toolCallCount} ${pluralize("tool call", toolCallCount)}, ${durationText}`
+			: `${toolCallCount} ${pluralize("tool call", toolCallCount)}`;
+	}
+
+	return durationText ? `Worked for ${durationText}` : "Worked";
+}
+
+function countToolCalls(segment: FeedAgentRunWorkSegment): number {
+	let count = 0;
+	for (const message of segment.stepMessages) {
+		for (const block of message.blocks) {
+			if (block.type === "tool_call") count++;
+		}
+	}
+	return count;
+}
+
+function pluralize(label: string, count: number): string {
+	return count === 1 ? label : `${label}s`;
+}
+
 function formatDuration(durationMs: number): string {
-	const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+	const safeDurationMs = Math.max(0, durationMs);
+	if (safeDurationMs < 1000) return `${Math.round(safeDurationMs)}ms`;
+
+	const totalSeconds = Math.round(safeDurationMs / 1000);
 	if (totalSeconds < 60) return `${totalSeconds}s`;
 
 	const minutes = Math.floor(totalSeconds / 60);

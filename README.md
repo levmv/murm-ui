@@ -43,6 +43,7 @@ const ui = new ChatUI({
 	container: "#app",
 	provider: new OpenAIProvider("USER_PROVIDED_OR_PROXY_TOKEN", "/api/chat/completions", "gpt-4o-mini"),
 	storage: new IndexedDBStorage(),
+	agentRunCollapse: "machinery",
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
 		ThinkingPlugin(),
@@ -58,6 +59,10 @@ const ui = new ChatUI({
 Code block headers are enabled by default.
 The built-in highlighter escapes plain or unknown-language code blocks.
 
+Agent runs default to `agentRunCollapse: "machinery"`: tool calls, tool results, and reasoning blocks fold under "Worked" at their position in the run, while every assistant text block stays visible in order. Pass `agentRunCollapse: "full"` to collapse the whole run and show only the final assistant prose.
+
+For agent-oriented interfaces that should reveal reasoning while work is active, use `AgentThinkingPlugin()` from `murm-ui/plugins/agent-thinking` instead of `ThinkingPlugin()`. It renders reasoning as a muted italic preview that expands on click, then collapses with the rest of the agent work.
+
 The root package entry is side-effect-free. For bundlers that support CSS imports, `murm-ui/with-css` includes the core styles automatically. You can also import the CSS assets explicitly:
 
 ```typescript
@@ -69,6 +74,7 @@ import "murm-ui/styles/feed.css";
 import "murm-ui/styles/dropdown.css";
 
 // Plugin styles (import only what you use)
+import "murm-ui/plugins/agent-thinking/agent-thinking.css";
 import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
 import "murm-ui/plugins/thinking/thinking.css";

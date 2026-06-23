@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Agent-run collapse now defaults to `agentRunCollapse: "machinery"`, keeping assistant prose visible while folding reasoning/tool work in place.
+
+### Added
+
+- Add `agentRunCollapse: "full" | "machinery"` and `AgentThinkingPlugin()` for agent-oriented reasoning previews.
+- Add optional older-message pagination via `ChatStorage.loadOlderMessages`; `RemoteStorage` and the feed can load history as the user scrolls upward.
+
+### Fixed
+
+- Keep reasoning/tool summaries inside the correct agent-run fold, with better work labels, durations, and spacing.
+
 ## 0.1.1 - 2026-06-14
 
 ### Fixed

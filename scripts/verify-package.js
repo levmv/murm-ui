@@ -26,6 +26,9 @@ const requiredFiles = [
 	"dist/styles/feed.css",
 	"dist/styles/input.css",
 	"dist/styles/sidebar.css",
+	"dist/plugins/agent-thinking/agent-thinking-plugin.js",
+	"dist/plugins/agent-thinking/agent-thinking-plugin.d.ts",
+	"dist/plugins/agent-thinking/agent-thinking.css",
 	"dist/plugins/attachment/attachment-plugin.js",
 	"dist/plugins/attachment/attachment-plugin.d.ts",
 	"dist/plugins/attachment/attachment.css",
@@ -63,6 +66,7 @@ const coreCssFiles = [
 ];
 
 const pluginCssFiles = [
+	"dist/plugins/agent-thinking/agent-thinking.css",
 	"dist/plugins/attachment/attachment.css",
 	"dist/plugins/edit/edit.css",
 	"dist/plugins/settings/settings.css",
@@ -204,14 +208,15 @@ assertNoInputMatching(withCssBundleInputs, (input) => input.startsWith("dist/plu
 
 await bundleSmoke(
 	`
-		import { AttachmentPlugin } from "murm-ui/plugins/attachment";
-		import { CopyPlugin } from "murm-ui/plugins/copy";
-		import { EditPlugin } from "murm-ui/plugins/edit";
-		import { SettingsPlugin } from "murm-ui/plugins/settings";
-		import { ThinkingPlugin } from "murm-ui/plugins/thinking";
-		import { ToolsPlugin } from "murm-ui/plugins/tools";
-		void [AttachmentPlugin, CopyPlugin, EditPlugin, SettingsPlugin, ThinkingPlugin, ToolsPlugin];
-	`,
+			import { AgentThinkingPlugin } from "murm-ui/plugins/agent-thinking";
+			import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+			import { CopyPlugin } from "murm-ui/plugins/copy";
+			import { EditPlugin } from "murm-ui/plugins/edit";
+			import { SettingsPlugin } from "murm-ui/plugins/settings";
+			import { ThinkingPlugin } from "murm-ui/plugins/thinking";
+			import { ToolsPlugin } from "murm-ui/plugins/tools";
+			void [AgentThinkingPlugin, AttachmentPlugin, CopyPlugin, EditPlugin, SettingsPlugin, ThinkingPlugin, ToolsPlugin];
+		`,
 	"plugins-package-smoke.js",
 );
 

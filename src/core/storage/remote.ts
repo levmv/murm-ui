@@ -1,4 +1,4 @@
-import type { ChatSession, ChatSessionMeta, ChatStorage, PaginatedSessions } from "../types";
+import type { ChatSession, ChatSessionMeta, ChatStorage, Message, PaginatedSessions } from "../types";
 
 export class RemoteStorageError extends Error {
 	constructor(
@@ -113,6 +113,18 @@ export class RemoteStorage implements ChatStorage {
 			headers: this.headers,
 		});
 		await this.assertOk(res, "Failed to delete chat", url);
+	}
+
+	async loadOlderMessages(
+		sessionId: string,
+		beforeMessageId: string,
+		limit: number,
+	): Promise<{ messages: Message[]; hasMore: boolean }> {
+		const params = new URLSearchParams({ before: beforeMessageId, limit: limit.toString() });
+		const url = `${this.getPath(`/${encodeURIComponent(sessionId)}`)}?${params.toString()}`;
+		const res = await fetch(url, { headers: this.headers });
+		await this.assertOk(res, "Failed to load older messages", url);
+		return res.json();
 	}
 
 	private async assertOk(res: Response, action: string, url: string): Promise<void> {

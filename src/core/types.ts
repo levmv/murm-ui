@@ -163,6 +163,10 @@ export interface ChatSession {
 	updatedAt: number;
 	isPinned?: boolean;
 	messages: Message[];
+	// Set by backend-paginated storages whose loadOne returns only the latest
+	// window: true when older messages exist and can be fetched via
+	// ChatStorage.loadOlderMessages. Storages that load whole sessions omit it.
+	hasMoreMessages?: boolean;
 }
 
 export interface PaginatedSessions {
@@ -178,6 +182,11 @@ export interface ChatState {
 	generatingMessageId: string | null;
 	isLoadingSession: boolean;
 	isLoadingSessions: boolean;
+	// Upward message pagination, parallel to hasMoreSessions/isLoadingSessions.
+	// hasMoreMessages stays false unless the storage supports loadOlderMessages
+	// and the loaded session reported older history.
+	hasMoreMessages: boolean;
+	isLoadingMessages: boolean;
 	error: { message: string; id?: string } | null;
 }
 
@@ -187,6 +196,18 @@ export interface ChatStorage {
 	save(session: ChatSession): Promise<void>;
 	updateMetadata?(id: string, meta: Partial<ChatSessionMeta>): Promise<void>;
 	delete(id: string): Promise<void>;
+	/**
+	 * Optional upward pagination for backends that return only the latest window
+	 * from loadOne. Returns a page of messages older than `beforeMessageId`,
+	 * oldest-first, plus whether even-older messages remain. Storages that load
+	 * whole sessions (the default, e.g. local IndexedDB) omit this, and the UI
+	 * never offers "load older".
+	 */
+	loadOlderMessages?(
+		sessionId: string,
+		beforeMessageId: string,
+		limit: number,
+	): Promise<{ messages: Message[]; hasMore: boolean }>;
 	close?(): void | Promise<void>;
 }
 
@@ -234,6 +255,8 @@ export interface ChatProvider {
 
 export type CodeHighlighter = (code: string, lang: string) => string | Promise<string>;
 
+export type AgentRunCollapse = "full" | "machinery";
+
 export interface RenderConfig {
 	/**
 	 * Receives code text from a sanitized code block and returns trusted HTML,
@@ -245,6 +268,13 @@ export interface RenderConfig {
 	highlighter?: CodeHighlighter;
 	plugins: ChatPlugin[];
 	fullscreen?: boolean;
+	agentRunCollapse?: AgentRunCollapse;
+	minAgentRunSteps?: number;
+	/**
+	 * Called when the user scrolls near the top of the transcript and older
+	 * messages can be loaded. Wired to ChatEngine.sessions.loadOlderMessages.
+	 */
+	onReachTop?: () => void;
 }
 
 type AnyFn = (...args: never[]) => unknown;

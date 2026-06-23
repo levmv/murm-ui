@@ -5,15 +5,25 @@ import { buildFeedItems, type FeedItem, feedItemType } from "./feed-items";
 import { createFeedNode, type FeedNode } from "./feed-node";
 
 const STICKY_THRESHOLD = 50;
+// Distance from the top (px) at which scrolling up triggers an older-messages load.
+const OLDER_LOAD_THRESHOLD = 200;
 const MOBILE_SCROLL_QUERY = "(max-width: 768px)";
 
 export class Feed {
 	private scrollArea: HTMLElement;
 	private historyContainer: HTMLElement;
 	private spinnerEl: HTMLElement;
+	private olderSpinnerEl: HTMLElement;
+
+	// Upward-pagination state, driven by setOlderMessagesState.
+	private hasMoreOlder = false;
+	private isLoadingOlder = false;
+	// Id of the first feed item from the previous render, used to detect a
+	// prepend (older messages added at the top) so we can preserve scroll anchor.
+	private firstItemId: string | null = null;
 
 	private nodes = new Map<string, FeedNode>();
-	private expandedRunIds = new Set<string>();
+	private expandedWorkSegmentIds = new Set<string>();
 	private feedItemsCache: {
 		messages: Message[];
 		messageCount: number;
@@ -25,7 +35,7 @@ export class Feed {
 	private isHistoryBusy = false;
 	private lastScrollTop = 0;
 	private isDestroyed = false;
-	private readonly onToggleRun = (runId: string) => this.toggleRun(runId);
+	private readonly onToggleWorkSegment = (segmentId: string) => this.toggleWorkSegment(segmentId);
 	private lastUpdateRequest: {
 		messages: Message[];
 		generatingMessageId: string | null;
@@ -67,6 +77,29 @@ export class Feed {
 		});
 		this.spinnerEl.hidden = true;
 		this.scrollArea.appendChild(this.spinnerEl);
+
+		// Older-messages spinner sits above the transcript (top of the scroll area).
+		this.olderSpinnerEl = el("div", "mur-feed-spinner mur-feed-spinner-top", {
+			innerHTML: `<div class="mur-message-loading"><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span></div>`,
+		});
+		this.olderSpinnerEl.hidden = true;
+		this.historyContainer.parentElement?.insertBefore(this.olderSpinnerEl, this.historyContainer);
+	}
+
+	// Drives the older-messages affordance: whether more history exists and
+	// whether a load is in flight. Wired from ChatState by the host.
+	public setOlderMessagesState(hasMore: boolean, isLoading: boolean): void {
+		this.hasMoreOlder = hasMore;
+		if (isLoading === this.isLoadingOlder) return;
+		this.isLoadingOlder = isLoading;
+
+		// Toggling the top spinner changes the height above the transcript. While
+		// the user reads history, compensate so the content stays anchored rather
+		// than jumping by the spinner's height.
+		const before = this.olderSpinnerEl.offsetHeight;
+		this.olderSpinnerEl.hidden = !isLoading;
+		const delta = this.olderSpinnerEl.offsetHeight - before;
+		if (delta !== 0 && !this.isStickyToBottom) this.adjustScrollTop(delta);
 	}
 
 	public update(
@@ -85,6 +118,7 @@ export class Feed {
 			this.lastScrollTop = 0;
 			this.clearAllNodes();
 			this.lastMessagesRef = null;
+			this.firstItemId = null;
 			return;
 		}
 
@@ -96,13 +130,31 @@ export class Feed {
 		// Hot stream updates can still adopt a placeholder id or append another assistant
 		// message in-place, so discovering a missing node below also marks structure dirty.
 		const items = this.getFeedItems(messages, generatingMessageId);
+
+		// Detect a prepend (older messages inserted above the current head): the
+		// previous first item still exists but is no longer first. When the user is
+		// reading history (not stuck to the bottom), anchor the viewport to it so
+		// the new content grows upward instead of yanking the scroll position.
+		let anchorEl: HTMLElement | null = null;
+		let anchorTopBefore = 0;
+		if (
+			!this.isStickyToBottom &&
+			this.firstItemId !== null &&
+			items.length > 0 &&
+			items[0].id !== this.firstItemId &&
+			this.nodes.has(this.firstItemId)
+		) {
+			anchorEl = this.nodes.get(this.firstItemId)?.el ?? null;
+			anchorTopBefore = anchorEl ? anchorEl.offsetTop : 0;
+		}
+
 		let structureChanged = this.lastMessagesRef !== messages || this.nodes.size > items.length;
 		this.lastMessagesRef = messages;
 		const nodeUpdateCtx = {
 			messages,
 			generatingMessageId,
 			error,
-			onToggleRun: this.onToggleRun,
+			onToggleWorkSegment: this.onToggleWorkSegment,
 		};
 
 		for (let i = 0; i < items.length; i++) {
@@ -138,15 +190,23 @@ export class Feed {
 			}
 		}
 
+		// Compensate for height added above the anchor so the prepended history
+		// unrolls upward without moving what the user is looking at.
+		if (anchorEl?.isConnected) {
+			const delta = anchorEl.offsetTop - anchorTopBefore;
+			if (delta !== 0) this.adjustScrollTop(delta);
+		}
+		this.firstItemId = items[0]?.id ?? null;
+
 		const isActivelyStreaming = generatingMessageId !== null && !generationStarted;
 		this.requestBottomScroll(isActivelyStreaming ? "auto" : "smooth");
 	}
 
-	private toggleRun(runId: string): void {
-		if (this.expandedRunIds.has(runId)) {
-			this.expandedRunIds.delete(runId);
+	private toggleWorkSegment(segmentId: string): void {
+		if (this.expandedWorkSegmentIds.has(segmentId)) {
+			this.expandedWorkSegmentIds.delete(segmentId);
 		} else {
-			this.expandedRunIds.add(runId);
+			this.expandedWorkSegmentIds.add(segmentId);
 		}
 		this.feedItemsCache = null;
 
@@ -168,7 +228,9 @@ export class Feed {
 
 		const items = buildFeedItems(messages, {
 			generatingMessageId,
-			isRunExpanded: (runId) => this.expandedRunIds.has(runId),
+			isWorkSegmentExpanded: (segmentId) => this.expandedWorkSegmentIds.has(segmentId),
+			minAgentRunSteps: this.config.minAgentRunSteps,
+			agentRunCollapse: this.config.agentRunCollapse,
 		});
 		this.feedItemsCache = {
 			messages,
@@ -202,6 +264,7 @@ export class Feed {
 		this.removeMediaListener();
 		this.clearAllNodes();
 		this.spinnerEl.remove();
+		this.olderSpinnerEl.remove();
 	}
 
 	private clearAllNodes(): void {
@@ -269,6 +332,13 @@ export class Feed {
 		else if (distanceToBottom <= STICKY_THRESHOLD) {
 			this.isStickyToBottom = true;
 		}
+
+		// Near the top while scrolling up: ask the host to load older messages.
+		// The host (and SessionManager) re-check hasMore/in-flight, so a redundant
+		// call here is harmless.
+		if (isScrollingUp && scrollTop <= OLDER_LOAD_THRESHOLD && this.hasMoreOlder && !this.isLoadingOlder) {
+			this.config.onReachTop?.();
+		}
 	};
 
 	private onHistoryClick = (event: MouseEvent) => {
@@ -321,6 +391,17 @@ export class Feed {
 			scrollHeight: this.scrollArea.scrollHeight,
 			clientHeight: this.scrollArea.clientHeight,
 		};
+	}
+
+	private adjustScrollTop(delta: number): void {
+		if (this.usesWindowScroll) {
+			window.scrollBy(0, delta);
+		} else {
+			this.scrollArea.scrollTop += delta;
+		}
+		// Keep lastScrollTop in sync so this programmatic shift is not read as a
+		// user scroll-up that would spuriously re-trigger a load.
+		this.lastScrollTop = this.getScrollMetrics().scrollTop;
 	}
 
 	private onMediaChange = (event: MediaQueryListEvent) => {

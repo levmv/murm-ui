@@ -62,6 +62,8 @@ export class ChatEngine {
 			generatingMessageId: null,
 			isLoadingSession: !!config.initialSessionId,
 			isLoadingSessions: false,
+			hasMoreMessages: false,
+			isLoadingMessages: false,
 			error: null,
 		});
 		this.sessionManager = new SessionManager({

@@ -6,6 +6,7 @@ export { IndexedDBStorage } from "./core/storage/indexed-db";
 export { RemoteStorage, RemoteStorageError, type RemoteStorageOptions } from "./core/storage/remote";
 export type {
 	ActionButtonDef,
+	AgentRunCollapse,
 	BlockRenderContext,
 	ChatPlugin,
 	ChatProvider,

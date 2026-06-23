@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import type { ChatPlugin, Message, MessageActionContext } from "../core/types";
+import type { AgentRunCollapse, ChatPlugin, Message, MessageActionContext } from "../core/types";
+import { AgentThinkingPlugin } from "../plugins/agent-thinking/agent-thinking-plugin";
 import { CopyPlugin } from "../plugins/copy/copy-plugin";
 import { EditPlugin } from "../plugins/edit/edit-plugin";
+import { ThinkingPlugin } from "../plugins/thinking/thinking-plugin";
+import { ToolsPlugin } from "../plugins/tools/tools-plugin";
 import { Feed } from "./feed";
 
 interface FeedHarness {
@@ -27,7 +30,13 @@ function setGlobal(name: string, value: unknown): void {
 }
 
 function createFeedHarness(
-	options: { fullscreen?: boolean; mobile?: boolean; resizeObserver?: boolean; plugins?: ChatPlugin[] } = {},
+	options: {
+		fullscreen?: boolean;
+		mobile?: boolean;
+		resizeObserver?: boolean;
+		plugins?: ChatPlugin[];
+		agentRunCollapse?: AgentRunCollapse;
+	} = {},
 ): FeedHarness {
 	const isFullscreen = options.fullscreen !== false;
 	const rootClass = `mur-app${isFullscreen ? "" : " mur-app-embedded"}`;
@@ -138,7 +147,11 @@ function createFeedHarness(
 
 	const root = dom.window.document.querySelector<HTMLElement>(".mur-app");
 	assert.ok(root);
-	const feed = new Feed(root, { plugins: options.plugins ?? [], fullscreen: isFullscreen });
+	const feed = new Feed(root, {
+		plugins: options.plugins ?? [],
+		fullscreen: isFullscreen,
+		agentRunCollapse: options.agentRunCollapse,
+	});
 
 	return {
 		feed,
@@ -228,6 +241,173 @@ function agentRunMessages(options: { runId?: boolean } = { runId: true }): Messa
 			createdAt: 4000,
 			updatedAt: 120000,
 			blocks: [{ id: "final-text", type: "text", text: "Found src/index.ts." }],
+		},
+	];
+}
+
+function agentRunWithIntermediateProse(): Message[] {
+	return [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-1",
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [{ id: "user-text", type: "text", text: "Clean it up" }],
+		},
+		{
+			id: "assistant-mixed",
+			role: "assistant",
+			runId: "run-1",
+			createdAt: 1500,
+			updatedAt: 2500,
+			blocks: [
+				{ id: "assistant-mixed-reasoning", type: "reasoning", text: "Need to remove a stale file." },
+				{ id: "assistant-mixed-text", type: "text", text: "I found a stale file and will remove it." },
+				{
+					id: "assistant-mixed-tool",
+					type: "tool_call",
+					toolCallId: "call-1",
+					name: "delete_file",
+					argsText: '{"path":"playground/tmp.md"}',
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-result",
+			role: "tool",
+			runId: "run-1",
+			createdAt: 3000,
+			updatedAt: 3000,
+			blocks: [{ id: "tool-result-block", type: "tool_result", toolCallId: "call-1", outputText: "deleted" }],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId: "run-1",
+			createdAt: 4000,
+			updatedAt: 120000,
+			blocks: [{ id: "final-text", type: "text", text: "The stale file is gone." }],
+		},
+	];
+}
+
+function agentRunWithTwoWorkSegments(): Message[] {
+	return [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-2",
+			createdAt: 0,
+			updatedAt: 0,
+			blocks: [{ id: "user-text", type: "text", text: "Do two things" }],
+		},
+		{
+			id: "assistant-first",
+			role: "assistant",
+			runId: "run-2",
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [
+				{ id: "assistant-first-text", type: "text", text: "First, I will inspect it." },
+				{
+					id: "assistant-first-tool",
+					type: "tool_call",
+					toolCallId: "call-first",
+					name: "first_tool",
+					argsText: "{}",
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-result-first",
+			role: "tool",
+			runId: "run-2",
+			createdAt: 1100,
+			updatedAt: 1100,
+			blocks: [{ id: "tool-result-first-block", type: "tool_result", toolCallId: "call-first", outputText: "ok" }],
+		},
+		{
+			id: "assistant-second",
+			role: "assistant",
+			runId: "run-2",
+			createdAt: 1400,
+			updatedAt: 1400,
+			blocks: [
+				{ id: "assistant-second-text", type: "text", text: "Second, I will patch it." },
+				{
+					id: "assistant-second-tool",
+					type: "tool_call",
+					toolCallId: "call-second",
+					name: "second_tool",
+					argsText: "{}",
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-result-second",
+			role: "tool",
+			runId: "run-2",
+			createdAt: 1450,
+			updatedAt: 1450,
+			blocks: [{ id: "tool-result-second-block", type: "tool_result", toolCallId: "call-second", outputText: "ok" }],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId: "run-2",
+			createdAt: 2500,
+			updatedAt: 2500,
+			blocks: [{ id: "final-text", type: "text", text: "Both steps are done." }],
+		},
+	];
+}
+
+function agentRunWithSameTimestampWork(): Message[] {
+	return [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-4",
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [{ id: "user-text", type: "text", text: "Run a timestamp-collapsed tool" }],
+		},
+		{
+			id: "assistant-tool",
+			role: "assistant",
+			runId: "run-4",
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [
+				{
+					id: "assistant-tool-call",
+					type: "tool_call",
+					toolCallId: "call-fast",
+					name: "fast_tool",
+					argsText: "{}",
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-result",
+			role: "tool",
+			runId: "run-4",
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [{ id: "tool-result-block", type: "tool_result", toolCallId: "call-fast", outputText: "ok" }],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId: "run-4",
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [{ id: "final-text", type: "text", text: "Done." }],
 		},
 	];
 }
@@ -760,7 +940,7 @@ test("agent runs collapse intermediate messages after generation finishes", asyn
 
 	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
 	assert.ok(summary);
-	assert.equal(summary.textContent, "Worked for 1m 59s");
+	assert.equal(summary.textContent, "1 tool call, 1m 59s");
 	assert.equal(summary.getAttribute("aria-expanded"), "false");
 	assert.equal(root.querySelector(".mur-agent-run-steps")?.childElementCount, 0);
 	assert.equal(root.querySelectorAll(".mur-message").length, 2);
@@ -769,10 +949,201 @@ test("agent runs collapse intermediate messages after generation finishes", asyn
 	summary.click();
 	await flushMicrotasks();
 
-	assert.equal(summary.textContent, "Worked for 1m 59s");
+	assert.equal(summary.textContent, "1 tool call, 1m 59s");
 	assert.equal(summary.getAttribute("aria-expanded"), "true");
-	assert.equal(root.querySelectorAll(".mur-agent-run-steps .mur-message").length, 2);
-	assert.equal(root.querySelectorAll(".mur-message").length, 4);
+	assert.equal(root.querySelectorAll(".mur-agent-run-steps .mur-message").length, 1);
+	assert.equal(root.querySelector(".mur-agent-run-steps .mur-message-tool"), null);
+	assert.equal(root.querySelectorAll(".mur-message").length, 3);
+
+	feed.destroy();
+});
+
+test("agent run work summary includes the tool call count", async () => {
+	const { feed, root } = createFeedHarness();
+	const transcript = agentRunMessages();
+	const toolMessage = transcript[1];
+	toolMessage.blocks = [
+		...toolMessage.blocks,
+		{
+			id: "tool-call-2",
+			type: "tool_call",
+			toolCallId: "call-2",
+			name: "read_file",
+			argsText: '{"path":"src/index.ts"}',
+			status: "complete",
+		},
+	];
+
+	feed.update(transcript, null, false, false);
+	await flushMicrotasks();
+
+	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "2 tool calls, 1m 59s");
+
+	feed.destroy();
+});
+
+test("agent run work omits standalone tool result rows but keeps tool details", async () => {
+	const { feed, root } = createFeedHarness({ plugins: [ToolsPlugin()] });
+
+	feed.update(agentRunMessages(), null, false, false);
+	await flushMicrotasks();
+
+	root.querySelector<HTMLButtonElement>(".mur-agent-run-summary")?.click();
+	await flushMicrotasks();
+
+	assert.equal(root.querySelector(".mur-agent-run-steps .mur-message-tool"), null);
+	const toolSummary = root.querySelector<HTMLButtonElement>(".mur-agent-run-steps .mur-tool-summary");
+	assert.ok(toolSummary);
+
+	toolSummary.click();
+	await flushMicrotasks();
+
+	const details = root.querySelector<HTMLElement>(".mur-agent-run-steps .mur-tool-details");
+	assert.ok(details);
+	assert.match(details.textContent ?? "", /Result/);
+	assert.match(details.textContent ?? "", /src\/index\.ts/);
+
+	feed.destroy();
+});
+
+test("machinery agent runs keep assistant prose visible and fold tool calls", async () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(agentRunWithIntermediateProse(), null, false, false);
+	await flushMicrotasks();
+
+	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
+	assert.ok(summary);
+	assert.equal(summary.getAttribute("aria-expanded"), "false");
+	assert.match(root.textContent ?? "", /I found a stale file/);
+	assert.match(root.textContent ?? "", /The stale file is gone/);
+	assert.doesNotMatch(root.textContent ?? "", /Tool Call: delete_file/);
+	assert.equal(root.querySelectorAll(".mur-message").length, 3);
+	assert.deepEqual(
+		Array.from(root.querySelector(".mur-agent-run")?.children ?? []).map((child) =>
+			(child.textContent ?? "").replace(/\s+/g, " ").trim(),
+		),
+		["Clean it up", "I found a stale file and will remove it.", "1 tool call, 1m 58s", "The stale file is gone."],
+	);
+
+	summary.click();
+	await flushMicrotasks();
+
+	assert.equal(summary.getAttribute("aria-expanded"), "true");
+	assert.match(root.querySelector(".mur-agent-run-steps")?.textContent ?? "", /Tool Call: delete_file/);
+
+	summary.click();
+	await flushMicrotasks();
+
+	assert.equal(summary.getAttribute("aria-expanded"), "false");
+	assert.doesNotMatch(root.textContent ?? "", /Tool Call: delete_file/);
+
+	feed.destroy();
+});
+
+test("agent run work toggles expand only their own segment", async () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(agentRunWithTwoWorkSegments(), null, false, false);
+	await flushMicrotasks();
+
+	const summaries = Array.from(root.querySelectorAll<HTMLButtonElement>(".mur-agent-run-summary"));
+	assert.equal(summaries.length, 2);
+	assert.deepEqual(
+		summaries.map((summary) => summary.textContent),
+		["1 tool call, 400ms", "1 tool call, 1s"],
+	);
+
+	summaries[1].click();
+	await flushMicrotasks();
+
+	const workSegments = Array.from(root.querySelectorAll<HTMLElement>(".mur-agent-run-work"));
+	assert.equal(summaries[0].getAttribute("aria-expanded"), "false");
+	assert.equal(summaries[1].getAttribute("aria-expanded"), "true");
+	assert.equal(workSegments[0].querySelector(".mur-agent-run-steps")?.childElementCount, 0);
+	assert.equal(workSegments[1].querySelector(".mur-agent-run-steps")?.childElementCount, 1);
+	assert.doesNotMatch(workSegments[1].textContent ?? "", /first_tool/);
+	assert.match(workSegments[1].textContent ?? "", /second_tool/);
+
+	feed.destroy();
+});
+
+test("agent run work duration omits zero values from coarse timestamps", async () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.update(agentRunWithSameTimestampWork(), null, false, false);
+	await flushMicrotasks();
+
+	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "1 tool call");
+
+	feed.destroy();
+});
+
+test("agent run final reasoning stays inside the folded work segment", async () => {
+	const { feed, root } = createFeedHarness({ plugins: [ThinkingPlugin()] });
+	const transcript = agentRunMessages();
+	const finalMessage = transcript[transcript.length - 1];
+	finalMessage.blocks = [
+		{ id: "final-reasoning", type: "reasoning", text: "Private final reasoning." },
+		...finalMessage.blocks,
+	];
+
+	feed.update(transcript, null, false, false);
+	await flushMicrotasks();
+
+	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
+	assert.ok(summary);
+	assert.doesNotMatch(root.textContent ?? "", /Thought Process/);
+	assert.doesNotMatch(root.textContent ?? "", /Private final reasoning/);
+	assert.match(root.textContent ?? "", /Found src\/index\.ts/);
+
+	summary.click();
+	await flushMicrotasks();
+
+	const thinkingToggle = root.querySelector<HTMLButtonElement>(".mur-agent-run-steps .mur-think-toggle");
+	assert.ok(thinkingToggle);
+	assert.match(root.querySelector(".mur-agent-run-steps")?.textContent ?? "", /Thought Process/);
+
+	thinkingToggle.click();
+	await flushMicrotasks();
+	assert.match(root.querySelector(".mur-agent-run-steps")?.textContent ?? "", /Private final reasoning/);
+
+	feed.destroy();
+});
+
+test("agent thinking plugin renders folded reasoning as inline preview text", async () => {
+	const { feed, root } = createFeedHarness({ plugins: [AgentThinkingPlugin()] });
+	const transcript = agentRunMessages();
+	const finalMessage = transcript[transcript.length - 1];
+	finalMessage.blocks = [
+		{
+			id: "final-reasoning",
+			type: "reasoning",
+			text: "Private final reasoning.\nMore private reasoning.\nThird private line.\nFourth private line.",
+		},
+		...finalMessage.blocks,
+	];
+
+	feed.update(transcript, null, false, false);
+	await flushMicrotasks();
+
+	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
+	assert.ok(summary);
+	assert.doesNotMatch(root.textContent ?? "", /Private final reasoning/);
+	assert.doesNotMatch(root.textContent ?? "", /Thought Process/);
+
+	summary.click();
+	await flushMicrotasks();
+
+	const preview = root.querySelector<HTMLElement>(".mur-agent-run-steps .mur-agent-think-preview");
+	assert.ok(preview);
+	assert.equal(preview.dataset.expandable, "true");
+	assert.equal(preview.getAttribute("aria-expanded"), "false");
+	assert.match(root.querySelector(".mur-agent-run-steps")?.textContent ?? "", /Private final reasoning/);
+	assert.doesNotMatch(root.querySelector(".mur-agent-run-steps")?.textContent ?? "", /Thought Process/);
+
+	preview.click();
+	assert.equal(preview.getAttribute("aria-expanded"), "true");
 
 	feed.destroy();
 });
@@ -783,7 +1154,7 @@ test("agent run grouping falls back to user boundaries for old transcripts witho
 	feed.update(agentRunMessages({ runId: false }), null, false, false);
 	await flushMicrotasks();
 
-	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "Worked for 1m 59s");
+	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "1 tool call, 1m 59s");
 	assert.equal(root.querySelectorAll(".mur-message").length, 2);
 
 	feed.destroy();

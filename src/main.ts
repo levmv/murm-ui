@@ -3,7 +3,14 @@ import { Header } from "./components/header";
 import { Input } from "./components/input";
 import { type DeleteConfirmation, Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
 import { ChatEngine } from "./core/chat-engine";
-import type { ChatPlugin, ChatProvider, ChatStorage, CodeHighlighter, RequestOptions } from "./core/types";
+import type {
+	AgentRunCollapse,
+	ChatPlugin,
+	ChatProvider,
+	ChatStorage,
+	CodeHighlighter,
+	RequestOptions,
+} from "./core/types";
 import { AppRouter, type RouterConfig } from "./router";
 import { el, queryOrThrow } from "./utils/dom";
 
@@ -28,6 +35,8 @@ export interface ChatUIConfig {
 
 	highlighter?: CodeHighlighter;
 	plugins?: (chatApi: ChatEngine) => ChatPlugin[];
+	agentRunCollapse?: AgentRunCollapse;
+	minAgentRunSteps?: number;
 
 	/**
 	 * Customizes sidebar item menus. Return the final item list from the provided
@@ -199,6 +208,11 @@ export class ChatUI {
 			highlighter: this.config.highlighter,
 			plugins: this.plugins,
 			fullscreen: this.usesFullscreenLayout,
+			agentRunCollapse: this.config.agentRunCollapse,
+			minAgentRunSteps: this.config.minAgentRunSteps,
+			onReachTop: () => {
+				void this.engine.sessions.loadOlderMessages();
+			},
 		});
 
 		if (this.config.enableSidebar) {
@@ -343,6 +357,15 @@ export class ChatUI {
 			);
 			prevIsGenerating = isGenerating;
 		});
+
+		// Older-messages affordance (parallel to the sidebar's load-more state).
+		this.engine.subscribe(
+			(state) => (state.hasMoreMessages ? 1 : 0) | (state.isLoadingMessages ? 2 : 0),
+			() => {
+				const state = this.engine.state;
+				this.feedComponent.setOlderMessagesState(state.hasMoreMessages, state.isLoadingMessages);
+			},
+		);
 
 		let inputSessionId = this.engine.state.currentSessionId;
 		this.engine.onChange(

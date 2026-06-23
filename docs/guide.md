@@ -70,6 +70,7 @@ import "murm-ui/styles/sidebar.css";
 import "murm-ui/styles/input.css";
 import "murm-ui/styles/feed.css";
 import "murm-ui/styles/dropdown.css";
+import "murm-ui/plugins/agent-thinking/agent-thinking.css";
 import "murm-ui/plugins/attachment/attachment.css";
 import "murm-ui/plugins/edit/edit.css";
 import "murm-ui/plugins/settings/settings.css";
@@ -100,6 +101,7 @@ new ChatUI({
   provider: new OpenAIProvider(apiKey, endpoint, model),
   storage: new IndexedDBStorage(),
   highlighter: highlight,
+  agentRunCollapse: "machinery",
   plugins: (chatApi) => [
     AttachmentPlugin(),
     ThinkingPlugin(),
@@ -109,6 +111,10 @@ new ChatUI({
   ],
 });
 ```
+
+Agent runs default to `agentRunCollapse: "machinery"`, which folds tool calls, tool results, and reasoning blocks under "Worked" at their position in the run while keeping assistant prose visible in order. Use `agentRunCollapse: "full"` when you prefer dense agentic feeds that show only the final assistant prose outside the fold.
+
+For agent-oriented interfaces, use `AgentThinkingPlugin()` from `murm-ui/plugins/agent-thinking` instead of `ThinkingPlugin()` when you want reasoning to appear as muted inline preview text while the run is active. Once the run finishes, that preview collapses with the rest of the agent work.
 
 You can customize sidebar menus without replacing Murm UI's defaults:
 
@@ -237,6 +243,7 @@ Plugins add behavior around input, rendering, request preparation, and message a
 
 - `AttachmentPlugin()` adds file attachment handling and previews.
 - `ThinkingPlugin()` renders reasoning blocks behind an expandable control.
+- `AgentThinkingPlugin()` is an alternative reasoning renderer for agent-oriented UIs: muted inline preview text, expandable by clicking the text.
 - `ToolsPlugin()` renders tool calls and matching tool results as compact expandable blocks.
 - `CopyPlugin()` adds message copy actions.
 - `EditPlugin()` lets users edit a prior user message and resubmit from that point.

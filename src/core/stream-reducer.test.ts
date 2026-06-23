@@ -12,6 +12,8 @@ function stateWith(messages: Message[]): ChatState {
 		generatingMessageId: null,
 		isLoadingSession: false,
 		isLoadingSessions: false,
+		hasMoreMessages: false,
+		isLoadingMessages: false,
 		error: null,
 	};
 }

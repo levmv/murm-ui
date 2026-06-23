@@ -18,9 +18,16 @@ interface SessionManagerConfig {
 	stopActiveGeneration: () => Promise<void>;
 }
 
+// Page size for upward message pagination (loadOlderMessages).
+const OLDER_MESSAGES_PAGE_SIZE = 100;
+
 export interface ChatSessions {
 	loadHistory(): Promise<void>;
 	loadMore(): Promise<void>;
+	// Loads a page of messages older than the current transcript head and
+	// prepends them. No-op unless the storage implements loadOlderMessages and
+	// the current session has more history.
+	loadOlderMessages(): Promise<void>;
 	create(): Promise<void>;
 	switch(id: string): Promise<void>;
 	delete(id: string): Promise<void>;
@@ -37,6 +44,7 @@ export class SessionManager implements ChatSessions {
 	private sessionWriteQueues = new Map<string, Promise<void>>();
 	private deletedSessionIds = new Set<string>();
 	private isFetchingSessions = false;
+	private isFetchingOlder = false;
 	private sessionPageCursor: ChatSessionMeta | null = null;
 	private switchSeq = 0;
 
@@ -62,6 +70,45 @@ export class SessionManager implements ChatSessions {
 	// Call this when the user scrolls to the bottom of the sidebar
 	public async loadMore(): Promise<void> {
 		await this.fetchSessionsPage(true);
+	}
+
+	// Call this when the user scrolls to the top of the transcript.
+	public async loadOlderMessages(): Promise<void> {
+		if (!this.storage.loadOlderMessages) return;
+		if (this.isFetchingOlder || !this.state.hasMoreMessages) return;
+
+		const sessionId = this.state.currentSessionId;
+		const oldest = this.state.messages[0];
+		if (!oldest) return;
+
+		this.isFetchingOlder = true;
+		const seq = this.switchSeq;
+		this.store.set({ isLoadingMessages: true });
+
+		try {
+			const page = await this.storage.loadOlderMessages(sessionId, oldest.id, OLDER_MESSAGES_PAGE_SIZE);
+			// Drop the result if the user switched/reloaded the session meanwhile.
+			if (seq !== this.switchSeq || this.state.currentSessionId !== sessionId) return;
+
+			// Prepend onto the *current* messages (a generation may have appended
+			// while we awaited), de-duping any overlap with the existing head.
+			const current = this.state.messages;
+			const existing = new Set(current.map((m) => m.id));
+			const older = page.messages.filter((m) => !existing.has(m.id));
+
+			this.store.set({
+				messages: [...older, ...current],
+				hasMoreMessages: page.hasMore,
+				isLoadingMessages: false,
+			});
+		} catch (error) {
+			console.error("Failed to load older messages", error);
+			if (seq === this.switchSeq && this.state.currentSessionId === sessionId) {
+				this.store.set({ isLoadingMessages: false });
+			}
+		} finally {
+			this.isFetchingOlder = false;
+		}
 	}
 
 	public async create(): Promise<void> {
@@ -265,6 +312,8 @@ export class SessionManager implements ChatSessions {
 			currentSessionId: id,
 			messages: [],
 			isLoadingSession: true,
+			hasMoreMessages: false,
+			isLoadingMessages: false,
 			error: null,
 		});
 
@@ -283,6 +332,7 @@ export class SessionManager implements ChatSessions {
 				sessions: this.withActiveSessionMeta(this.state.sessions),
 				messages: session.messages,
 				isLoadingSession: false,
+				hasMoreMessages: session.hasMoreMessages ?? false,
 			});
 		} catch (error) {
 			console.error(`Failed to load session "${id}"`, error);
@@ -294,6 +344,8 @@ export class SessionManager implements ChatSessions {
 				messages: [],
 				currentSessionId: uuidv7(),
 				isLoadingSession: false,
+				hasMoreMessages: false,
+				isLoadingMessages: false,
 				error: { message: failureMessage },
 			});
 		}
@@ -305,6 +357,8 @@ export class SessionManager implements ChatSessions {
 			currentSessionId: uuidv7(),
 			messages: [],
 			isLoadingSession: false,
+			hasMoreMessages: false,
+			isLoadingMessages: false,
 			error: null,
 		});
 	}
