@@ -1665,12 +1665,12 @@ test("session save enqueued behind a pending title update keeps the new title", 
 	assert.equal(engine.state.sessions.find((s) => s.id === sessionId)?.title, "Smart Title");
 });
 
-test("sessions.loadOlderMessages prepends a backend page and tracks hasMore", async () => {
+test("sessions.loadOlderMessages uses an opaque cursor instead of the oldest message id", async () => {
 	const older = [textMessage("m1", "user", "first"), textMessage("m2", "assistant", "second")];
 	const storage = new (class extends MemoryStorage {
-		public olderCalls: { before: string; limit: number }[] = [];
-		async loadOlderMessages(_id: string, before: string, limit: number) {
-			this.olderCalls.push({ before, limit });
+		public olderCalls: { cursor: string; limit: number }[] = [];
+		async loadOlderMessages(_id: string, cursor: string, limit: number) {
+			this.olderCalls.push({ cursor, limit });
 			return { messages: older, hasMore: false };
 		}
 	})([
@@ -1678,8 +1678,9 @@ test("sessions.loadOlderMessages prepends a backend page and tracks hasMore", as
 			id: "chat-1",
 			title: "Chat 1",
 			updatedAt: 1,
-			messages: [textMessage("m3", "user", "third")],
+			messages: [textMessage("msg_db_483", "user", "third")],
 			hasMoreMessages: true,
+			nextOlderMessagesCursor: "483",
 		},
 	]);
 
@@ -1689,15 +1690,15 @@ test("sessions.loadOlderMessages prepends a backend page and tracks hasMore", as
 	assert.equal(engine.state.hasMoreMessages, true);
 	assert.deepEqual(
 		engine.state.messages.map((m) => m.id),
-		["m3"],
+		["msg_db_483"],
 	);
 
 	await engine.sessions.loadOlderMessages();
 
-	assert.deepEqual(storage.olderCalls, [{ before: "m3", limit: 100 }]);
+	assert.deepEqual(storage.olderCalls, [{ cursor: "483", limit: 100 }]);
 	assert.deepEqual(
 		engine.state.messages.map((m) => m.id),
-		["m1", "m2", "m3"],
+		["m1", "m2", "msg_db_483"],
 	);
 	assert.equal(engine.state.hasMoreMessages, false);
 	assert.equal(engine.state.isLoadingMessages, false);
@@ -1705,6 +1706,68 @@ test("sessions.loadOlderMessages prepends a backend page and tracks hasMore", as
 	// Nothing older remains: further calls are no-ops (storage is not hit again).
 	await engine.sessions.loadOlderMessages();
 	assert.equal(storage.olderCalls.length, 1);
+});
+
+test("sessions.loadOlderMessages requires a backend cursor when hasMoreMessages is true", async () => {
+	const storage = new (class extends MemoryStorage {
+		public olderCalls = 0;
+		async loadOlderMessages(_id: string, _cursor: string, _limit: number) {
+			this.olderCalls++;
+			return { messages: [], hasMore: false };
+		}
+	})([
+		{
+			id: "chat-1",
+			title: "Chat 1",
+			updatedAt: 1,
+			messages: [textMessage("msg_db_483", "user", "third")],
+			hasMoreMessages: true,
+		},
+	]);
+
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	await engine.sessions.switch("chat-1");
+
+	assert.equal(engine.state.hasMoreMessages, false);
+	await engine.sessions.loadOlderMessages();
+	assert.equal(storage.olderCalls, 0);
+});
+
+test("sessions.loadOlderMessages tracks the next backend cursor across pages", async () => {
+	const pages = [
+		{ messages: [textMessage("m2", "assistant", "second")], hasMore: true, nextOlderMessagesCursor: "200" },
+		{ messages: [textMessage("m1", "user", "first")], hasMore: false },
+	];
+	const storage = new (class extends MemoryStorage {
+		public olderCalls: string[] = [];
+		async loadOlderMessages(_id: string, cursor: string, _limit: number) {
+			this.olderCalls.push(cursor);
+			return pages.shift() ?? { messages: [], hasMore: false };
+		}
+	})([
+		{
+			id: "chat-1",
+			title: "Chat 1",
+			updatedAt: 1,
+			messages: [textMessage("m3", "user", "third")],
+			hasMoreMessages: true,
+			nextOlderMessagesCursor: "300",
+		},
+	]);
+
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	await engine.sessions.switch("chat-1");
+
+	await engine.sessions.loadOlderMessages();
+	assert.equal(engine.state.hasMoreMessages, true);
+	await engine.sessions.loadOlderMessages();
+
+	assert.deepEqual(storage.olderCalls, ["300", "200"]);
+	assert.deepEqual(
+		engine.state.messages.map((m) => m.id),
+		["m1", "m2", "m3"],
+	);
+	assert.equal(engine.state.hasMoreMessages, false);
 });
 
 test("sessions.loadOlderMessages is a no-op when storage has no pagination", async () => {

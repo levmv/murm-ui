@@ -117,10 +117,10 @@ export class RemoteStorage implements ChatStorage {
 
 	async loadOlderMessages(
 		sessionId: string,
-		beforeMessageId: string,
+		cursor: string,
 		limit: number,
-	): Promise<{ messages: Message[]; hasMore: boolean }> {
-		const params = new URLSearchParams({ before: beforeMessageId, limit: limit.toString() });
+	): Promise<{ messages: Message[]; hasMore: boolean; nextOlderMessagesCursor?: string }> {
+		const params = new URLSearchParams({ before: cursor, limit: limit.toString() });
 		const url = `${this.getPath(`/${encodeURIComponent(sessionId)}`)}?${params.toString()}`;
 		const res = await fetch(url, { headers: this.headers });
 		await this.assertOk(res, "Failed to load older messages", url);

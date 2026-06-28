@@ -290,9 +290,12 @@ Remote storage endpoints:
 
 - `GET /api/chats` lists chat metadata.
 - `GET /api/chats/:id` loads one chat with messages.
+- `GET /api/chats/:id?before=<cursor>&limit=<n>` optionally loads messages older than an opaque cursor.
 - `PUT /api/chats/:id` saves a chat document.
 - `POST /api/chats/:id/meta` updates metadata such as generated titles.
 - `DELETE /api/chats/:id` deletes a chat.
+
+For backend-paginated transcripts, return `hasMoreMessages: true` and `nextOlderMessagesCursor` from `GET /api/chats/:id`. `RemoteStorage` passes that cursor back as `before` and expects each older page to return `{ messages, hasMore, nextOlderMessagesCursor? }`. The cursor is independent from `Message.id`.
 
 Chat metadata may include `isPinned?: boolean`. If your app exposes the built-in Pin menu item, custom storage should preserve that field, return pinned chats first, and use `isPinned`, `updatedAt`, and `id` as the pagination cursor. `RemoteStorage` sends `cursorPinned=true|false` with cursor requests.
 

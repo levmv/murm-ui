@@ -45,6 +45,7 @@ export class SessionManager implements ChatSessions {
 	private deletedSessionIds = new Set<string>();
 	private isFetchingSessions = false;
 	private isFetchingOlder = false;
+	private olderCursor: string | null = null;
 	private sessionPageCursor: ChatSessionMeta | null = null;
 	private switchSeq = 0;
 
@@ -75,18 +76,17 @@ export class SessionManager implements ChatSessions {
 	// Call this when the user scrolls to the top of the transcript.
 	public async loadOlderMessages(): Promise<void> {
 		if (!this.storage.loadOlderMessages) return;
-		if (this.isFetchingOlder || !this.state.hasMoreMessages) return;
+		if (this.isFetchingOlder || !this.state.hasMoreMessages || !this.olderCursor) return;
 
 		const sessionId = this.state.currentSessionId;
-		const oldest = this.state.messages[0];
-		if (!oldest) return;
+		const cursor = this.olderCursor;
 
 		this.isFetchingOlder = true;
 		const seq = this.switchSeq;
 		this.store.set({ isLoadingMessages: true });
 
 		try {
-			const page = await this.storage.loadOlderMessages(sessionId, oldest.id, OLDER_MESSAGES_PAGE_SIZE);
+			const page = await this.storage.loadOlderMessages(sessionId, cursor, OLDER_MESSAGES_PAGE_SIZE);
 			// Drop the result if the user switched/reloaded the session meanwhile.
 			if (seq !== this.switchSeq || this.state.currentSessionId !== sessionId) return;
 
@@ -95,10 +95,11 @@ export class SessionManager implements ChatSessions {
 			const current = this.state.messages;
 			const existing = new Set(current.map((m) => m.id));
 			const older = page.messages.filter((m) => !existing.has(m.id));
+			this.olderCursor = page.nextOlderMessagesCursor ?? null;
 
 			this.store.set({
 				messages: [...older, ...current],
-				hasMoreMessages: page.hasMore,
+				hasMoreMessages: page.hasMore && this.olderCursor !== null,
 				isLoadingMessages: false,
 			});
 		} catch (error) {
@@ -307,6 +308,7 @@ export class SessionManager implements ChatSessions {
 
 		const seq = ++this.switchSeq;
 		this.activeSessionMeta = null;
+		this.olderCursor = null;
 
 		this.store.set({
 			currentSessionId: id,
@@ -328,11 +330,12 @@ export class SessionManager implements ChatSessions {
 			if (!session) throw new Error("Chat not found");
 
 			this.activeSessionMeta = this.toSessionMeta(session);
+			this.olderCursor = session.nextOlderMessagesCursor ?? null;
 			this.store.set({
 				sessions: this.withActiveSessionMeta(this.state.sessions),
 				messages: session.messages,
 				isLoadingSession: false,
-				hasMoreMessages: session.hasMoreMessages ?? false,
+				hasMoreMessages: Boolean(session.hasMoreMessages && this.olderCursor !== null),
 			});
 		} catch (error) {
 			console.error(`Failed to load session "${id}"`, error);
@@ -340,6 +343,7 @@ export class SessionManager implements ChatSessions {
 			if (this.state.currentSessionId !== id) return;
 
 			this.activeSessionMeta = null;
+			this.olderCursor = null;
 			this.store.set({
 				messages: [],
 				currentSessionId: uuidv7(),
@@ -353,6 +357,7 @@ export class SessionManager implements ChatSessions {
 
 	private startNewSession(): void {
 		this.activeSessionMeta = null;
+		this.olderCursor = null;
 		this.store.set({
 			currentSessionId: uuidv7(),
 			messages: [],

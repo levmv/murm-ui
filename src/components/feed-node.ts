@@ -305,6 +305,10 @@ function formatWorkSummary(segment: FeedAgentRunWorkSegment): string {
 			: `${toolCallCount} ${pluralize("tool call", toolCallCount)}`;
 	}
 
+	if (isReasoningOnlySegment(segment)) {
+		return durationText ? `Thought for ${durationText}` : "Thought";
+	}
+
 	return durationText ? `Worked for ${durationText}` : "Worked";
 }
 
@@ -316,6 +320,17 @@ function countToolCalls(segment: FeedAgentRunWorkSegment): number {
 		}
 	}
 	return count;
+}
+
+function isReasoningOnlySegment(segment: FeedAgentRunWorkSegment): boolean {
+	let hasReasoning = false;
+	for (const message of segment.stepMessages) {
+		for (const block of message.blocks) {
+			if (block.type !== "reasoning") return false;
+			hasReasoning = true;
+		}
+	}
+	return hasReasoning;
 }
 
 function pluralize(label: string, count: number): string {

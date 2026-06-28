@@ -36,6 +36,7 @@ function createFeedHarness(
 		resizeObserver?: boolean;
 		plugins?: ChatPlugin[];
 		agentRunCollapse?: AgentRunCollapse;
+		onReachTop?: () => void;
 	} = {},
 ): FeedHarness {
 	const isFullscreen = options.fullscreen !== false;
@@ -151,6 +152,7 @@ function createFeedHarness(
 		plugins: options.plugins ?? [],
 		fullscreen: isFullscreen,
 		agentRunCollapse: options.agentRunCollapse,
+		onReachTop: options.onReachTop,
 	});
 
 	return {
@@ -423,6 +425,30 @@ function setScrollMetrics(
 	});
 }
 
+function setComputedScrollMetrics(
+	scrollArea: HTMLElement,
+	metrics: { scrollTop: number; scrollHeight: () => number; clientHeight: number },
+): { getScrollTop: () => number; setScrollTop: (scrollTop: number) => void } {
+	let scrollTop = metrics.scrollTop;
+	Object.defineProperties(scrollArea, {
+		scrollTop: {
+			configurable: true,
+			get: () => scrollTop,
+			set: (value: number) => {
+				scrollTop = value;
+			},
+		},
+		scrollHeight: { configurable: true, get: metrics.scrollHeight },
+		clientHeight: { configurable: true, value: metrics.clientHeight },
+	});
+	return {
+		getScrollTop: () => scrollTop,
+		setScrollTop: (value) => {
+			scrollTop = value;
+		},
+	};
+}
+
 function setWindowScrollMetrics(metrics: { scrollTop: number; scrollHeight: number; clientHeight: number }): void {
 	Object.defineProperty(window, "scrollY", {
 		configurable: true,
@@ -685,6 +711,96 @@ test("loading a session resets sticky bottom intent", () => {
 	assert.equal(frameCount(), 1);
 	flushFrames();
 	assert.deepEqual(scrollCalls, ["smooth"]);
+
+	feed.destroy();
+});
+
+test("prepended older messages preserve scroll when feed items regroup", () => {
+	let reachTopCalls = 0;
+	const { feed, root, flushFrames } = createFeedHarness({
+		onReachTop: () => {
+			reachTopCalls++;
+		},
+	});
+	const scrollArea = root.querySelector<HTMLElement>(".mur-chat-scroll-area");
+	assert.ok(scrollArea);
+	const metrics = setComputedScrollMetrics(scrollArea, {
+		scrollTop: 0,
+		scrollHeight: () => 900 + root.querySelectorAll(".mur-message").length * 100,
+		clientHeight: 500,
+	});
+	const currentHead: Message = {
+		id: "assistant-final",
+		role: "assistant",
+		runId: "run-1",
+		blocks: [{ id: "final-text", type: "text", text: "Current visible answer." }],
+	};
+
+	feed.update([currentHead], null, false, false);
+	flushFrames();
+	feed.setOlderMessagesState(true, false);
+
+	metrics.setScrollTop(400);
+	scrollArea.dispatchEvent(new window.Event("scroll"));
+	metrics.setScrollTop(120);
+	scrollArea.dispatchEvent(new window.Event("scroll"));
+	assert.equal(reachTopCalls, 1);
+
+	const beforeTop = metrics.getScrollTop();
+	const beforeHeight = scrollArea.scrollHeight;
+	feed.update(
+		[
+			{
+				id: "user-1",
+				role: "user",
+				runId: "run-1",
+				blocks: [{ id: "user-text", type: "text", text: "Please inspect it" }],
+			},
+			{
+				id: "assistant-tool",
+				role: "assistant",
+				runId: "run-1",
+				blocks: [
+					{
+						id: "tool-call",
+						type: "tool_call",
+						toolCallId: "call-1",
+						name: "inspect",
+						argsText: "{}",
+						status: "complete",
+					},
+				],
+			},
+			{
+				id: "tool-result",
+				role: "tool",
+				runId: "run-1",
+				blocks: [{ id: "tool-result-block", type: "tool_result", toolCallId: "call-1", outputText: "ok" }],
+			},
+			currentHead,
+		],
+		null,
+		false,
+		false,
+	);
+
+	assert.equal(metrics.getScrollTop(), beforeTop + scrollArea.scrollHeight - beforeHeight);
+	scrollArea.dispatchEvent(new window.Event("scroll"));
+	assert.equal(reachTopCalls, 1);
+
+	feed.destroy();
+});
+
+test("older message loading shows a visible status", () => {
+	const { feed, root } = createFeedHarness();
+
+	feed.setOlderMessagesState(true, true);
+
+	const status = root.querySelector<HTMLElement>(".mur-feed-older-status");
+	assert.ok(status);
+	assert.equal(status.getAttribute("role"), "status");
+	assert.match(status.textContent ?? "", /Loading older messages/);
+	assert.equal(status.closest<HTMLElement>(".mur-feed-spinner-top")?.hidden, false);
 
 	feed.destroy();
 });
@@ -1111,6 +1227,40 @@ test("agent run final reasoning stays inside the folded work segment", async () 
 	feed.destroy();
 });
 
+test("reasoning-only agent work uses a thought summary", async () => {
+	const { feed, root } = createFeedHarness();
+	const transcript: Message[] = [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-thought",
+			createdAt: 1000,
+			updatedAt: 1000,
+			blocks: [{ id: "user-text", type: "text", text: "Explain" }],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId: "run-thought",
+			createdAt: 11000,
+			updatedAt: 11000,
+			blocks: [
+				{ id: "final-reasoning", type: "reasoning", text: "Private reasoning." },
+				{ id: "final-text", type: "text", text: "The answer is visible." },
+			],
+		},
+	];
+
+	feed.update(transcript, null, false, false);
+	await flushMicrotasks();
+
+	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "Thought for 10s");
+	assert.match(root.textContent ?? "", /The answer is visible/);
+	assert.doesNotMatch(root.textContent ?? "", /Private reasoning/);
+
+	feed.destroy();
+});
+
 test("agent thinking plugin renders folded reasoning as inline preview text", async () => {
 	const { feed, root } = createFeedHarness({ plugins: [AgentThinkingPlugin()] });
 	const transcript = agentRunMessages();
@@ -1160,14 +1310,19 @@ test("agent run grouping falls back to user boundaries for old transcripts witho
 	feed.destroy();
 });
 
-test("agent run messages stay flat while generation is active", () => {
+test("active machinery agent runs render compact expanded work", () => {
 	const { feed, root } = createFeedHarness();
-	const transcript = agentRunMessages();
+	const transcript = agentRunMessages().slice(0, 3);
 
-	feed.update(transcript.slice(0, 3), "assistant-tool", false, false);
+	feed.update(transcript, "assistant-tool", false, false);
 
-	assert.equal(root.querySelector(".mur-agent-run-summary"), null);
-	assert.equal(root.querySelectorAll(".mur-message").length, 3);
+	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
+	assert.ok(summary);
+	assert.equal(summary.getAttribute("aria-expanded"), "true");
+	assert.equal(root.querySelectorAll(".mur-agent-run-steps .mur-message").length, 1);
+	const history = root.querySelector<HTMLElement>(".mur-chat-history");
+	assert.ok(history);
+	assert.equal(Array.from(history.children).filter((child) => child.classList.contains("mur-message")).length, 0);
 
 	feed.destroy();
 });

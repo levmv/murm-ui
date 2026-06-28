@@ -322,8 +322,31 @@
 
 /* Older-messages spinner sits above the transcript, not below it. */
 .mur-feed-spinner-top {
-	padding-top: 1rem;
-	padding-bottom: 0.5rem;
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	padding-top: 0.5rem;
+	padding-bottom: 0.25rem;
+	pointer-events: none;
+	background: linear-gradient(to bottom, var(--mur-bg) 0%, var(--mur-bg) 70%, transparent 100%);
+}
+
+.mur-feed-older-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.25rem 0.625rem;
+	border: 1px solid var(--mur-border);
+	border-radius: 6px;
+	background: var(--mur-surface);
+	color: var(--mur-text-muted);
+	font-size: 0.8125rem;
+	line-height: 1.25rem;
+}
+
+.mur-feed-older-status .mur-message-loading {
+	padding: 0;
+	height: auto;
 }
 
 .mur-agent-run {

@@ -155,6 +155,8 @@ Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-th
 > 1. Look at the `id` of the first message in the incoming payload.
 > 2. Upsert all incoming messages.
 > 3. Delete stored messages for this chat that have an `id` newer than the first payload message, but are not present in the payload. This cleans up edited or aborted response tails.
+>
+> For backend-paginated transcripts, `GET /api/chats/:id` may return `hasMoreMessages: true` and an opaque `nextOlderMessagesCursor`. `RemoteStorage` sends that cursor as `before` to `GET /api/chats/:id?before=<cursor>&limit=<n>`; older pages return `{ messages, hasMore, nextOlderMessagesCursor? }`. This cursor is separate from `Message.id`.
 
 **4. Delete A Chat**
 *   **DELETE** `/api/chats/:id`

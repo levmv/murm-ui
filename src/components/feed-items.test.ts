@@ -134,6 +134,87 @@ function runWithFinalReasoning(): Message[] {
 	return messages;
 }
 
+function runWithReasoningOnlyFinalReply(): Message[] {
+	return [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-reasoning-only",
+			blocks: [{ id: "user-text", type: "text", text: "Explain" }],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId: "run-reasoning-only",
+			blocks: [
+				{ id: "final-reasoning", type: "reasoning", text: "Need a concise answer." },
+				{ id: "final-text", type: "text", text: "Here is the answer." },
+			],
+		},
+	];
+}
+
+function runWithFinalArtifact(): Message[] {
+	return [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-artifact",
+			blocks: [{ id: "user-text", type: "text", text: "Create a file" }],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId: "run-artifact",
+			blocks: [
+				{ id: "final-reasoning", type: "reasoning", text: "Need to produce the artifact." },
+				{
+					id: "final-artifact",
+					type: "artifact",
+					artifactId: "artifact-1",
+					mime: "text/plain",
+					title: "notes.txt",
+					content: "done",
+				},
+			],
+		},
+	];
+}
+
+function runWithTrailingWorkAfterFinalText(): Message[] {
+	return [
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-trailing-work",
+			blocks: [{ id: "user-text", type: "text", text: "Finish up" }],
+		},
+		{
+			id: "assistant-final",
+			role: "assistant",
+			runId: "run-trailing-work",
+			blocks: [
+				{ id: "final-reasoning", type: "reasoning", text: "Need one last command." },
+				{ id: "final-text", type: "text", text: "The answer is ready." },
+				{
+					id: "final-tool",
+					type: "tool_call",
+					toolCallId: "call-final",
+					name: "notify",
+					argsText: "{}",
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-result",
+			role: "tool",
+			runId: "run-trailing-work",
+			blocks: [{ id: "tool-result-block", type: "tool_result", toolCallId: "call-final", outputText: "ok" }],
+		},
+	];
+}
+
 function runWithOnlyToolResultNoise(): Message[] {
 	return [
 		{
@@ -264,6 +345,50 @@ test("final reasoning is folded instead of rendering with the final text", () =>
 	});
 });
 
+test("reasoning-only final replies fold reasoning before the visible answer", () => {
+	const item = onlyAgentRun(runWithReasoningOnlyFinalReply());
+
+	assert.deepEqual(visibleText(item), ["Here is the answer."]);
+	assert.deepEqual(segmentShape(item), [
+		{
+			type: "work",
+			messages: [{ messageId: "assistant-final", role: "assistant", blocks: ["reasoning"] }],
+		},
+		{
+			type: "messages",
+			messages: [{ messageId: "assistant-final", role: "assistant", blocks: ["text"] }],
+		},
+	]);
+});
+
+test("final artifacts count as visible agent replies", () => {
+	const item = onlyAgentRun(runWithFinalArtifact());
+
+	assert.deepEqual(blockShape(item), {
+		steps: [{ messageId: "assistant-final", role: "assistant", blocks: ["reasoning"] }],
+		visible: [{ messageId: "assistant-final", role: "assistant", blocks: ["artifact"] }],
+	});
+});
+
+test("machinery collapse tolerates trailing work after the last assistant prose", () => {
+	const item = onlyAgentRun(runWithTrailingWorkAfterFinalText());
+
+	assert.deepEqual(visibleText(item), ["The answer is ready."]);
+	assert.deepEqual(segmentShape(item), [
+		{
+			type: "messages",
+			messages: [{ messageId: "assistant-final", role: "assistant", blocks: ["text"] }],
+		},
+		{
+			type: "work",
+			messages: [
+				{ messageId: "assistant-final", role: "assistant", blocks: ["reasoning"] },
+				{ messageId: "assistant-final", role: "assistant", blocks: ["tool_call"] },
+			],
+		},
+	]);
+});
+
 test("runs without intermediate prose render the same in full and machinery modes", () => {
 	const messages = runWithoutIntermediateProse();
 	const full = onlyAgentRun(messages, { agentRunCollapse: "full" });
@@ -279,10 +404,15 @@ test("standalone tool results do not trigger agent run collapse", () => {
 	assert.equal(items.some(isAgentRunItem), false);
 });
 
-test("agent runs stay flat when any run message is still generating", () => {
-	const messages = runWithIntermediateProse();
-	const items = build(messages, { generatingMessageId: "assistant-137" });
+test("active machinery agent runs render as expanded work", () => {
+	const messages = runWithoutIntermediateProse().slice(0, 3);
+	const item = onlyAgentRun(messages, { generatingMessageId: "assistant-tool" });
 
-	assert.equal(items.length, messages.length);
-	assert.equal(items.some(isAgentRunItem), false);
+	assert.deepEqual(segmentShape(item), [
+		{
+			type: "work",
+			messages: [{ messageId: "assistant-tool", role: "assistant", blocks: ["tool_call"] }],
+		},
+	]);
+	assert.equal(item.collapsed, false);
 });

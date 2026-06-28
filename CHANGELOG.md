@@ -9,11 +9,11 @@
 ### Added
 
 - Add `agentRunCollapse: "full" | "machinery"` and `AgentThinkingPlugin()` for agent-oriented reasoning previews.
-- Add optional older-message pagination via `ChatStorage.loadOlderMessages`; `RemoteStorage` and the feed can load history as the user scrolls upward.
+- Add optional older-message pagination via opaque storage cursors; `RemoteStorage` and the feed can load history as the user scrolls upward.
 
 ### Fixed
 
-- Keep reasoning/tool summaries inside the correct agent-run fold, with better work labels, durations, and spacing.
+- Preserve scroll and show status while loading older messages; keep live and completed reasoning/tool work inside the correct fold.
 
 ## 0.1.1 - 2026-06-14
 

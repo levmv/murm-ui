@@ -54,7 +54,7 @@ export function buildFeedItems(messages: readonly Message[], options: BuildFeedI
 		if (message.role === "user") {
 			const runEndIndex = findRunEndIndex(messages, index);
 			const runItem =
-				runEndIndex - index >= 3
+				runEndIndex - index >= 2
 					? buildAgentRunItem(messages, index, runEndIndex, options, minAgentRunSteps, agentRunCollapse)
 					: null;
 
@@ -105,34 +105,36 @@ function buildAgentRunItem(
 	minAgentRunSteps: number,
 	agentRunCollapse: AgentRunCollapse,
 ): FeedAgentRunItem | null {
+	let isActiveRun = false;
 	if (options.generatingMessageId) {
 		for (let i = userIndex; i < runEndIndex; i++) {
-			if (messages[i].id === options.generatingMessageId) return null;
+			if (messages[i].id !== options.generatingMessageId) continue;
+			if (agentRunCollapse !== "machinery") return null;
+			isActiveRun = true;
+			break;
 		}
 	}
 
 	const userMessage = messages[userIndex];
-	const finalMessageIndex = findFinalAssistantTextIndex(messages, userIndex + 1, runEndIndex);
-	if (finalMessageIndex !== runEndIndex - 1) return null;
-
-	let agentStepCount = 0;
-	for (let i = userIndex + 1; i < finalMessageIndex; i++) {
-		if (hasAgentActivity(messages[i], agentRunCollapse)) agentStepCount++;
-	}
-	if (agentStepCount < minAgentRunSteps) return null;
+	const finalMessageIndex = findFinalAssistantProseIndex(messages, userIndex + 1, runEndIndex);
+	if (finalMessageIndex === -1 && !isActiveRun) return null;
+	if (agentRunCollapse === "full" && finalMessageIndex !== runEndIndex - 1) return null;
 
 	const runId = userMessage.runId ?? userMessage.id;
 	const isWorkSegmentExpanded = (segmentId: string) =>
-		options.isWorkSegmentExpanded?.(segmentId) ?? options.isRunExpanded?.(runId) ?? false;
+		isActiveRun || options.isWorkSegmentExpanded?.(segmentId) || options.isRunExpanded?.(runId) || false;
 	const segments =
 		agentRunCollapse === "full"
 			? buildFullSegments(messages, userIndex, finalMessageIndex, runId, isWorkSegmentExpanded)
 			: buildMachinerySegments(messages, userIndex, runEndIndex, runId, isWorkSegmentExpanded);
 	const stepMessages = flattenStepMessages(segments);
+	if (countAgentStepMessages(stepMessages) < minAgentRunSteps) return null;
+
 	const visibleMessages = flattenVisibleMessages(segments);
 	const collapsed = segments
 		.filter((segment): segment is FeedAgentRunWorkSegment => segment.type === "work")
 		.every((segment) => segment.collapsed);
+	const finalMessage = messages[finalMessageIndex === -1 ? runEndIndex - 1 : finalMessageIndex];
 
 	return {
 		type: "agent_run",
@@ -142,9 +144,9 @@ function buildAgentRunItem(
 		segments,
 		stepMessages,
 		visibleMessages,
-		finalMessage: messages[finalMessageIndex],
+		finalMessage,
 		collapsed,
-		durationMs: calculateRunDuration(userMessage, messages[finalMessageIndex]),
+		durationMs: calculateRunDuration(userMessage, finalMessage),
 	};
 }
 
@@ -284,6 +286,10 @@ function flattenStepMessages(segments: readonly FeedAgentRunSegment[]): Message[
 	return segments.flatMap((segment) => (segment.type === "work" ? segment.stepMessages : []));
 }
 
+function countAgentStepMessages(messages: readonly Message[]): number {
+	return new Set(messages.map((message) => message.id)).size;
+}
+
 function flattenVisibleMessages(segments: readonly FeedAgentRunSegment[]): Message[] {
 	return segments.flatMap((segment) => (segment.type === "messages" ? segment.messages : []));
 }
@@ -348,22 +354,13 @@ function createFilteredMessage(message: Message, blocks: Message["blocks"]): Mes
 	return { ...message, blocks };
 }
 
-function findFinalAssistantTextIndex(messages: readonly Message[], startIndex: number, endIndex: number): number {
+function findFinalAssistantProseIndex(messages: readonly Message[], startIndex: number, endIndex: number): number {
 	for (let i = endIndex - 1; i >= startIndex; i--) {
 		const message = messages[i];
-		if (message.role === "assistant" && hasTextBlock(message)) return i;
+		if (message.role === "assistant" && proseBlocks(message).length > 0) return i;
 	}
 
 	return -1;
-}
-
-function hasTextBlock(message: Message): boolean {
-	return message.blocks.some((block) => block.type === "text" && block.text.trim().length > 0);
-}
-
-function hasAgentActivity(message: Message, agentRunCollapse: AgentRunCollapse): boolean {
-	if (agentRunCollapse === "machinery") return machineryBlocks(message).length > 0;
-	return message.blocks.some((block) => block.type !== "text" && isRenderableStepBlock(block));
 }
 
 function machineryBlocks(message: Message): ContentBlock[] {

@@ -167,6 +167,9 @@ export interface ChatSession {
 	// window: true when older messages exist and can be fetched via
 	// ChatStorage.loadOlderMessages. Storages that load whole sessions omit it.
 	hasMoreMessages?: boolean;
+	// Opaque backend/storage cursor for the next older page. This is separate
+	// from Message.id, which is a UI/wire identity and may not be a storage key.
+	nextOlderMessagesCursor?: string;
 }
 
 export interface PaginatedSessions {
@@ -198,16 +201,17 @@ export interface ChatStorage {
 	delete(id: string): Promise<void>;
 	/**
 	 * Optional upward pagination for backends that return only the latest window
-	 * from loadOne. Returns a page of messages older than `beforeMessageId`,
-	 * oldest-first, plus whether even-older messages remain. Storages that load
-	 * whole sessions (the default, e.g. local IndexedDB) omit this, and the UI
-	 * never offers "load older".
+	 * from loadOne. `cursor` is an opaque storage/backend cursor previously
+	 * returned as nextOlderMessagesCursor, not a Message.id. Returns a page of
+	 * messages oldest-first, plus whether even-older messages remain and the
+	 * cursor for the next page. Storages that load whole sessions (the default,
+	 * e.g. local IndexedDB) omit this, and the UI never offers "load older".
 	 */
 	loadOlderMessages?(
 		sessionId: string,
-		beforeMessageId: string,
+		cursor: string,
 		limit: number,
-	): Promise<{ messages: Message[]; hasMore: boolean }>;
+	): Promise<{ messages: Message[]; hasMore: boolean; nextOlderMessagesCursor?: string }>;
 	close?(): void | Promise<void>;
 }
 

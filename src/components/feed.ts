@@ -18,9 +18,10 @@ export class Feed {
 	// Upward-pagination state, driven by setOlderMessagesState.
 	private hasMoreOlder = false;
 	private isLoadingOlder = false;
-	// Id of the first feed item from the previous render, used to detect a
-	// prepend (older messages added at the top) so we can preserve scroll anchor.
-	private firstItemId: string | null = null;
+	// Id of the first raw message from the previous render. Feed items can
+	// regroup when older run fragments arrive, so raw messages are the stable
+	// signal for detecting prepends.
+	private firstMessageId: string | null = null;
 
 	private nodes = new Map<string, FeedNode>();
 	private expandedWorkSegmentIds = new Set<string>();
@@ -80,7 +81,7 @@ export class Feed {
 
 		// Older-messages spinner sits above the transcript (top of the scroll area).
 		this.olderSpinnerEl = el("div", "mur-feed-spinner mur-feed-spinner-top", {
-			innerHTML: `<div class="mur-message-loading"><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span></div>`,
+			innerHTML: `<div class="mur-feed-older-status" role="status"><span class="mur-message-loading" aria-hidden="true"><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span></span><span>Loading older messages...</span></div>`,
 		});
 		this.olderSpinnerEl.hidden = true;
 		this.historyContainer.parentElement?.insertBefore(this.olderSpinnerEl, this.historyContainer);
@@ -118,7 +119,7 @@ export class Feed {
 			this.lastScrollTop = 0;
 			this.clearAllNodes();
 			this.lastMessagesRef = null;
-			this.firstItemId = null;
+			this.firstMessageId = null;
 			return;
 		}
 
@@ -131,22 +132,19 @@ export class Feed {
 		// message in-place, so discovering a missing node below also marks structure dirty.
 		const items = this.getFeedItems(messages, generatingMessageId);
 
-		// Detect a prepend (older messages inserted above the current head): the
-		// previous first item still exists but is no longer first. When the user is
-		// reading history (not stuck to the bottom), anchor the viewport to it so
-		// the new content grows upward instead of yanking the scroll position.
-		let anchorEl: HTMLElement | null = null;
-		let anchorTopBefore = 0;
-		if (
+		// Detect a prepend (older messages inserted above the current head). For
+		// upward pagination, preserving the scrollHeight delta is more robust than
+		// anchoring a DOM node because feed item ids can change when a partial run
+		// becomes a collapsed agent_run after older messages arrive.
+		const previousFirstMessageId = this.firstMessageId;
+		const nextFirstMessageId = messages[0]?.id ?? null;
+		const preservesPrependScroll =
 			!this.isStickyToBottom &&
-			this.firstItemId !== null &&
-			items.length > 0 &&
-			items[0].id !== this.firstItemId &&
-			this.nodes.has(this.firstItemId)
-		) {
-			anchorEl = this.nodes.get(this.firstItemId)?.el ?? null;
-			anchorTopBefore = anchorEl ? anchorEl.offsetTop : 0;
-		}
+			previousFirstMessageId !== null &&
+			nextFirstMessageId !== null &&
+			nextFirstMessageId !== previousFirstMessageId &&
+			messages.some((message, index) => index > 0 && message.id === previousFirstMessageId);
+		const scrollHeightBefore = preservesPrependScroll ? this.getScrollMetrics().scrollHeight : 0;
 
 		let structureChanged = this.lastMessagesRef !== messages || this.nodes.size > items.length;
 		this.lastMessagesRef = messages;
@@ -190,13 +188,13 @@ export class Feed {
 			}
 		}
 
-		// Compensate for height added above the anchor so the prepended history
+		// Compensate for height added above the viewport so prepended history
 		// unrolls upward without moving what the user is looking at.
-		if (anchorEl?.isConnected) {
-			const delta = anchorEl.offsetTop - anchorTopBefore;
+		if (preservesPrependScroll) {
+			const delta = this.getScrollMetrics().scrollHeight - scrollHeightBefore;
 			if (delta !== 0) this.adjustScrollTop(delta);
 		}
-		this.firstItemId = items[0]?.id ?? null;
+		this.firstMessageId = nextFirstMessageId;
 
 		const isActivelyStreaming = generatingMessageId !== null && !generationStarted;
 		this.requestBottomScroll(isActivelyStreaming ? "auto" : "smooth");
