@@ -1,4 +1,7 @@
+import type { ChatLabels } from "../labels";
 import type { ChatEngine } from "./chat-engine";
+import type { ComposerPlugin } from "./composer-types";
+import type { ConversationChange } from "./conversation-types";
 
 export type JsonValue = string | number | boolean | null | { [key: string]: JsonValue } | JsonValue[];
 
@@ -21,6 +24,8 @@ export type ContentBlock =
 			toolCallId: string;
 			name: string;
 			argsText: string;
+			/** Application-provided summary, independent of raw arguments. */
+			summary?: string;
 			status: "streaming" | "pending" | "running" | "complete" | "error";
 	  }
 	| {
@@ -37,6 +42,13 @@ export type ContentBlock =
 			mime: string;
 			title?: string;
 			content: string;
+	  }
+	| {
+			id: string;
+			type: "custom";
+			kind: string;
+			data: JsonValue;
+			fallbackText: string;
 	  }
 	| {
 			id: string;
@@ -61,94 +73,19 @@ export interface Message {
 	id: string;
 	role: Role;
 	blocks: ContentBlock[];
-	// Groups messages that belong to the same user-triggered run/turn.
-	// Core-generated run ids default to the user message id.
+	/** Groups messages from one run. ChatEngine defaults to the user message ID. */
 	runId?: string;
 	createdAt?: number;
 	updatedAt?: number;
-	// Used to prevent this message from being sent to the LLM or persisted
+	/** Excludes the message from provider requests and storage. */
 	ephemeral?: boolean;
 	usage?: TokenUsage;
-	// Durable provider/plugin metadata. Must stay JSON-serializable because it
-	// can be persisted with chat history.
+	/** JSON-serializable provider or plugin metadata, saved with chat history. */
 	meta?: Record<string, JsonValue>;
+	/** Display state for addressed updates. */
+	status?: "streaming" | "complete" | "error";
+	error?: string;
 }
-
-export type FinishReason = "stop" | "length" | "tool_use" | "content_filter" | "error" | "aborted";
-
-/**
- * Normalized streaming events emitted by ChatProvider implementations.
- *
- * Stream contract:
- * - Providers/adapters own upstream quirks and emit Murm message ids.
- * - `runId` is optional on streamed events. When omitted, the engine keeps the
- *   locally generated run id from the user message that started this generation.
- * - The engine creates a temporary empty assistant message before streaming starts.
- *   The first event with a new message id may replace that placeholder id.
- * - `message_start` starts a logical streamed message. A single `streamChat`
- *   call may emit multiple assistant `message_start` events with different ids;
- *   the engine appends each as a new message and continues streaming into it.
- * - Delta/block events should be ordered by message. Once an event starts a new
- *   message id, later deltas are treated as belonging to the active message.
- *   Adapters should not interleave deltas for older messages after switching.
- * - If an adapter cannot emit `message_start`, the first delta/block event with
- *   a new message id can still start an assistant message as a fallback.
- * - `usage` and `finish` apply to the current active streamed message/run.
- */
-export type StreamEvent =
-	| {
-			type: "message_start";
-			message: Pick<Message, "id" | "role" | "blocks" | "meta" | "runId" | "createdAt" | "updatedAt">;
-	  }
-	| {
-			type: "text_delta";
-			messageId: string;
-			blockId: string;
-			delta: string;
-	  }
-	| {
-			type: "reasoning_delta";
-			messageId: string;
-			blockId: string;
-			delta: string;
-			encrypted?: boolean;
-	  }
-	| {
-			type: "tool_call_start";
-			messageId: string;
-			block: Extract<ContentBlock, { type: "tool_call" }>;
-	  }
-	| {
-			type: "tool_call_delta";
-			messageId: string;
-			blockId: string;
-			name?: string;
-			argsDelta?: string;
-			status?: Extract<ContentBlock, { type: "tool_call" }>["status"];
-	  }
-	| {
-			type: "tool_result";
-			messageId: string;
-			block: Extract<ContentBlock, { type: "tool_result" }>;
-	  }
-	| {
-			type: "artifact";
-			messageId: string;
-			block: Extract<ContentBlock, { type: "artifact" }>;
-	  }
-	| {
-			type: "usage";
-			input: number;
-			output: number;
-			total?: number;
-			cacheRead?: number;
-			cacheWrite?: number;
-			details?: JsonValue;
-	  }
-	| {
-			type: "finish";
-			reason: FinishReason;
-	  };
 
 export interface ChatSessionMeta {
 	id: string;
@@ -163,12 +100,9 @@ export interface ChatSession {
 	updatedAt: number;
 	isPinned?: boolean;
 	messages: Message[];
-	// Set by backend-paginated storages whose loadOne returns only the latest
-	// window: true when older messages exist and can be fetched via
-	// ChatStorage.loadOlderMessages. Storages that load whole sessions omit it.
+	/** True when loadOne returns a partial history with older messages available. */
 	hasMoreMessages?: boolean;
-	// Opaque backend/storage cursor for the next older page. This is separate
-	// from Message.id, which is a UI/wire identity and may not be a storage key.
+	/** Opaque storage cursor for the next older page; independent of Message.id. */
 	nextOlderMessagesCursor?: string;
 }
 
@@ -185,9 +119,7 @@ export interface ChatState {
 	generatingMessageId: string | null;
 	isLoadingSession: boolean;
 	isLoadingSessions: boolean;
-	// Upward message pagination, parallel to hasMoreSessions/isLoadingSessions.
-	// hasMoreMessages stays false unless the storage supports loadOlderMessages
-	// and the loaded session reported older history.
+	/** Whether the loaded session reports older messages beyond the current page. */
 	hasMoreMessages: boolean;
 	isLoadingMessages: boolean;
 	error: { message: string; id?: string } | null;
@@ -196,16 +128,14 @@ export interface ChatState {
 export interface ChatStorage {
 	loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions>;
 	loadOne(id: string): Promise<ChatSession | null>;
+	/** When hasMoreMessages is true, preserve the unloaded prefix and replace only the supplied tail. */
 	save(session: ChatSession): Promise<void>;
 	updateMetadata?(id: string, meta: Partial<ChatSessionMeta>): Promise<void>;
 	delete(id: string): Promise<void>;
 	/**
-	 * Optional upward pagination for backends that return only the latest window
-	 * from loadOne. `cursor` is an opaque storage/backend cursor previously
-	 * returned as nextOlderMessagesCursor, not a Message.id. Returns a page of
-	 * messages oldest-first, plus whether even-older messages remain and the
-	 * cursor for the next page. Storages that load whole sessions (the default,
-	 * e.g. local IndexedDB) omit this, and the UI never offers "load older".
+	 * Loads an older page using the nextOlderMessagesCursor from the previous result.
+	 * Return messages oldest-first and the next cursor when hasMore is true.
+	 * Omit when loadOne always returns the full history.
 	 */
 	loadOlderMessages?(
 		sessionId: string,
@@ -242,42 +172,45 @@ export interface ChatRequestDefaults {
 	options?: Partial<RequestOptions>;
 }
 
+/** The engine creates this response before calling the provider. */
+export interface ChatStreamRequest extends ChatRequest {
+	messageId: string;
+	runId: string;
+}
+
 export interface ChatProvider {
 	/**
-	 * Streams normalized events to the engine. Provider/API failures should reject
-	 * this promise; ChatEngine converts rejected provider calls into UI error state.
-	 *
-	 * Implementations should translate provider-native responses into the StreamEvent
-	 * contract above. In particular, they should generate stable message ids when the
-	 * upstream provider does not supply them, and should emit a new id for each logical
-	 * assistant message produced during the run.
+	 * Applies the same addressed changes used by ConversationModel and ChatView.
+	 * Add blocks before appending deltas. Additional messages need explicit ids and
+	 * the request's runId. Resolving completes the run; reject for provider failures.
 	 */
-	streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void>;
+	streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void>;
 
 	generateTitle?(request: ChatRequest): Promise<string>;
 }
 
+/**
+ * Converts code to trusted HTML, optionally after loading a grammar.
+ * lang is empty for code blocks without a language. Escape all interpolated code;
+ * the returned HTML is inserted without further sanitization.
+ */
 export type CodeHighlighter = (code: string, lang: string) => string | Promise<string>;
 
 export type AgentRunCollapse = "full" | "machinery";
 
 export interface RenderConfig {
-	/**
-	 * Receives code text from a sanitized code block and returns trusted HTML,
-	 * either synchronously or after loading a grammar.
-	 * The language is an empty string for code blocks without a language class.
-	 * The returned HTML is injected directly, so custom highlighters must escape
-	 * any interpolated code text and must not use untrusted highlighter output.
-	 */
 	highlighter?: CodeHighlighter;
-	plugins: ChatPlugin[];
+	labels?: Readonly<ChatLabels>;
+	plugins: MessagePlugin[];
+	renderers?: BlockRenderer[];
+	showReasoning?: boolean;
+	canAct?: () => boolean;
+	getConversationId?: () => string;
+	onAction?: (action: BlockAction) => void;
 	fullscreen?: boolean;
 	agentRunCollapse?: AgentRunCollapse;
 	minAgentRunSteps?: number;
-	/**
-	 * Called when the user scrolls near the top of the transcript and older
-	 * messages can be loaded. Wired to ChatEngine.sessions.loadOlderMessages.
-	 */
+	/** Called near the top of the transcript when older messages can be loaded. */
 	onReachTop?: () => void;
 }
 
@@ -322,13 +255,6 @@ export interface PluginContext {
 	container: HTMLElement;
 }
 
-export interface PluginInputContext {
-	container: HTMLElement;
-	form: HTMLFormElement;
-	input: HTMLTextAreaElement;
-	requestSubmitStateSync: () => void;
-}
-
 export interface MessageActionContext {
 	message: Message;
 	buttonEl: HTMLElement;
@@ -338,79 +264,69 @@ export interface MessageActionContext {
 }
 
 export interface ActionButtonDef {
+	/** Stable within a plugin; preserves the button node across message updates. */
 	id: string;
 	title: string;
 	iconHtml: string;
 	onClick: (ctx: MessageActionContext) => void;
+	/** Set false for actions such as copying that remain available in read-only views. */
+	mutates?: boolean;
+}
+
+export interface BlockAction {
+	conversationId: string;
+	messageId: string;
+	blockId: string;
+	action: string;
+	payload?: JsonValue;
+}
+
+export interface RendererContext extends BlockRenderContext {
+	isGenerating: boolean;
+	canAct: boolean;
+	dispatch(action: string, payload?: JsonValue): void;
+}
+
+/** A renderer owns the contents of one block container until destroy. */
+export interface BlockRenderer {
+	matches(block: ContentBlock): boolean;
+	mount(container: HTMLElement): BlockRendererInstance;
+}
+
+export interface BlockRendererInstance {
+	update(block: ContentBlock, context: RendererContext): void;
+	destroy(): void;
 }
 
 export interface BlockRenderContext {
 	message: Message;
 	messages: readonly Message[];
 	blockIndex: number;
+	labels?: Readonly<ChatLabels>;
 }
 
-export interface ChatPlugin {
+/** Presentation hooks shared by standalone views and the ordinary chat. */
+export interface MessagePlugin {
 	name: string;
-
+	/** First matching renderer owns each block until its lifecycle ends. */
+	renderers?: BlockRenderer[];
+	/** Fires when the owning view or chat is destroyed. */
+	destroy?: () => void;
 	/**
-	 * Fires once when the chat UI initializes.
+	 * Derives actions from the current message. Recomputed on completed-message
+	 * updates and when streaming finishes, not for each streaming token.
+	 * Keep this hook free of side effects; buttons are reconciled by plugin and id.
 	 */
+	getActionButtons?: (msg: Message, labels?: Readonly<ChatLabels>) => ActionButtonDef[];
+}
+
+export interface ChatPlugin extends MessagePlugin, ComposerPlugin {
+	/** Fires once when ChatUI initializes. */
 	onMount?: (ctx: PluginContext) => void;
 
 	/**
-	 * Fires when the chat instance is destroyed.
-	 */
-	destroy?: () => void;
-
-	/**
-	 * Intercept and mutate the payload (messages, options) right before it is sent to the LLM.
-	 * To optimize performance, the payload is typed as readonly.
-	 * Return a ChatRequestPatch to override specific parts, or void if no changes are needed.
-	 * This hook may be async.
+	 * Called before the provider request. Treat the input as read-only and return
+	 * a patch to change it, or undefined to leave it unchanged.
 	 */
 	beforeSubmit?: (request: ReadonlyChatRequest) => ChatRequestPatch | undefined | Promise<ChatRequestPatch | undefined>;
-
-	/**
-	 * Fires when the input area mounts. Use to append/prepend custom UI to the form.
-	 */
-	onInputMount?: (ctx: PluginInputContext) => void;
-
-	/**
-	 * Allows the input form to be submitted even if the text area is empty.
-	 */
-	hasPendingData?: () => boolean;
-
-	/**
-	 * Blocks user submission while a plugin is resolving async input state.
-	 */
-	isSubmitBlocked?: () => boolean;
-
-	/**
-	 * Intercept and mutate a newly created user message before it is saved and sent.
-	 * This hook must finish synchronously; use beforeSubmit for async request shaping.
-	 */
-	onUserSubmit?: (msg: Message) => void;
-
-	/**
-	 * Declaratively registers static icon buttons for a message action bar.
-	 * Called when the action bar is first initialized for a message node.
-	 */
-	getActionButtons?: (msg: Message) => ActionButtonDef[];
-
-	/**
-	 * Intercept the rendering of an individual content block (e.g., text, reasoning, tool_call).
-	 * Use this to inject custom UI directly inside a specific block's container.
-	 * * @param block The content block data.
-	 * @param containerEl The DOM element wrapping this specific block.
-	 * @param isGenerating True if the LLM is actively streaming this block.
-	 * @param ctx Render-time context for the current block and transcript.
-	 * @returns `true` if the plugin handled the render, preventing the core UI from overwriting it.
-	 */
-	onBlockRender?: (
-		block: ContentBlock,
-		containerEl: HTMLElement,
-		isGenerating: boolean,
-		ctx?: BlockRenderContext,
-	) => boolean;
 }

@@ -1,0 +1,24 @@
+.mur-composer {
+	width: 100%;
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.75rem 1rem 1rem;
+	font-family: var(--mur-font);
+	color: var(--mur-text);
+	color-scheme: var(--mur-color-scheme, light);
+}
+
+.mur-composer .mur-chat-input {
+	min-width: 0;
+}
+
+.mur-composer-error {
+	color: var(--mur-danger-text);
+	width: 100%;
+	max-width: var(--mur-chat-form-width);
+	font-size: 0.85rem;
+	overflow-wrap: anywhere;
+}

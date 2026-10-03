@@ -1,6 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { ChatEngine } from "./chat-engine";
+import type { ConversationChange } from "./conversation-types";
 import type {
 	ChatPlugin,
 	ChatProvider,
@@ -8,11 +9,11 @@ import type {
 	ChatSession,
 	ChatSessionMeta,
 	ChatStorage,
+	ChatStreamRequest,
 	ContentBlock,
 	Message,
 	PaginatedSessions,
 	RequestOptions,
-	StreamEvent,
 } from "./types";
 
 class MemoryStorage implements ChatStorage {
@@ -123,9 +124,10 @@ async function waitFor(assertion: () => boolean, label: string): Promise<void> {
 
 function replyingProvider(reply: string): ChatProvider {
 	return {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: reply });
-			onEvent({ type: "finish", reason: "stop" });
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: reply } },
+			]);
 		},
 	};
 }
@@ -191,6 +193,18 @@ test("sessions.updatePinned persists metadata, sorts pinned first, and enforces 
 		engine.state.sessions.map((session) => session.id),
 		["chat-1", "pin-3", "pin-2", "pin-1"],
 	);
+});
+
+test("invalid input is rejected before acceptance and does not leave a generation running", async (t) => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({ provider: replyingProvider("reply"), storage });
+	t.after(() => engine.destroy());
+	const block: ContentBlock = { id: "duplicate", type: "file", mimeType: "text/plain", data: "file" };
+	assert.throws(() => engine.sendMessage("Draft", [block, block]), /Duplicate/);
+	assert.equal(engine.state.generatingMessageId, null);
+	assert.equal(engine.state.messages.length, 0);
+	assert.equal(engine.sendMessage("Valid", [block]), true);
+	await waitFor(() => storage.saved.length === 1, "valid submission after rejection");
 });
 
 test("session saves and title updates preserve pinned metadata", async () => {
@@ -344,7 +358,6 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
 
@@ -361,51 +374,70 @@ test("sendMessage streams an assistant reply and persists the session", async ()
 	assert.equal(state.sessions[0].id, state.currentSessionId);
 });
 
-test("sendMessage streams multiple assistant messages from one provider run", async () => {
+test("provider updates interleave messages without changing their addresses", async () => {
 	const storage = new MemoryStorage();
+	let responseId = "";
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({
-				type: "message_start",
-				message: { id: "assistant-1", role: "assistant", blocks: [] },
-			});
-			onEvent({ type: "text_delta", messageId: "assistant-1", blockId: "text-1", delta: "first" });
-			onEvent({
-				type: "message_start",
-				message: { id: "assistant-2", role: "assistant", blocks: [] },
-			});
-			onEvent({ type: "text_delta", messageId: "assistant-2", blockId: "text-2", delta: "second" });
-			onEvent({ type: "finish", reason: "stop" });
+		async streamChat(request, onChange) {
+			responseId = request.messageId;
+			onChange([
+				{ type: "block.put", messageId: responseId, block: { id: "text-1", type: "text", text: "first" } },
+				{
+					type: "message.put",
+					message: {
+						id: "assistant-2",
+						role: "assistant",
+						runId: request.runId,
+						status: "streaming",
+						blocks: [{ id: "text-2", type: "text", text: "second" }],
+					},
+				},
+			]);
+			onChange([{ type: "message.state", messageId: responseId, usage: { input: 2, output: 3, total: 5 } }]);
+			assert.equal(engine.conversation.getMessage(responseId)!.status, "streaming");
+			onChange([{ type: "text.append", messageId: responseId, blockId: "text-1", delta: " A" }]);
+			onChange([{ type: "message.state", messageId: "assistant-2", status: "complete" }]);
+			onChange([{ type: "text.append", messageId: responseId, blockId: "text-1", delta: " B" }]);
 		},
 	};
 	const engine = new ChatEngine({ provider, storage });
-
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
-	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
-
-	const state = engine.state;
-	assert.equal(state.messages.length, 3);
-	assert.equal(state.messages[0].runId, state.messages[0].id);
-	assert.equal(state.messages[1].id, "assistant-1");
-	assert.equal(state.messages[1].runId, state.messages[0].id);
-	assert.equal(getText(state.messages[1]), "first");
-	assert.equal(state.messages[2].id, "assistant-2");
-	assert.equal(state.messages[2].runId, state.messages[0].id);
-	assert.equal(getText(state.messages[2]), "second");
+	const pendingId = engine.state.generatingMessageId;
+	await waitFor(() => storage.saved.length === 1, "stream finalization");
+	const [user, first, second] = engine.state.messages;
+	assert.equal(first.id, pendingId);
+	assert.equal(first.id, responseId);
+	assert.equal(first.runId, user.id);
+	assert.equal(second.runId, user.id);
+	assert.equal(getText(first), "first A B");
+	assert.equal(getText(second), "second");
+	assert.equal(first.status, "complete");
+	assert.equal(second.status, "complete");
 	assert.equal(storage.saved[0].messages.length, 3);
 });
 
-test("generation save completion does not disturb a session switched during persistence", async () => {
-	let releaseSave!: () => void;
-	const saveReleased = new Promise<void>((resolve) => {
-		releaseSave = resolve;
-	});
+test("navigating on generation completion saves the finished transcript, not the next chat", async (t) => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({ provider: replyingProvider("answer"), storage });
+	t.after(() => engine.destroy());
+	const sessionId = engine.state.currentSessionId;
+	engine.onChange(
+		(state) => state.generatingMessageId,
+		(id) => {
+			if (id === null) void engine.sessions.create();
+		},
+	);
+	engine.sendMessage("Question");
+	await waitFor(() => storage.saved.length === 1, "save on completion");
+	assert.notEqual(engine.state.currentSessionId, sessionId);
+	assert.equal(storage.saved[0].id, sessionId);
+	assert.deepEqual(storage.saved[0].messages.map(getText), ["Question", "answer"]);
+});
 
-	let saveStarted!: () => void;
-	const saveStartedPromise = new Promise<void>((resolve) => {
-		saveStarted = resolve;
-	});
+test("switching chats during persistence waits only when reopening the saving session", async () => {
+	const { promise: saveReleased, resolve: releaseSave } = Promise.withResolvers<void>();
+
+	const { promise: saveStartedPromise, resolve: saveStarted } = Promise.withResolvers<void>();
 
 	const otherSession: ChatSession = {
 		id: "other-session",
@@ -423,7 +455,7 @@ test("generation save completion does not disturb a session switched during pers
 
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
+	const originalId = engine.state.currentSessionId;
 	engine.sendMessage("hello");
 	await saveStartedPromise;
 	await waitFor(() => engine.state.generatingMessageId === null, "generation indicator cleared");
@@ -432,31 +464,97 @@ test("generation save completion does not disturb a session switched during pers
 	assert.equal(engine.state.currentSessionId, otherSession.id);
 	assert.equal(getText(engine.state.messages[0]), "other question");
 
-	releaseSave();
-	await waitFor(() => storage.saved.length === 1, "delayed save completion");
+	const superseded = engine.sessions.switch(originalId);
+	await engine.sessions.switch(otherSession.id);
+	const returning = engine.sessions.switch(originalId);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.equal(engine.state.isLoadingSession, true);
+	assert.equal(storage.loadOneCalls.includes(originalId), false, "do not read a stale or not-yet-created session");
 
-	assert.equal(engine.state.currentSessionId, otherSession.id);
-	assert.equal(getText(engine.state.messages[0]), "other question");
-	assert.equal(storage.saved[0].id !== otherSession.id, true);
+	releaseSave();
+	await Promise.all([superseded, returning]);
+
+	assert.equal(engine.state.currentSessionId, originalId);
+	assert.deepEqual(engine.state.messages.map(getText), ["hello", "hello back"]);
+	assert.equal(storage.loadOneCalls.filter((id) => id === originalId).length, 1);
+	assert.equal(engine.state.error, null);
 	assert.equal(
 		engine.state.sessions.some((session) => session.id === storage.saved[0].id),
 		true,
 	);
+	await engine.destroy();
 });
 
-test("overlapping same-session saves are persisted in request order", async () => {
-	let releaseFirstSave!: () => void;
-	const firstSaveReleased = new Promise<void>((resolve) => {
-		releaseFirstSave = resolve;
-	});
+test("latest navigation wins while an earlier transition waits for generation persistence", async (t) => {
+	for (const [first, last] of [
+		["switch", "switch"],
+		["switch", "create"],
+		["switch", "current"],
+		["create", "switch"],
+	] as const) {
+		await t.test(`${first} followed by ${last}`, async (t) => {
+			const streamStarted = Promise.withResolvers<void>();
+			const saveStarted = Promise.withResolvers<void>();
+			const saveReleased = Promise.withResolvers<void>();
+			const storage = new (class extends MemoryStorage {
+				override async save(session: ChatSession): Promise<void> {
+					saveStarted.resolve();
+					await saveReleased.promise;
+					await super.save(session);
+				}
+			})(["a", "b"].map((id) => ({ id, title: id, updatedAt: 1, messages: [textMessage(id, "user", id)] })));
+			const engine = new ChatEngine({
+				storage,
+				provider: {
+					async streamChat(request, onChange) {
+						onChange([
+							{
+								type: "block.put",
+								messageId: request.messageId,
+								block: { id: "partial", type: "text", text: "Partial reply" },
+							},
+						]);
+						const aborted = new Promise<void>((resolve) =>
+							request.signal.addEventListener("abort", () => resolve(), { once: true }),
+						);
+						streamStarted.resolve();
+						await aborted;
+					},
+				},
+			});
+			t.after(() => engine.destroy());
+			const originalId = engine.state.currentSessionId;
+			engine.sendMessage("Question");
+			await streamStarted.promise;
+			const earlier = first === "create" ? engine.sessions.create() : engine.sessions.switch("a");
+			await saveStarted.promise;
+			if (last === "create") await engine.sessions.create();
+			else await engine.sessions.switch(last === "current" ? originalId : "b");
+			const latest = engine.conversation.state;
+			if (last === "create") assert.notEqual(latest.id, originalId);
+			else assert.equal(latest.id, last === "current" ? originalId : "b");
 
-	let firstSaveStarted!: () => void;
-	const firstSaveStartedPromise = new Promise<void>((resolve) => {
-		firstSaveStarted = resolve;
-	});
+			saveReleased.resolve();
+			await earlier;
+			assert.equal(engine.conversation.state, latest);
+			assert.equal(engine.state.isLoadingSession, false);
+			assert.equal(engine.state.error, null);
+			assert.equal(storage.loadOneCalls.includes("a"), false);
+			assert.equal(storage.saved.length, 1);
+			assert.equal(storage.saved[0].id, originalId);
+			assert.deepEqual(storage.saved[0].messages.map(getText), ["Question", "Partial reply"]);
+		});
+	}
+});
+
+test("overlapping saves finish in request order before storage closes", async () => {
+	const { promise: firstSaveReleased, resolve: releaseFirstSave } = Promise.withResolvers<void>();
+
+	const { promise: firstSaveStartedPromise, resolve: firstSaveStarted } = Promise.withResolvers<void>();
 
 	const storage = new (class extends MemoryStorage {
 		private saveCount = 0;
+		closeCalls = 0;
 
 		override async save(session: ChatSession): Promise<void> {
 			this.saveCount++;
@@ -464,26 +562,30 @@ test("overlapping same-session saves are persisted in request order", async () =
 				firstSaveStarted();
 				await firstSaveReleased;
 			}
+			assert.equal(this.closeCalls, 0);
 			await super.save(session);
+		}
+
+		close(): void {
+			this.closeCalls++;
 		}
 	})();
 
 	let replyCount = 0;
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			replyCount++;
-			onEvent({
-				type: "text_delta",
-				messageId: "provider-message",
-				blockId: `reply-${replyCount}`,
-				delta: replyCount === 1 ? "first reply" : "second reply",
-			});
-			onEvent({ type: "finish", reason: "stop" });
+			onChange([
+				{
+					type: "block.put",
+					messageId: request.messageId,
+					block: { id: `reply-${replyCount}`, type: "text", text: replyCount === 1 ? "first reply" : "second reply" },
+				},
+			]);
 		},
 	};
 	const engine = new ChatEngine({ provider, storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("first");
 	await firstSaveStartedPromise;
 	await waitFor(() => engine.state.generatingMessageId === null, "first generation indicator cleared");
@@ -492,8 +594,21 @@ test("overlapping same-session saves are persisted in request order", async () =
 	await waitFor(() => replyCount === 2 && engine.state.generatingMessageId === null, "second generation completed");
 
 	assert.equal(storage.saved.length, 0);
+	let notifications = 0;
+	engine.onChange(
+		(state) => state.sessions,
+		() => notifications++,
+	);
+	const closing = engine.destroy();
+	assert.equal(engine.destroy(), closing);
+	assert.equal(engine.sendMessage("after destroy"), false);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.equal(storage.closeCalls, 0);
 	releaseFirstSave();
-	await waitFor(() => storage.saved.length === 2, "ordered save completion");
+	await closing;
+	assert.equal(storage.saved.length, 2);
+	assert.equal(storage.closeCalls, 1);
+	assert.equal(notifications, 0);
 
 	const finalSaved = storage.saved[1];
 	assert.equal(getText(finalSaved.messages[0]), "first");
@@ -504,15 +619,9 @@ test("overlapping same-session saves are persisted in request order", async () =
 });
 
 test("deleting a session prevents pending save completions from reinserting it", async () => {
-	let releaseSave!: () => void;
-	const saveReleased = new Promise<void>((resolve) => {
-		releaseSave = resolve;
-	});
+	const { promise: saveReleased, resolve: releaseSave } = Promise.withResolvers<void>();
 
-	let saveStarted!: () => void;
-	const saveStartedPromise = new Promise<void>((resolve) => {
-		saveStarted = resolve;
-	});
+	const { promise: saveStartedPromise, resolve: saveStarted } = Promise.withResolvers<void>();
 
 	const storage = new (class extends MemoryStorage {
 		override async save(session: ChatSession): Promise<void> {
@@ -523,7 +632,6 @@ test("deleting a session prevents pending save completions from reinserting it",
 	})();
 	const engine = new ChatEngine({ provider: replyingProvider("hello back"), storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	const sessionId = engine.state.currentSessionId;
 	engine.sendMessage("hello");
 	await saveStartedPromise;
@@ -548,26 +656,58 @@ test("deleting a session prevents pending save completions from reinserting it",
 	assert.notEqual(engine.state.currentSessionId, sessionId);
 });
 
+test("storage failures stay visible and failed saves and deletions can be retried", async (t) => {
+	t.mock.method(console, "error", () => {});
+	let failSave = true;
+	let failDelete = true;
+	const storage = new (class extends MemoryStorage {
+		override async save(session: ChatSession): Promise<void> {
+			if (failSave) throw new Error("Storage unavailable");
+			await super.save(session);
+		}
+
+		override async delete(id: string): Promise<void> {
+			if (failDelete) throw new Error("Storage unavailable");
+			await super.delete(id);
+		}
+	})();
+	const engine = new ChatEngine({ provider: replyingProvider("answer"), storage });
+	t.after(() => engine.destroy());
+	const sessionId = engine.state.currentSessionId;
+	engine.sendMessage("first");
+	await waitFor(() => engine.state.error !== null, "save failure");
+	assert.match(engine.state.error!.message, /save/i);
+	assert.deepEqual(engine.state.messages.map(getText), ["first", "answer"]);
+
+	failSave = false;
+	engine.sendMessage("second");
+	await waitFor(() => engine.state.sessions.length === 1, "successful retry");
+	assert.equal(engine.state.error, null);
+	assert.deepEqual(storage.sessions.get(sessionId)?.messages.map(getText), ["first", "answer", "second", "answer"]);
+	const meta = engine.state.sessions[0];
+	await engine.sessions.delete(sessionId);
+	assert.match(engine.state.error!.message, /delete/i);
+	assert.deepEqual(engine.state.sessions, [meta]);
+	assert.ok(storage.sessions.has(sessionId));
+	await engine.sessions.switch(sessionId);
+	assert.equal(engine.state.currentSessionId, sessionId);
+	assert.deepEqual(engine.state.messages.map(getText), ["first", "answer", "second", "answer"]);
+
+	failDelete = false;
+	await engine.sessions.delete(sessionId);
+	assert.equal(storage.sessions.has(sessionId), false);
+	assert.deepEqual(engine.state.sessions, []);
+	assert.equal(engine.state.error, null);
+});
+
 test("auto-title completion is scoped to the generated session after switching away", async () => {
-	let releaseSave!: () => void;
-	const saveReleased = new Promise<void>((resolve) => {
-		releaseSave = resolve;
-	});
+	const { promise: saveReleased, resolve: releaseSave } = Promise.withResolvers<void>();
 
-	let saveStarted!: () => void;
-	const saveStartedPromise = new Promise<void>((resolve) => {
-		saveStarted = resolve;
-	});
+	const { promise: saveStartedPromise, resolve: saveStarted } = Promise.withResolvers<void>();
 
-	let titleStarted!: () => void;
-	const titleStartedPromise = new Promise<void>((resolve) => {
-		titleStarted = resolve;
-	});
+	const { promise: titleStartedPromise, resolve: titleStarted } = Promise.withResolvers<void>();
 
-	let releaseTitle!: () => void;
-	const titleReleased = new Promise<void>((resolve) => {
-		releaseTitle = resolve;
-	});
+	const { promise: titleReleased, resolve: releaseTitle } = Promise.withResolvers<void>();
 
 	const otherSession: ChatSession = {
 		id: "other-session",
@@ -584,9 +724,10 @@ test("auto-title completion is scoped to the generated session after switching a
 	})([otherSession]);
 
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
-			onEvent({ type: "finish", reason: "stop" });
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "answer" } },
+			]);
 		},
 		async generateTitle(): Promise<string> {
 			titleStarted();
@@ -596,7 +737,6 @@ test("auto-title completion is scoped to the generated session after switching a
 	};
 	const engine = new ChatEngine({ provider, storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	const generatedSessionId = engine.state.currentSessionId;
 	engine.sendMessage("hello");
 	await saveStartedPromise;
@@ -619,21 +759,16 @@ test("auto-title completion is scoped to the generated session after switching a
 });
 
 test("deleting a session prevents pending auto-title completion from recreating it", async () => {
-	let titleStarted!: () => void;
-	const titleStartedPromise = new Promise<void>((resolve) => {
-		titleStarted = resolve;
-	});
+	const { promise: titleStartedPromise, resolve: titleStarted } = Promise.withResolvers<void>();
 
-	let releaseTitle!: () => void;
-	const titleReleased = new Promise<void>((resolve) => {
-		releaseTitle = resolve;
-	});
+	const { promise: titleReleased, resolve: releaseTitle } = Promise.withResolvers<void>();
 
 	const storage = new MemoryStorage();
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
-			onEvent({ type: "finish", reason: "stop" });
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "answer" } },
+			]);
 		},
 		async generateTitle(): Promise<string> {
 			titleStarted();
@@ -643,7 +778,6 @@ test("deleting a session prevents pending auto-title completion from recreating 
 	};
 	const engine = new ChatEngine({ provider, storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	const sessionId = engine.state.currentSessionId;
 	engine.sendMessage("hello");
 	await titleStartedPromise;
@@ -664,85 +798,35 @@ test("deleting a session prevents pending auto-title completion from recreating 
 	assert.notEqual(engine.state.currentSessionId, sessionId);
 });
 
-test("destroy aborts pending auto-title and ignores late completion", async () => {
+test("destroy aborts auto-title before generation shutdown and ignores its late result", async () => {
 	let titleSignal: AbortSignal | null = null;
-	let titleStarted!: () => void;
-	const titleStartedPromise = new Promise<void>((resolve) => {
-		titleStarted = resolve;
-	});
+	const { promise: titleStartedPromise, resolve: titleStarted } = Promise.withResolvers<void>();
 
-	let releaseTitle!: () => void;
-	const titleReleased = new Promise<void>((resolve) => {
-		releaseTitle = resolve;
-	});
+	const { promise: titleReleased, resolve: releaseTitle } = Promise.withResolvers<void>();
 
-	const storage = new MemoryStorage();
-	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
-			onEvent({ type: "finish", reason: "stop" });
-		},
-		async generateTitle(request): Promise<string> {
-			titleSignal = request.signal;
-			titleStarted();
-			await titleReleased;
-			return "Late Title";
-		},
-	};
-	const engine = new ChatEngine({ provider, storage });
+	const { promise: secondStreamStartedPromise, resolve: secondStreamStarted } = Promise.withResolvers<void>();
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-	engine.sendMessage("hello");
-	await titleStartedPromise;
-
-	await engine.destroy();
-	assert.ok(titleSignal);
-	assert.equal((titleSignal as AbortSignal).aborted, true);
-
-	releaseTitle();
-	await new Promise((resolve) => setTimeout(resolve, 0));
-
-	assert.deepEqual(storage.metadataUpdates, []);
-});
-
-test("destroy aborts pending auto-title before waiting on active generation shutdown", async () => {
-	let titleSignal: AbortSignal | null = null;
-	let titleStarted!: () => void;
-	const titleStartedPromise = new Promise<void>((resolve) => {
-		titleStarted = resolve;
-	});
-
-	let releaseTitle!: () => void;
-	const titleReleased = new Promise<void>((resolve) => {
-		releaseTitle = resolve;
-	});
-
-	let secondStreamStarted!: () => void;
-	const secondStreamStartedPromise = new Promise<void>((resolve) => {
-		secondStreamStarted = resolve;
-	});
-
-	let releaseSecondStream!: () => void;
-	const secondStreamReleased = new Promise<void>((resolve) => {
-		releaseSecondStream = resolve;
-	});
+	const { promise: secondStreamReleased, resolve: releaseSecondStream } = Promise.withResolvers<void>();
 
 	const storage = new MemoryStorage();
 	let streamCalls = 0;
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			streamCalls++;
 			if (streamCalls === 1) {
-				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "first-reply", delta: "answer" });
-				onEvent({ type: "finish", reason: "stop" });
+				onChange([
+					{
+						type: "block.put",
+						messageId: request.messageId,
+						block: { id: "first-reply", type: "text", text: "answer" },
+					},
+				]);
+
 				return;
 			}
 
 			secondStreamStarted();
 			await secondStreamReleased;
-			if (request.signal.aborted) {
-				onEvent({ type: "finish", reason: "aborted" });
-			}
 		},
 		async generateTitle(request): Promise<string> {
 			titleSignal = request.signal;
@@ -753,7 +837,6 @@ test("destroy aborts pending auto-title before waiting on active generation shut
 	};
 	const engine = new ChatEngine({ provider, storage });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("first");
 	await titleStartedPromise;
 
@@ -767,8 +850,9 @@ test("destroy aborts pending auto-title before waiting on active generation shut
 	assert.equal((titleSignal as AbortSignal).aborted, true);
 
 	releaseSecondStream();
-	releaseTitle();
 	await destroyPromise;
+	releaseTitle();
+	await new Promise((resolve) => setTimeout(resolve, 0));
 
 	assert.deepEqual(storage.metadataUpdates, []);
 });
@@ -777,21 +861,25 @@ test("sendMessage preserves encrypted reasoning as hidden metadata", async () =>
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({
-					type: "reasoning_delta",
-					messageId: "provider-message",
-					blockId: "hidden-reasoning",
-					delta: "ciphertext",
-					encrypted: true,
-				});
-				onEvent({ type: "finish", reason: "stop" });
+			async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+				onChange([
+					{
+						type: "block.put",
+						messageId: request.messageId,
+						block: {
+							id: "hidden-reasoning",
+							type: "reasoning",
+							text: "",
+							encrypted: true,
+							encryptedText: "ciphertext",
+						},
+					},
+				]);
 			},
 		},
 		storage,
 	});
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
 
@@ -802,27 +890,26 @@ test("sendMessage preserves encrypted reasoning as hidden metadata", async () =>
 	assert.equal(reasoningBlock.encrypted, true);
 	assert.equal(reasoningBlock.text, "");
 	assert.equal(reasoningBlock.encryptedText, "ciphertext");
+	assert.deepEqual(storage.saved[0].messages[1].blocks, [reasoningBlock]);
 });
 
-test("sendMessage skips empty encrypted reasoning payloads", async () => {
+test("empty encrypted reasoning leaves an ephemeral assistant placeholder out of storage", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({
-					type: "reasoning_delta",
-					messageId: "provider-message",
-					blockId: "hidden-reasoning",
-					delta: "",
-					encrypted: true,
-				});
-				onEvent({ type: "finish", reason: "stop" });
+			async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+				onChange([
+					{
+						type: "block.put",
+						messageId: request.messageId,
+						block: { id: "hidden-reasoning", type: "reasoning", text: "", encrypted: true, encryptedText: undefined },
+					},
+				]);
 			},
 		},
 		storage,
 	});
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "stream finalization");
 
@@ -848,7 +935,6 @@ test("failed generation keeps empty assistant message in state but omits it from
 		storage,
 	});
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "failure finalization");
 
@@ -861,30 +947,55 @@ test("failed generation keeps empty assistant message in state but omits it from
 	assert.deepEqual(storage.saved[0].messages, [state.messages[0]]);
 });
 
+test("a run failure after message completion remains visible as a global error", async () => {
+	const storage = new MemoryStorage();
+	const engine = new ChatEngine({
+		storage,
+		provider: {
+			async streamChat(request, onChange) {
+				onChange([
+					{
+						type: "block.put",
+						messageId: request.messageId,
+						block: { id: "text", type: "text", text: "Accepted result" },
+					},
+					{ type: "message.state", messageId: request.messageId, status: "complete" },
+				]);
+				throw new Error("Stream disconnected");
+			},
+		},
+	});
+	engine.sendMessage("hello");
+	await waitFor(() => storage.saved.length === 1, "failed run save");
+	assert.equal(engine.state.messages[1].status, "complete");
+	assert.deepEqual(engine.state.error, { message: "Stream disconnected" });
+});
+
 test("failed generation marks streaming tool calls as errored", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({
-					type: "tool_call_start",
-					messageId: "provider-message",
-					block: {
-						id: "tool-1",
-						type: "tool_call",
-						toolCallId: "call-1",
-						name: "lookup_weather",
-						argsText: '{"q":"weather"}',
-						status: "streaming",
+			async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+				onChange([
+					{
+						type: "block.put",
+						messageId: request.messageId,
+						block: {
+							id: "tool-1",
+							type: "tool_call",
+							toolCallId: "call-1",
+							name: "lookup_weather",
+							argsText: '{"q":"weather"}',
+							status: "streaming",
+						},
 					},
-				});
+				]);
 				throw new Error("Provider failed");
 			},
 		},
 		storage,
 	});
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "failure finalization");
 
@@ -899,15 +1010,9 @@ test("failed generation marks streaming tool calls as errored", async () => {
 });
 
 test("sendMessage works while initial history is loading", async () => {
-	let releaseLoad!: () => void;
-	const loadReleased = new Promise<void>((resolve) => {
-		releaseLoad = resolve;
-	});
+	const { promise: loadReleased, resolve: releaseLoad } = Promise.withResolvers<void>();
 
-	let loadStarted!: () => void;
-	const loadStartedPromise = new Promise<void>((resolve) => {
-		loadStarted = resolve;
-	});
+	const { promise: loadStartedPromise, resolve: loadStarted } = Promise.withResolvers<void>();
 
 	const storage = new (class extends MemoryStorage {
 		override async loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions> {
@@ -922,10 +1027,11 @@ test("sendMessage works while initial history is loading", async () => {
 
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+			async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 				providerCalls++;
-				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
-				onEvent({ type: "finish", reason: "stop" });
+				onChange([
+					{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "ok" } },
+				]);
 			},
 		},
 		storage,
@@ -934,8 +1040,9 @@ test("sendMessage works while initial history is loading", async () => {
 	engine.registerPlugins([
 		{
 			name: "submit-spy",
-			onUserSubmit: () => {
+			beforeSubmit: () => {
 				pluginCalled = true;
+				return undefined;
 			},
 		},
 	]);
@@ -964,15 +1071,9 @@ test("sendMessage is ignored while a routed session is loading", async () => {
 		messages: [textMessage("url-user", "user", "linked question")],
 	};
 
-	let releaseLoadOne!: () => void;
-	const loadOneReleased = new Promise<void>((resolve) => {
-		releaseLoadOne = resolve;
-	});
+	const { promise: loadOneReleased, resolve: releaseLoadOne } = Promise.withResolvers<void>();
 
-	let loadOneStarted!: () => void;
-	const loadOneStartedPromise = new Promise<void>((resolve) => {
-		loadOneStarted = resolve;
-	});
+	const { promise: loadOneStartedPromise, resolve: loadOneStarted } = Promise.withResolvers<void>();
 
 	const storage = new (class extends MemoryStorage {
 		override async loadOne(id: string): Promise<ChatSession | null> {
@@ -997,8 +1098,9 @@ test("sendMessage is ignored while a routed session is loading", async () => {
 	engine.registerPlugins([
 		{
 			name: "submit-spy",
-			onUserSubmit: () => {
+			beforeSubmit: () => {
 				pluginCalled = true;
+				return undefined;
 			},
 		},
 	]);
@@ -1017,15 +1119,9 @@ test("sendMessage is ignored while a routed session is loading", async () => {
 });
 
 test("stopping while beforeSubmit is pending prevents the provider request", async () => {
-	let releaseBeforeSubmit!: () => void;
-	const beforeSubmitReleased = new Promise<void>((resolve) => {
-		releaseBeforeSubmit = resolve;
-	});
+	const { promise: beforeSubmitReleased, resolve: releaseBeforeSubmit } = Promise.withResolvers<void>();
 
-	let beforeSubmitStarted!: () => void;
-	const beforeSubmitStartedPromise = new Promise<void>((resolve) => {
-		beforeSubmitStarted = resolve;
-	});
+	const { promise: beforeSubmitStartedPromise, resolve: beforeSubmitStarted } = Promise.withResolvers<void>();
 
 	let pluginSawAbortedSignal = false;
 	let providerCalled = false;
@@ -1053,7 +1149,6 @@ test("stopping while beforeSubmit is pending prevents the provider request", asy
 	});
 	engine.registerPlugins([plugin]);
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await beforeSubmitStartedPromise;
 	await engine.stopGeneration();
@@ -1068,36 +1163,35 @@ test("stopping while beforeSubmit is pending prevents the provider request", asy
 	assert.equal(engine.state.messages[0].role, "user");
 });
 
-test("stopping after streamed content keeps the partial assistant message", async () => {
+test("stopping after streamed content keeps partial content and ignores late provider updates", async () => {
 	const storage = new MemoryStorage();
-	let releaseStream!: () => void;
-	const streamReleased = new Promise<void>((resolve) => {
-		releaseStream = resolve;
-	});
+	const { promise: streamReleased, resolve: releaseStream } = Promise.withResolvers<void>();
 
-	let streamStarted!: () => void;
-	const streamStartedPromise = new Promise<void>((resolve) => {
-		streamStarted = resolve;
-	});
+	const { promise: streamStartedPromise, resolve: streamStarted } = Promise.withResolvers<void>();
 
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "partial-text", delta: "partial" });
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+			onChange([
+				{
+					type: "block.put",
+					messageId: request.messageId,
+					block: { id: "partial-text", type: "text", text: "partial" },
+				},
+			]);
 			streamStarted();
 			await streamReleased;
-			if (request.signal.aborted) {
-				onEvent({ type: "finish", reason: "aborted" });
-			}
+			onChange([{ type: "text.append", messageId: request.messageId, blockId: "partial-text", delta: "late" }]);
+			throw new Error("Late failure");
 		},
 	};
 
 	const engine = new ChatEngine({ provider, storage });
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 
 	engine.sendMessage("hello");
 	await streamStartedPromise;
 	await engine.stopGeneration();
 	releaseStream();
+	await new Promise((resolve) => setTimeout(resolve, 0));
 
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "abort finalization");
 
@@ -1105,15 +1199,47 @@ test("stopping after streamed content keeps the partial assistant message", asyn
 	assert.equal(state.messages.length, 2);
 	assert.equal(state.messages[1].role, "assistant");
 	assert.equal(getText(state.messages[1]), "partial");
+	assert.equal(state.messages[1].status, "complete");
+	assert.equal(state.error, null);
+});
+
+test("setProvider keeps the latest choice while stopping an active generation", async (t) => {
+	const storage = new MemoryStorage();
+	const started = Promise.withResolvers<void>();
+	const engine = new ChatEngine({
+		storage,
+		provider: {
+			async streamChat(request) {
+				started.resolve();
+				await new Promise<void>((resolve) => request.signal.addEventListener("abort", () => resolve(), { once: true }));
+			},
+		},
+	});
+	t.after(() => engine.destroy());
+
+	assert.equal(engine.sendMessage("hello"), true);
+	await started.promise;
+	const firstChange = engine.setProvider(replyingProvider("earlier"));
+	const latestChange = engine.setProvider(replyingProvider("latest"));
+	await Promise.all([firstChange, latestChange]);
+
+	assert.equal(engine.sendMessage("next"), true);
+	await waitFor(() => storage.saved.length === 2, "reply from the new provider");
+	assert.equal(getText(storage.saved[1].messages.at(-1)!), "latest");
 });
 
 test("editAndResubmit truncates later history while preserving non-text blocks", async () => {
 	let providerMessages: Message[] = [];
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			providerMessages = request.messages;
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "edited-reply", delta: "edited response" });
-			onEvent({ type: "finish", reason: "stop" });
+			onChange([
+				{
+					type: "block.put",
+					messageId: request.messageId,
+					block: { id: "edited-reply", type: "text", text: "edited response" },
+				},
+			]);
 		},
 	};
 	const storage = new MemoryStorage();
@@ -1124,7 +1250,6 @@ test("editAndResubmit truncates later history while preserving non-text blocks",
 		blocks: [{ id: "old-text", type: "text", text: "old text" }, fileBlock()],
 	};
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.setMessages([userMessage, textMessage("assistant-1", "assistant", "old response")]);
 	const accepted = engine.editAndResubmit("user-1", "new text");
 	await waitFor(() => engine.state.generatingMessageId === null && providerMessages.length > 0, "edited stream");
@@ -1160,7 +1285,6 @@ test("editAndResubmit rejects edits that would leave a user message empty", asyn
 		blocks: [{ id: "old-text", type: "text", text: "old text" }],
 	};
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	await engine.setMessages([userMessage]);
 	const accepted = engine.editAndResubmit("user-1", "");
 	await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1171,37 +1295,30 @@ test("editAndResubmit rejects edits that would leave a user message empty", asyn
 	assert.deepEqual(engine.state.messages, [userMessage]);
 });
 
-test("tool call deltas update streamed tool names", async () => {
+test("successful generation completes streamed tool calls before saving", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({
-					type: "tool_call_start",
-					messageId: "assistant-1",
-					block: {
-						id: "tool-1",
-						type: "tool_call",
-						toolCallId: "call-1",
-						name: "",
-						argsText: "",
-						status: "streaming",
+			async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+				onChange([
+					{
+						type: "block.put",
+						messageId: request.messageId,
+						block: {
+							id: "tool-1",
+							type: "tool_call",
+							toolCallId: "call-1",
+							name: "lookup_weather",
+							argsText: '{"q":"weather"}',
+							status: "streaming",
+						},
 					},
-				});
-				onEvent({
-					type: "tool_call_delta",
-					messageId: "assistant-1",
-					blockId: "tool-1",
-					name: "lookup_weather",
-					argsDelta: '{"q":"weather"}',
-				});
-				onEvent({ type: "finish", reason: "tool_use" });
+				]);
 			},
 		},
 		storage,
 	});
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	assert.equal(engine.sendMessage("hello"), true);
 	await waitFor(() => engine.state.generatingMessageId === null && storage.saved.length === 1, "tool stream");
 
@@ -1210,67 +1327,13 @@ test("tool call deltas update streamed tool names", async () => {
 	);
 
 	assert.ok(toolCall);
-	assert.equal(toolCall.name, "lookup_weather");
-	assert.equal(toolCall.argsText, '{"q":"weather"}');
 	assert.equal(toolCall.status, "complete");
-});
-
-test("sendMessage catches plugin onUserSubmit failures and continues", async () => {
-	let providerMessages: Message[] = [];
-	const storage = new MemoryStorage();
-	const engine = new ChatEngine({
-		provider: {
-			async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				providerMessages = request.messages;
-				onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
-				onEvent({ type: "finish", reason: "stop" });
-			},
-		},
-		storage,
-	});
-	const originalConsoleError = console.error;
-	const loggedErrors: unknown[][] = [];
-	console.error = (...args: unknown[]) => {
-		loggedErrors.push(args);
-	};
-
-	try {
-		engine.registerPlugins([
-			{
-				name: "broken-submit",
-				onUserSubmit: () => {
-					throw new Error("plugin failed");
-				},
-			},
-			{
-				name: "still-runs",
-				onUserSubmit: (message) => {
-					message.meta = { pluginContinued: true };
-				},
-			},
-		]);
-
-		await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-		assert.equal(engine.sendMessage("hello"), true);
-		await waitFor(
-			() => engine.state.generatingMessageId === null && storage.saved.length === 1,
-			"plugin failure stream",
-		);
-	} finally {
-		console.error = originalConsoleError;
-	}
-
-	assert.equal(loggedErrors.length, 1);
-	assert.match(String(loggedErrors[0][0]), /broken-submit/);
-	assert.equal(providerMessages[0].meta?.pluginContinued, true);
-	assert.equal(getText(providerMessages[0]), "hello");
+	assert.deepEqual(storage.saved[0].messages[1].blocks, [toolCall]);
 });
 
 test("setMessages can persist an empty current session", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
-
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 
 	const saved = await engine.setMessages([]);
 
@@ -1282,35 +1345,20 @@ test("setMessages can persist an empty current session", async () => {
 	assert.equal(engine.state.sessions[0].title, "Empty Chat");
 });
 
-test("setMessages omits ephemeral messages when saving", async () => {
+test("setMessages omits ephemeral messages but preserves intentionally empty messages", async () => {
 	const storage = new MemoryStorage();
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
 	const ephemeralAssistant: Message = { id: "assistant-1", role: "assistant", blocks: [], ephemeral: true };
+	const emptyAssistant: Message = { id: "assistant-2", role: "assistant", blocks: [] };
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-
-	const saved = await engine.setMessages([ephemeralAssistant]);
-
-	assert.equal(saved, true);
-	assert.equal(storage.saved.length, 1);
-	assert.deepEqual(storage.saved[0].messages, []);
-});
-
-test("setMessages preserves non-ephemeral empty assistant messages when saving", async () => {
-	const storage = new MemoryStorage();
-	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
-	const emptyAssistant: Message = { id: "assistant-1", role: "assistant", blocks: [] };
-
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-
-	const saved = await engine.setMessages([emptyAssistant]);
+	const saved = await engine.setMessages([ephemeralAssistant, emptyAssistant]);
 
 	assert.equal(saved, true);
 	assert.equal(storage.saved.length, 1);
 	assert.deepEqual(storage.saved[0].messages, [emptyAssistant]);
 });
 
-test("plugins can add user message data and patch request options", async () => {
+test("plugins can patch request messages and options", async () => {
 	let providerMessages: Message[] = [];
 	let providerOptions: RequestOptions = {};
 	let pluginInputMessageFrozen = true;
@@ -1323,9 +1371,6 @@ test("plugins can add user message data and patch request options", async () => 
 	};
 	const plugin: ChatPlugin = {
 		name: "request-shaper",
-		onUserSubmit: (message) => {
-			message.blocks.push(fileBlock("plugin-file"));
-		},
 		beforeSubmit: (params) => {
 			assert.equal(params.messages[0].role, "user");
 			pluginInputMessageFrozen = Object.isFrozen(params.messages[0]);
@@ -1338,22 +1383,23 @@ test("plugins can add user message data and patch request options", async () => 
 					...(message.meta ? { meta: { ...message.meta } as Message["meta"] } : {}),
 				}),
 			);
+			messages[0].blocks.push(fileBlock("plugin-file"));
 			return { messages: [...messages, pluginEphemeral], options: { temperature: 0.2 } };
 		},
 	};
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			providerMessages = request.messages;
 			providerOptions = request.options;
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
-			onEvent({ type: "finish", reason: "stop" });
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "ok" } },
+			]);
 		},
 	};
 	const engine = new ChatEngine({ provider, storage: new MemoryStorage() });
 	engine.registerPlugins([plugin]);
 	engine.setRequestDefaults({ options: { model: "base-model" } });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && providerMessages.length > 0, "plugin stream");
 
@@ -1390,10 +1436,11 @@ test("structured providers receive semantic fields separately from passthrough o
 		},
 	};
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			providerRequest = request;
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
-			onEvent({ type: "finish", reason: "stop" });
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "ok" } },
+			]);
 		},
 	};
 	const engine = new ChatEngine({ provider, storage: new MemoryStorage() });
@@ -1407,7 +1454,6 @@ test("structured providers receive semantic fields separately from passthrough o
 		},
 	});
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && providerRequest !== null, "structured request");
 
@@ -1435,10 +1481,11 @@ test("plugins can explicitly clear semantic request defaults", async () => {
 		},
 	};
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			providerRequest = request;
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "ok" });
-			onEvent({ type: "finish", reason: "stop" });
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "ok" } },
+			]);
 		},
 	};
 	const engine = new ChatEngine({ provider, storage: new MemoryStorage() });
@@ -1448,7 +1495,6 @@ test("plugins can explicitly clear semantic request defaults", async () => {
 		tools: defaultTools,
 	});
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => engine.state.generatingMessageId === null && providerRequest !== null, "structured request");
 
@@ -1458,39 +1504,18 @@ test("plugins can explicitly clear semantic request defaults", async () => {
 	assert.equal(request.messages[0].role, "user");
 });
 
-test("auto-title updates session metadata after the first assistant reply", async () => {
-	const storage = new MemoryStorage();
-	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
-			onEvent({ type: "finish", reason: "stop" });
-		},
-		async generateTitle(): Promise<string> {
-			return "Smart Title";
-		},
-	};
-	const engine = new ChatEngine({ provider, storage });
-
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
-	engine.sendMessage("hello");
-	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
-
-	const sessionId = engine.state.currentSessionId;
-	assert.deepEqual(storage.metadataUpdates, [{ id: sessionId, meta: { title: "Smart Title" } }]);
-	assert.equal(engine.state.sessions.find((session) => session.id === sessionId)?.title, "Smart Title");
-});
-
-test("auto-title bypasses beforeSubmit hooks", async () => {
+test("auto-title bypasses submit hooks and updates session metadata after the first reply", async () => {
 	const storage = new MemoryStorage();
 	let beforeSubmitCalls = 0;
 	let chatOptions: RequestOptions = {};
 	let titleOptions: RequestOptions = {};
 
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			chatOptions = request.options;
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
-			onEvent({ type: "finish", reason: "stop" });
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "answer" } },
+			]);
 		},
 		async generateTitle(request): Promise<string> {
 			titleOptions = request.options;
@@ -1508,7 +1533,6 @@ test("auto-title bypasses beforeSubmit hooks", async () => {
 	engine.registerPlugins([plugin]);
 	engine.setRequestDefaults({ options: { model: "base-model" } });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await waitFor(() => storage.metadataUpdates.length === 1, "auto-title metadata update");
 
@@ -1516,26 +1540,24 @@ test("auto-title bypasses beforeSubmit hooks", async () => {
 	assert.equal(chatOptions.temperature, 0.2);
 	assert.equal(titleOptions.model, "base-model");
 	assert.equal(titleOptions.temperature, undefined);
+	const sessionId = engine.state.currentSessionId;
+	assert.deepEqual(storage.metadataUpdates, [{ id: sessionId, meta: { title: "Smart Title" } }]);
+	assert.equal(engine.state.sessions.find((session) => session.id === sessionId)?.title, "Smart Title");
 });
 
 test("auto-title merges request defaults with live title options", async () => {
 	const storage = new MemoryStorage();
 	let titleOptions: RequestOptions = {};
 	let titleInstructions: string | undefined;
-	let releaseStream!: () => void;
-	const streamReleased = new Promise<void>((resolve) => {
-		releaseStream = resolve;
-	});
-	let streamStarted!: () => void;
-	const streamStartedPromise = new Promise<void>((resolve) => {
-		streamStarted = resolve;
-	});
+	const { promise: streamReleased, resolve: releaseStream } = Promise.withResolvers<void>();
+	const { promise: streamStartedPromise, resolve: streamStarted } = Promise.withResolvers<void>();
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request, onChange): Promise<void> {
 			streamStarted();
 			await streamReleased;
-			onEvent({ type: "text_delta", messageId: "provider-message", blockId: "reply-text", delta: "answer" });
-			onEvent({ type: "finish", reason: "stop" });
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply-text", type: "text", text: "answer" } },
+			]);
 		},
 		async generateTitle(request): Promise<string> {
 			titleOptions = request.options;
@@ -1554,7 +1576,6 @@ test("auto-title merges request defaults with live title options", async () => {
 	});
 	engine.setTitleOptions({ model: "stale-title-model", max_tokens: 12 });
 
-	await waitFor(() => !engine.state.isLoadingSession, "empty initial load");
 	engine.sendMessage("hello");
 	await streamStartedPromise;
 	engine.setTitleOptions({
@@ -1573,7 +1594,8 @@ test("auto-title merges request defaults with live title options", async () => {
 	assert.equal(titleOptions.max_tokens, 100);
 });
 
-test("deleting the active session lets deletion win over the aborted generation save", async () => {
+test("deleting the active session prevents re-selection and an aborted generation save", async (t) => {
+	t.mock.method(console, "error", () => {});
 	const calls: string[] = [];
 	const storage = new (class extends MemoryStorage {
 		override async save(session: ChatSession): Promise<void> {
@@ -1594,23 +1616,14 @@ test("deleting the active session lets deletion win over the aborted generation 
 		},
 	]);
 
-	let releaseStream!: () => void;
-	const streamReleased = new Promise<void>((resolve) => {
-		releaseStream = resolve;
-	});
+	const { promise: streamReleased, resolve: releaseStream } = Promise.withResolvers<void>();
 
-	let streamStarted!: () => void;
-	const streamStartedPromise = new Promise<void>((resolve) => {
-		streamStarted = resolve;
-	});
+	const { promise: streamStartedPromise, resolve: streamStarted } = Promise.withResolvers<void>();
 
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(): Promise<void> {
 			streamStarted();
 			await streamReleased;
-			if (request.signal.aborted) {
-				onEvent({ type: "finish", reason: "aborted" });
-			}
 		},
 	};
 
@@ -1620,7 +1633,7 @@ test("deleting the active session lets deletion win over the aborted generation 
 	engine.sendMessage("hello");
 	await streamStartedPromise;
 	const deletePromise = engine.sessions.delete("active-session");
-	await waitFor(() => engine.state.currentSessionId !== "active-session", "active delete local navigation");
+	await engine.sessions.switch("active-session");
 	await deletePromise;
 
 	releaseStream();
@@ -1708,7 +1721,7 @@ test("sessions.loadOlderMessages uses an opaque cursor instead of the oldest mes
 	assert.equal(storage.olderCalls.length, 1);
 });
 
-test("sessions.loadOlderMessages requires a backend cursor when hasMoreMessages is true", async () => {
+test("incomplete history without a cursor is rejected rather than treated as a complete transcript", async () => {
 	const storage = new (class extends MemoryStorage {
 		public olderCalls = 0;
 		async loadOlderMessages(_id: string, _cursor: string, _limit: number) {
@@ -1728,14 +1741,48 @@ test("sessions.loadOlderMessages requires a backend cursor when hasMoreMessages 
 	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
 	await engine.sessions.switch("chat-1");
 
+	assert.notEqual(engine.state.currentSessionId, "chat-1");
+	assert.ok(engine.state.error);
 	assert.equal(engine.state.hasMoreMessages, false);
 	await engine.sessions.loadOlderMessages();
 	assert.equal(storage.olderCalls, 0);
 });
 
-test("sessions.loadOlderMessages tracks the next backend cursor across pages", async () => {
+test("saving a paginated conversation preserves its unloaded history until all pages are loaded", async (t) => {
+	const storage = new (class extends MemoryStorage {
+		async loadOlderMessages() {
+			return { messages: [textMessage("older", "user", "earlier")], hasMore: false };
+		}
+	})([
+		{
+			id: "chat-1",
+			title: "Chat",
+			updatedAt: 1,
+			messages: [textMessage("latest", "user", "latest")],
+			hasMoreMessages: true,
+			nextOlderMessagesCursor: "before-latest",
+		},
+	]);
+	const engine = new ChatEngine({ provider: replyingProvider("answer"), storage });
+	t.after(() => engine.destroy());
+	await engine.sessions.switch("chat-1");
+	engine.sendMessage("Continue");
+	await waitFor(() => storage.saved.length === 1, "partial save");
+	assert.equal(storage.saved[0].hasMoreMessages, true);
+	assert.equal(storage.saved[0].nextOlderMessagesCursor, "before-latest");
+	assert.equal(storage.saved[0].messages[0].id, "latest");
+	await engine.sessions.loadOlderMessages();
+	engine.sendMessage("Continue again");
+	await waitFor(() => storage.saved.length === 2, "complete save");
+	assert.equal(storage.saved[1].hasMoreMessages, undefined);
+	assert.equal(storage.saved[1].nextOlderMessagesCursor, undefined);
+	assert.equal(storage.saved[1].messages[0].id, "older");
+});
+
+test("sessions.loadOlderMessages retains the cursor on a malformed page and follows valid cursors", async () => {
 	const pages = [
-		{ messages: [textMessage("m2", "assistant", "second")], hasMore: true, nextOlderMessagesCursor: "200" },
+		{ messages: [textMessage("invalid", "assistant", "invalid page")], hasMore: true },
+		{ messages: [textMessage("m2", "assistant", "second")], hasMore: true, nextOlderMessagesCursor: "" },
 		{ messages: [textMessage("m1", "user", "first")], hasMore: false },
 	];
 	const storage = new (class extends MemoryStorage {
@@ -1760,9 +1807,16 @@ test("sessions.loadOlderMessages tracks the next backend cursor across pages", a
 
 	await engine.sessions.loadOlderMessages();
 	assert.equal(engine.state.hasMoreMessages, true);
+	assert.equal(engine.state.isLoadingMessages, false);
+	assert.deepEqual(
+		engine.state.messages.map((message) => message.id),
+		["m3"],
+	);
+	await engine.sessions.loadOlderMessages();
+	assert.equal(engine.state.hasMoreMessages, true);
 	await engine.sessions.loadOlderMessages();
 
-	assert.deepEqual(storage.olderCalls, ["300", "200"]);
+	assert.deepEqual(storage.olderCalls, ["300", "300", ""]);
 	assert.deepEqual(
 		engine.state.messages.map((m) => m.id),
 		["m1", "m2", "m3"],
@@ -1770,18 +1824,54 @@ test("sessions.loadOlderMessages tracks the next backend cursor across pages", a
 	assert.equal(engine.state.hasMoreMessages, false);
 });
 
-test("sessions.loadOlderMessages is a no-op when storage has no pagination", async () => {
-	// Plain MemoryStorage does not implement loadOlderMessages.
-	const storage = new MemoryStorage([
-		{ id: "chat-1", title: "Chat 1", updatedAt: 1, messages: [textMessage("m1", "user", "only")] },
-	]);
-	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
-	await engine.sessions.switch("chat-1");
-
-	assert.equal(engine.state.hasMoreMessages, false);
-	await engine.sessions.loadOlderMessages();
-	assert.deepEqual(
-		engine.state.messages.map((m) => m.id),
-		["m1"],
+test("late history pages cannot change a replacement snapshot or another page's loading state", async () => {
+	type Page = { messages: Message[]; hasMore: boolean };
+	const pending: ((page: Page) => void)[] = [];
+	const storage = new (class extends MemoryStorage {
+		async loadOlderMessages() {
+			return new Promise<Page>((resolve) => pending.push(resolve));
+		}
+	})(
+		["a", "b"].map((id) => ({
+			id,
+			title: id,
+			updatedAt: 1,
+			messages: [textMessage(id, "user", id)],
+			hasMoreMessages: true,
+			nextOlderMessagesCursor: "page",
+		})),
 	);
+	const engine = new ChatEngine({ provider: replyingProvider("unused"), storage });
+	await engine.sessions.switch("a");
+	const oldPage = engine.sessions.loadOlderMessages();
+	await engine.sessions.switch("b");
+	await engine.sessions.switch("a");
+	const newPage = engine.sessions.loadOlderMessages();
+	pending[0]({ messages: [textMessage("stale", "user", "stale")], hasMore: false });
+	await oldPage;
+	assert.equal(engine.state.isLoadingMessages, true);
+	assert.deepEqual(
+		engine.state.messages.map((message) => message.id),
+		["a"],
+	);
+	pending[1]({ messages: [textMessage("older", "user", "older")], hasMore: false });
+	await newPage;
+	assert.equal(engine.state.isLoadingMessages, false);
+	assert.deepEqual(
+		engine.state.messages.map((message) => message.id),
+		["older", "a"],
+	);
+
+	await engine.sessions.switch("b");
+	const replacedPage = engine.sessions.loadOlderMessages();
+	await engine.setMessages([textMessage("replacement", "user", "replacement")]);
+	pending[2]({ messages: [textMessage("discarded", "user", "discarded")], hasMore: false });
+	await replacedPage;
+	assert.deepEqual(
+		engine.state.messages.map((message) => message.id),
+		["replacement"],
+	);
+	assert.equal(engine.state.isLoadingMessages, false);
+	assert.equal(engine.state.hasMoreMessages, false);
+	await engine.destroy();
 });

@@ -60,7 +60,7 @@ test("loadSessions sends pagination params and auth header", async () => {
 	});
 });
 
-test("supports empty and relative API root URLs", async () => {
+test("supports empty and relative API roots without an auth token", async () => {
 	const { calls } = mockJsonFetch({ items: [], hasMore: false });
 
 	await new RemoteStorage("", () => null).loadSessions(5);
@@ -72,15 +72,7 @@ test("supports empty and relative API root URLs", async () => {
 	assert.equal(calls[1].url, "/api/chats?limit=5");
 	assert.equal(calls[2].url, "api/chats?limit=5");
 	assert.equal(calls[3].url, "/api/chats?limit=5");
-});
-
-test("requests omit Authorization when no token is available", async () => {
-	const { calls } = mockJsonFetch({ items: [], hasMore: false });
-	const storage = new RemoteStorage("https://example.test/api", () => null);
-
-	await storage.loadSessions(10);
-
-	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
+	for (const { init } of calls) assert.deepEqual(init.headers, { "Content-Type": "application/json" });
 });
 
 test("loadOne returns null for missing chats and throws on other failures", async () => {
@@ -103,26 +95,29 @@ test("loadOne returns null for missing chats and throws on other failures", asyn
 	);
 });
 
-test("save, updateMetadata, and delete use the expected endpoints and methods", async () => {
-	const { calls } = mockJsonFetch({ success: true });
+test("chat requests encode IDs and send the expected methods and payloads", async () => {
+	const chat = { ...session(), id: "chat/with spaces" };
+	const { calls } = mockJsonFetch(chat);
 	const storage = new RemoteStorage("https://example.test/api", () => "token-1");
-	const chat = session();
+	const url = "https://example.test/api/chats/chat%2Fwith%20spaces";
 
+	assert.deepEqual(await storage.loadOne(chat.id), chat);
+	assert.equal(calls[0].url, url);
 	await storage.save(chat);
 	await storage.updateMetadata(chat.id, { title: "Renamed", isPinned: true });
 	await storage.delete(chat.id);
 
-	assert.equal(calls[0].url, "https://example.test/api/chats/chat-1");
-	assert.equal(calls[0].init.method, "PUT");
-	assert.deepEqual(JSON.parse(calls[0].init.body as string), chat);
-	assert.equal((calls[0].init.headers as Record<string, string>)["X-Murm-Save-Mode"], undefined);
+	assert.equal(calls[1].url, url);
+	assert.equal(calls[1].init.method, "PUT");
+	assert.deepEqual(JSON.parse(calls[1].init.body as string), chat);
+	assert.equal((calls[1].init.headers as Record<string, string>)["X-Murm-Save-Mode"], undefined);
 
-	assert.equal(calls[1].url, "https://example.test/api/chats/chat-1/meta");
-	assert.equal(calls[1].init.method, "POST");
-	assert.deepEqual(JSON.parse(calls[1].init.body as string), { title: "Renamed", isPinned: true });
+	assert.equal(calls[2].url, `${url}/meta`);
+	assert.equal(calls[2].init.method, "POST");
+	assert.deepEqual(JSON.parse(calls[2].init.body as string), { title: "Renamed", isPinned: true });
 
-	assert.equal(calls[2].url, "https://example.test/api/chats/chat-1");
-	assert.equal(calls[2].init.method, "DELETE");
+	assert.equal(calls[3].url, url);
+	assert.equal(calls[3].init.method, "DELETE");
 });
 
 test("saveLimit sends only the latest messages with a partial save header", async () => {
@@ -155,29 +150,29 @@ test("saveLimit does not slice or add partial header when the session is within 
 	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
 });
 
+test("saving a paginated transcript is partial even when saveLimit does not slice it", async () => {
+	const { calls } = mockJsonFetch({ success: true });
+	const chat = { ...session(), hasMoreMessages: true, nextOlderMessagesCursor: "older" };
+	await new RemoteStorage("/api", () => null).save(chat);
+	await new RemoteStorage("/api", () => null, { saveLimit: 20 }).save(chat);
+	for (const { init } of calls) {
+		assert.equal((init.headers as Record<string, string>)["X-Murm-Save-Mode"], "partial");
+		assert.deepEqual(JSON.parse(init.body as string), chat);
+	}
+});
+
 test("invalid saveLimit values are disabled", async () => {
 	const { calls } = mockJsonFetch({ success: true });
 	const chat = sessionWithMessages(3);
 
-	await new RemoteStorage("https://example.test/api", () => null, { saveLimit: 0 }).save(chat);
-	await new RemoteStorage("https://example.test/api", () => null, { saveLimit: -1 }).save(chat);
-	await new RemoteStorage("https://example.test/api", () => null, {
-		saveLimit: Number.POSITIVE_INFINITY,
-	}).save(chat);
+	for (const saveLimit of [0, -1, Number.POSITIVE_INFINITY]) {
+		await new RemoteStorage("https://example.test/api", () => null, { saveLimit }).save(chat);
+	}
 
 	for (const call of calls) {
 		assert.deepEqual(JSON.parse(call.init.body as string), chat);
 		assert.deepEqual(call.init.headers, { "Content-Type": "application/json" });
 	}
-});
-
-test("encodes chat ids as remote URL path segments", async () => {
-	const { calls } = mockJsonFetch({ id: "chat/with spaces", title: "A chat", updatedAt: 123, messages: [] });
-	const storage = new RemoteStorage("https://example.test/api", () => null);
-
-	await storage.loadOne("chat/with spaces");
-
-	assert.equal(calls[0].url, "https://example.test/api/chats/chat%2Fwith%20spaces");
 });
 
 test("write methods throw on non-OK responses", async () => {

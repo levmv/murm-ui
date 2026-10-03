@@ -14,8 +14,12 @@ export interface DropdownOptions {
 	width?: string;
 }
 
-let activeDropdown: { menu: HTMLElement; trigger: HTMLElement; cleanup: (restoreFocus?: boolean) => void } | null =
-	null;
+let activeDropdown: {
+	menu: HTMLElement;
+	trigger: HTMLElement;
+	update: (items: readonly DropdownItem[]) => void;
+	cleanup: (restoreFocus?: boolean) => void;
+} | null = null;
 let nextDropdownId = 0;
 
 export function showDropdown(trigger: HTMLElement, items: readonly DropdownItem[], options: DropdownOptions = {}) {
@@ -33,29 +37,49 @@ export function showDropdown(trigger: HTMLElement, items: readonly DropdownItem[
 	menu.setAttribute("aria-orientation", "vertical");
 	if (options.width) menu.style.width = options.width;
 
-	items.forEach((item) => {
-		const btnClass = item.danger ? "mur-dropdown-item mur-danger" : "mur-dropdown-item";
-		const btn = el("button", btnClass, {
-			type: "button",
-			disabled: item.disabled,
-			onclick: (e) => {
-				e.stopPropagation();
-				if (!item.disabled) {
-					item.onClick();
-					closeDropdown();
-				}
-			},
-		});
-		btn.setAttribute("role", "menuitem");
-
-		if (item.iconHtml) {
-			btn.appendChild(el("span", "mur-dropdown-icon", { innerHTML: item.iconHtml }));
+	const buttons = new Map<string, { button: HTMLButtonElement; item: DropdownItem }>();
+	const renderItems = (items: readonly DropdownItem[]) => {
+		const focused = menu.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+		const ids = new Set(items.map((item) => item.id));
+		for (const [id, state] of buttons) {
+			if (!ids.has(id)) {
+				state.button.remove();
+				buttons.delete(id);
+			}
 		}
-		btn.appendChild(el("span", "mur-dropdown-label", { textContent: item.label }));
-
-		menu.appendChild(btn);
-	});
-	const enabledItems = Array.from(menu.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item:not(:disabled)"));
+		items.forEach((item, index) => {
+			let state = buttons.get(item.id);
+			if (!state) {
+				const button = el("button", "", { type: "button" });
+				button.setAttribute("role", "menuitem");
+				button.addEventListener("click", (event) => {
+					event.stopPropagation();
+					const current = buttons.get(item.id)?.item;
+					if (current && !current.disabled) {
+						closeDropdown();
+						current.onClick();
+					}
+				});
+				state = { button, item };
+				buttons.set(item.id, state);
+			}
+			const button = state.button;
+			const className = item.danger ? "mur-dropdown-item mur-danger" : "mur-dropdown-item";
+			if (button.className !== className) button.className = className;
+			if (button.disabled !== Boolean(item.disabled)) button.disabled = Boolean(item.disabled);
+			if (!button.firstChild || item.iconHtml !== state.item.iconHtml) {
+				button.replaceChildren();
+				if (item.iconHtml) button.appendChild(el("span", "mur-dropdown-icon", { innerHTML: item.iconHtml }));
+				button.appendChild(el("span", "mur-dropdown-label"));
+			}
+			if (button.lastChild!.textContent !== item.label) button.lastChild!.textContent = item.label;
+			state.item = item;
+			if (menu.children[index] !== button) menu.insertBefore(button, menu.children[index]);
+		});
+		if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+		else if (focused && !focused.isConnected) menu.focus({ preventScroll: true });
+	};
+	renderItems(items);
 
 	const appContainer = trigger.closest(".mur-app") || document.body;
 	appContainer.appendChild(menu);
@@ -67,29 +91,39 @@ export function showDropdown(trigger: HTMLElement, items: readonly DropdownItem[
 	trigger.setAttribute("aria-expanded", "true");
 	trigger.setAttribute("aria-controls", menuId);
 
-	const triggerRect = trigger.getBoundingClientRect();
-	const appRect = appContainer.getBoundingClientRect();
-	const menuWidth = menu.offsetWidth;
-	const menuHeight = menu.offsetHeight;
-	const top = triggerRect.bottom - appRect.top;
-	const left = triggerRect.left - appRect.left;
+	const setStyle = (name: "top" | "left" | "right", value: string) => {
+		if (menu.style[name] !== value) menu.style[name] = value;
+	};
+	const position = () => {
+		const triggerRect = trigger.getBoundingClientRect();
+		const appRect = appContainer.getBoundingClientRect();
+		const menuWidth = menu.offsetWidth;
+		const menuHeight = menu.offsetHeight;
+		const top = triggerRect.bottom - appRect.top;
+		const left = triggerRect.left - appRect.left;
 
-	if (top + 4 + menuHeight > appRect.height) {
-		menu.style.top = `${triggerRect.top - appRect.top - menuHeight - 4}px`;
-	} else {
-		menu.style.top = `${top + 4}px`;
-	}
+		const preferredTop =
+			top + 4 + menuHeight > appRect.height ? triggerRect.top - appRect.top - menuHeight - 4 : top + 4;
+		// A background reorder can move the trigger beyond the visible list.
+		const minTop = Math.max(0, -appRect.top);
+		const maxTop = Math.max(
+			minTop,
+			Math.min(appRect.height, document.defaultView!.innerHeight - appRect.top) - menuHeight,
+		);
+		setStyle("top", `${Math.max(minTop, Math.min(preferredTop, maxTop))}px`);
 
-	const alignRightEdge = options.align === "right" || (!options.align && left + menuWidth > appRect.width - 16);
+		const alignRightEdge = options.align === "right" || (!options.align && left + menuWidth > appRect.width - 16);
 
-	if (alignRightEdge) {
-		const rightOffset = appRect.right - triggerRect.right;
-		menu.style.right = `${rightOffset}px`;
-		menu.style.left = "auto";
-	} else {
-		menu.style.left = `${left}px`;
-		menu.style.right = "auto";
-	}
+		if (alignRightEdge) {
+			const rightOffset = appRect.right - triggerRect.right;
+			setStyle("right", `${rightOffset}px`);
+			setStyle("left", "auto");
+		} else {
+			setStyle("left", `${left}px`);
+			setStyle("right", "auto");
+		}
+	};
+	position();
 
 	const handleOutsidePointerDown = (e: PointerEvent) => {
 		if (!menu.contains(e.target as Node) && !trigger.contains(e.target as Node)) {
@@ -104,12 +138,14 @@ export function showDropdown(trigger: HTMLElement, items: readonly DropdownItem[
 		}
 	};
 
+	const enabledItems = () => Array.from(menu.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item:not(:disabled)"));
 	const focusMenuItem = (offset: number) => {
-		if (enabledItems.length === 0) return;
+		const items = enabledItems();
+		if (items.length === 0) return;
 
-		const currentIndex = enabledItems.indexOf(document.activeElement as HTMLButtonElement);
-		const nextIndex = currentIndex === -1 ? 0 : (currentIndex + offset + enabledItems.length) % enabledItems.length;
-		enabledItems[nextIndex].focus();
+		const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+		const nextIndex = currentIndex === -1 ? 0 : (currentIndex + offset + items.length) % items.length;
+		items[nextIndex].focus();
 	};
 
 	const handleMenuKeydown = (e: KeyboardEvent) => {
@@ -121,10 +157,11 @@ export function showDropdown(trigger: HTMLElement, items: readonly DropdownItem[
 			focusMenuItem(-1);
 		} else if (e.key === "Home") {
 			e.preventDefault();
-			enabledItems[0]?.focus();
+			enabledItems()[0]?.focus();
 		} else if (e.key === "End") {
 			e.preventDefault();
-			enabledItems[enabledItems.length - 1]?.focus();
+			const items = enabledItems();
+			items[items.length - 1]?.focus();
 		} else if (e.key === "Tab") {
 			closeDropdown();
 		}
@@ -149,13 +186,29 @@ export function showDropdown(trigger: HTMLElement, items: readonly DropdownItem[
 		if (activeDropdown?.menu === menu) activeDropdown = null;
 	};
 
-	activeDropdown = { menu, trigger, cleanup };
+	activeDropdown = {
+		menu,
+		trigger,
+		cleanup,
+		update(items) {
+			if (!items.length) {
+				cleanup();
+				return;
+			}
+			renderItems(items);
+			position();
+		},
+	};
 }
 
-export function closeDropdown(restoreFocus = false) {
-	if (activeDropdown) {
+export function closeDropdown(restoreFocus = false, within?: HTMLElement) {
+	if (activeDropdown && (!within || within.contains(activeDropdown.trigger))) {
 		activeDropdown.cleanup(restoreFocus);
 	}
+}
+
+export function updateDropdown(trigger: HTMLElement, items: readonly DropdownItem[]): void {
+	if (activeDropdown?.trigger === trigger) activeDropdown.update(items);
 }
 
 function restoreAttribute(element: HTMLElement, name: string, value: string | null) {

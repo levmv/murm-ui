@@ -1,7 +1,6 @@
 export class Store<T extends object> {
 	private state: T;
 	private selectorListeners: Set<(state: T) => void> = new Set();
-	private hotListeners: Set<(state: T) => void> = new Set();
 
 	constructor(initialState: T) {
 		this.state = initialState;
@@ -11,34 +10,14 @@ export class Store<T extends object> {
 		return this.state;
 	}
 
-	/**
-	 * Standard immutable update.
-	 * Use this for 99% of state changes (sessions, active chat, etc).
-	 * Safely triggers all relevant selector-based subscribers.
-	 */
+	/** Replaces the state object and notifies subscribers. */
 	set(partialState: Partial<T>) {
 		this.state = { ...this.state, ...partialState };
 		this.notifySelectorListeners();
-		this.notifyHotListeners();
 	}
 
 	/**
-	 * HIGH-PERFORMANCE HOT PATH ONLY.
-	 * Mutates state in-place to prevent GC thrashing during LLM streaming.
-	 * NOTE: This intentionally bypasses selector subscribers so hot updates
-	 * do not run every selector on every token. Only hot subscribers are notified.
-	 * Hot subscribers receive the live mutable state object; they must not retain
-	 * references to state or nested slices across notifications.
-	 */
-	mutateHot(recipe: (state: T) => void) {
-		recipe(this.state);
-		this.notifyHotListeners();
-	}
-
-	/**
-	 * Subscribes to a specific slice of state.
-	 * The listener fires IMMEDIATELY with the current state, and then
-	 * whenever the selected value actually changes.
+	 * Fires immediately, then when set() changes the selected value by reference.
 	 */
 	subscribe<U>(selector: (state: T) => U, listener: (selectedState: U) => void): () => void {
 		const initialSlice = selector(this.state);
@@ -46,22 +25,7 @@ export class Store<T extends object> {
 		return this.onChangeFrom(selector, listener, initialSlice);
 	}
 
-	/**
-	 * Subscribes to normal set() updates and hot in-place mutations.
-	 * Fires IMMEDIATELY with the current state, then on subsequent updates.
-	 * Use sparingly for render paths that must observe high-frequency mutable state.
-	 * The listener receives the live mutable state object; do not retain references
-	 * to state or nested slices because mutateHot may change them in-place.
-	 */
-	subscribeHot(listener: (state: T) => void): () => void {
-		listener(this.state);
-		this.hotListeners.add(listener);
-		return () => this.hotListeners.delete(listener);
-	}
-	/**
-	 * Subscribes to a specific slice of state.
-	 * The listener ONLY fires on future changes, not immediately.
-	 */
+	/** Like subscribe(), without the immediate call. */
 	public onChange<U>(selector: (state: T) => U, listener: (selectedState: U) => void): () => void {
 		return this.onChangeFrom(selector, listener, selector(this.state));
 	}
@@ -85,17 +49,10 @@ export class Store<T extends object> {
 
 	public clearAllListeners(): void {
 		this.selectorListeners.clear();
-		this.hotListeners.clear();
 	}
 
 	private notifySelectorListeners() {
 		for (const listener of this.selectorListeners) {
-			listener(this.state);
-		}
-	}
-
-	private notifyHotListeners() {
-		for (const listener of this.hotListeners) {
 			listener(this.state);
 		}
 	}

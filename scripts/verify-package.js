@@ -1,289 +1,159 @@
-import { access, readFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
+import ts from "typescript";
 
 const root = process.cwd();
+const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const plugins = {
+	"agent-thinking": ["AgentThinkingPlugin", "agentThinking"],
+	attachment: ["AttachmentPlugin"],
+	copy: ["CopyPlugin"],
+	edit: ["EditPlugin"],
+	settings: ["SettingsPlugin"],
+	thinking: ["ThinkingPlugin", "thinking"],
+	tools: ["ToolsPlugin", "tools"],
+};
+const coreCss = ["view", "composer", "base", "dropdown", "feed", "input", "sidebar"].map(
+	(name) => `dist/styles/${name}.css`,
+);
 
-const requiredFiles = [
-	"dist/index.js",
-	"dist/index.d.ts",
-	"dist/with-css.js",
-	"dist/with-css.d.ts",
-	"dist/highlighter/index.js",
-	"dist/highlighter/index.d.ts",
-	"dist/highlighter/chat.js",
-	"dist/highlighter/chat.d.ts",
-	"dist/highlighter/core.js",
-	"dist/highlighter/core.d.ts",
-	"dist/highlighter/languages/index.js",
-	"dist/highlighter/languages/index.d.ts",
-	"dist/highlighter/theme.css",
-	"dist/highlighter/THIRD_PARTY_NOTICES.md",
-	"dist/main.js",
-	"dist/main.d.ts",
-	"dist/styles/base.css",
-	"dist/styles/dropdown.css",
-	"dist/styles/feed.css",
-	"dist/styles/input.css",
-	"dist/styles/sidebar.css",
-	"dist/plugins/agent-thinking/agent-thinking-plugin.js",
-	"dist/plugins/agent-thinking/agent-thinking-plugin.d.ts",
-	"dist/plugins/agent-thinking/agent-thinking.css",
-	"dist/plugins/attachment/attachment-plugin.js",
-	"dist/plugins/attachment/attachment-plugin.d.ts",
-	"dist/plugins/attachment/attachment.css",
-	"dist/plugins/copy/copy-plugin.js",
-	"dist/plugins/copy/copy-plugin.d.ts",
-	"dist/plugins/edit/edit-plugin.js",
-	"dist/plugins/edit/edit-plugin.d.ts",
-	"dist/plugins/edit/edit.css",
-	"dist/plugins/settings/settings-plugin.js",
-	"dist/plugins/settings/settings-plugin.d.ts",
-	"dist/plugins/settings/settings.css",
-	"dist/plugins/thinking/thinking-plugin.js",
-	"dist/plugins/thinking/thinking-plugin.d.ts",
-	"dist/plugins/thinking/thinking.css",
-	"dist/plugins/tools/tools-plugin.js",
-	"dist/plugins/tools/tools-plugin.d.ts",
-	"dist/plugins/tools/tools.css",
-];
-
-const rootPublicExports = [
-	"ChatEngine",
-	"ChatUI",
-	"IndexedDBStorage",
-	"OpenAIProvider",
-	"RemoteStorage",
-	"RemoteStorageError",
-];
-
-const coreCssFiles = [
-	"dist/styles/base.css",
-	"dist/styles/dropdown.css",
-	"dist/styles/feed.css",
-	"dist/styles/input.css",
-	"dist/styles/sidebar.css",
-];
-
-const pluginCssFiles = [
-	"dist/plugins/agent-thinking/agent-thinking.css",
-	"dist/plugins/attachment/attachment.css",
-	"dist/plugins/edit/edit.css",
-	"dist/plugins/settings/settings.css",
-	"dist/plugins/thinking/thinking.css",
-	"dist/plugins/tools/tools.css",
-];
-
-const requiredSideEffects = ["**/*.css", "./dist/with-css.js", "./dist/plugins/*/*-plugin.js"];
-
-async function assertFile(relativePath) {
-	try {
-		await access(path.join(root, relativePath));
-	} catch {
-		throw new Error(`Expected package file is missing: ${relativePath}`);
+// Check declared entry files and declarations for the public wildcard entries.
+const files = new Set([manifest.types, "dist/highlighter/THIRD_PARTY_NOTICES.md"]);
+for (const entry of Object.values(manifest.exports)) {
+	for (const target of typeof entry === "string" ? [entry] : Object.values(entry)) {
+		if (!target.includes("*")) files.add(target);
 	}
 }
+for (const name of Object.keys(plugins)) files.add(`dist/plugins/${name}/${name}-plugin.d.ts`);
+for (const name of ["chat", "core", "languages/ruby"]) files.add(`dist/highlighter/${name}.d.ts`);
+await Promise.all([...files].map((file) => access(path.join(root, file))));
 
-const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-
-if (packageJson.types !== "./dist/index.d.ts") {
-	throw new Error('package.json "types" must point to ./dist/index.d.ts');
+// Compile a consumer through package exports, including ESM declaration imports.
+const consumerDir = await mkdtemp(path.join(root, ".package-types-"));
+try {
+	const consumerFile = path.join(consumerDir, "consumer.mts");
+	await writeFile(
+		consumerFile,
+		`import { ChatView, type Message } from "murm-ui";
+import { Composer } from "murm-ui/composer";
+import { highlight } from "murm-ui/highlighter";
+const message: Message = { id: "reply", role: "assistant", blocks: [] };
+const view = new ChatView({ container: "#chat", highlighter: highlight });
+view.setConversation({ id: "chat", messages: [message] });
+new Composer({ container: "#input", onSubmit: command => { console.log(command.text); } });`,
+	);
+	const program = ts.createProgram([consumerFile], {
+		strict: true,
+		noEmit: true,
+		module: ts.ModuleKind.NodeNext,
+		target: ts.ScriptTarget.ES2022,
+		types: [],
+	});
+	const diagnostics = ts.getPreEmitDiagnostics(program);
+	assert.equal(
+		diagnostics.length,
+		0,
+		ts.formatDiagnostics(diagnostics, {
+			getCanonicalFileName: (file) => file,
+			getCurrentDirectory: () => root,
+			getNewLine: () => "\n",
+		}),
+	);
+} finally {
+	await rm(consumerDir, { recursive: true, force: true });
 }
 
-if (packageJson.exports?.["."]?.import !== "./dist/index.js") {
-	throw new Error('package.json export "." must point to ./dist/index.js');
-}
-
-if (packageJson.exports?.["./with-css"]?.import !== "./dist/with-css.js") {
-	throw new Error('package.json export "./with-css" must point to ./dist/with-css.js');
-}
-
-if (packageJson.exports?.["./styles/*.css"] !== "./dist/styles/*.css") {
-	throw new Error('package.json must export "./styles/*.css"');
-}
-
-if (packageJson.exports?.["./highlighter/*.css"] !== "./dist/highlighter/*.css") {
-	throw new Error('package.json must export "./highlighter/*.css"');
-}
-
-if (packageJson.exports?.["./highlighter"]?.import !== "./dist/highlighter/index.js") {
-	throw new Error('package.json export "./highlighter" must point to ./dist/highlighter/index.js');
-}
-
-if (packageJson.exports?.["./highlighter/*"]?.import !== "./dist/highlighter/*.js") {
-	throw new Error('package.json export "./highlighter/*" must point to ./dist/highlighter/*.js');
-}
-
-if (packageJson.exports?.["./plugins/*.css"] !== "./dist/plugins/*.css") {
-	throw new Error('package.json must export "./plugins/*.css"');
-}
-
-const pluginPatternExport = packageJson.exports?.["./plugins/*"];
-if (
-	pluginPatternExport?.types !== "./dist/plugins/*/*-plugin.d.ts" ||
-	pluginPatternExport?.import !== "./dist/plugins/*/*-plugin.js" ||
-	pluginPatternExport?.default !== "./dist/plugins/*/*-plugin.js"
-) {
-	throw new Error('package.json export "./plugins/*" must point to plugin implementation files');
-}
-
-for (const sideEffectPath of requiredSideEffects) {
-	if (!packageJson.sideEffects?.includes(sideEffectPath)) {
-		throw new Error(`package.json sideEffects must include ${sideEffectPath}`);
-	}
-}
-
-await Promise.all(requiredFiles.map(assertFile));
-
-function assertInputIncludes(inputs, expectedInput, context) {
-	if (!inputs.includes(expectedInput)) {
-		throw new Error(`${context} should include ${expectedInput}`);
-	}
-}
-
-function assertNoInputMatching(inputs, predicate, context) {
-	const found = inputs.find(predicate);
-	if (found) {
-		throw new Error(`${context} should not include ${found}`);
-	}
-}
-
-function inputPaths(result) {
-	return Object.keys(result.metafile.inputs).sort();
-}
-
-async function bundleSmoke(contents, sourcefile) {
-	return build({
+async function bundle(contents) {
+	const result = await build({
 		bundle: true,
 		format: "esm",
 		logLevel: "silent",
 		metafile: true,
 		outdir: "package-smoke",
 		platform: "browser",
-		stdin: {
-			contents,
-			resolveDir: root,
-			sourcefile,
-		},
+		stdin: { contents, resolveDir: root, sourcefile: "package-smoke.js" },
 		write: false,
 	});
+	const included = new Set();
+	for (const output of Object.values(result.metafile.outputs)) {
+		for (const [input, contribution] of Object.entries(output.inputs)) {
+			if (contribution.bytesInOutput > 0) included.add(input);
+		}
+	}
+	return included;
 }
 
-await bundleSmoke(
-	`
-		import { ${rootPublicExports.join(", ")} } from "murm-ui";
-		void [${rootPublicExports.join(", ")}];
-	`,
-	"package-smoke.js",
-);
-
-const rootChatBundleInputs = inputPaths(
-	await bundleSmoke(
-		`
-			import { ChatUI } from "murm-ui";
-			void ChatUI;
-		`,
-		"root-chatui-smoke.js",
-	),
-);
-assertNoInputMatching(
-	rootChatBundleInputs,
-	(input) => input.startsWith("dist/plugins/") || input.endsWith(".css"),
-	'root import of "ChatUI"',
-);
-
-const withCssBundleInputs = inputPaths(
-	await bundleSmoke(
-		`
-			import { ChatUI } from "murm-ui/with-css";
-			void ChatUI;
-		`,
-		"with-css-smoke.js",
-	),
-);
-for (const cssFile of coreCssFiles) {
-	assertInputIncludes(withCssBundleInputs, cssFile, 'import from "murm-ui/with-css"');
-}
-assertNoInputMatching(withCssBundleInputs, (input) => input.startsWith("dist/plugins/"), 'with-css import of "ChatUI"');
-
-await bundleSmoke(
-	`
-			import { AgentThinkingPlugin } from "murm-ui/plugins/agent-thinking";
-			import { AttachmentPlugin } from "murm-ui/plugins/attachment";
-			import { CopyPlugin } from "murm-ui/plugins/copy";
-			import { EditPlugin } from "murm-ui/plugins/edit";
-			import { SettingsPlugin } from "murm-ui/plugins/settings";
-			import { ThinkingPlugin } from "murm-ui/plugins/thinking";
-			import { ToolsPlugin } from "murm-ui/plugins/tools";
-			void [AgentThinkingPlugin, AttachmentPlugin, CopyPlugin, EditPlugin, SettingsPlugin, ThinkingPlugin, ToolsPlugin];
-		`,
-	"plugins-package-smoke.js",
-);
-
-const attachmentBundleInputs = inputPaths(
-	await bundleSmoke(
-		`
-			import { AttachmentPlugin } from "murm-ui/plugins/attachment";
-			void AttachmentPlugin;
-		`,
-		"attachment-plugin-smoke.js",
-	),
-);
-assertInputIncludes(
-	attachmentBundleInputs,
-	"dist/plugins/attachment/attachment.css",
-	'import from "murm-ui/plugins/attachment"',
-);
-for (const cssFile of pluginCssFiles.filter((file) => file !== "dist/plugins/attachment/attachment.css")) {
-	assertNoInputMatching(
-		attachmentBundleInputs,
-		(input) => input === cssFile,
-		'import from "murm-ui/plugins/attachment"',
-	);
+function exclude(inputs, pattern, context) {
+	for (const input of inputs) assert(!pattern.test(input), `${context} includes ${input}`);
 }
 
-await build({
-	bundle: true,
-	format: "esm",
-	logLevel: "silent",
-	outdir: "package-smoke",
-	platform: "browser",
-	stdin: {
-		contents: `
-			import { highlight } from "murm-ui/highlighter";
-			import { createHighlighter as createChatHighlighter } from "murm-ui/highlighter/chat";
-			import { createHighlighter as createCoreHighlighter } from "murm-ui/highlighter/core";
-			import { registerBuiltInLanguages } from "murm-ui/highlighter/languages";
-			import { registerRubyLanguage } from "murm-ui/highlighter/languages/ruby";
-			void [highlight, createChatHighlighter, createCoreHighlighter, registerBuiltInLanguages, registerRubyLanguage];
-		`,
-		resolveDir: root,
-		sourcefile: "highlighter-package-smoke.js",
-	},
-	write: false,
-});
+await bundle(`export {
+	ChatEngine, ChatUI, ChatView, Composer, Sidebar, IndexedDBStorage, OpenAIProvider, RemoteStorage, RemoteStorageError
+} from "murm-ui";`);
 
-await build({
-	bundle: true,
-	format: "esm",
-	logLevel: "silent",
-	outdir: "package-smoke",
-	platform: "browser",
-	stdin: {
-		contents: `
-			import "murm-ui/highlighter/theme.css";
-		`,
-		resolveDir: root,
-		sourcefile: "highlighter-css-smoke.js",
-	},
-	write: false,
-});
+const view = await bundle('export { ChatView, ConversationModel } from "murm-ui/view";');
+exclude(
+	view,
+	/chat-engine|session-manager|components\/composer|plugins\/attachment|core\/providers\/|core\/storage\/|\.css$/,
+	"standalone view",
+);
+const composer = await bundle('export { Composer } from "murm-ui/composer";');
+exclude(
+	composer,
+	/marked|chat-engine|session-manager|components\/feed|plugins\/attachment|view\/chat-view|core\/providers\/|core\/storage\/|\.css$/,
+	"standalone composer",
+);
+const sidebar = await bundle('export { Sidebar } from "murm-ui/sidebar";');
+exclude(
+	sidebar,
+	/marked|chat-engine|session-manager|components\/feed|view\/|core\/providers\/|core\/storage\/|\.css$/,
+	"standalone sidebar",
+);
+assert(
+	[...view].some((input) => input.includes("node_modules/marked/")),
+	"The view must include built-in Markdown support",
+);
 
-await import("murm-ui");
-await import("murm-ui/highlighter");
-await import("murm-ui/highlighter/chat");
-await import("murm-ui/highlighter/core");
-await import("murm-ui/highlighter/languages");
-await import("murm-ui/highlighter/languages/ruby");
+const chat = await bundle('export { ChatUI } from "murm-ui";');
+exclude(chat, /^dist\/plugins\/|\.css$/, "root ChatUI import");
+const withCss = await bundle('export { ChatUI, ChatView, Composer } from "murm-ui/with-css";');
+for (const file of coreCss) assert(withCss.has(file), `with-css is missing ${file}`);
+exclude(withCss, /^dist\/plugins\//, "with-css import");
+
+await bundle(
+	Object.entries(plugins)
+		.map(([name, exports]) => `export { ${exports.join(", ")} } from "murm-ui/plugins/${name}";`)
+		.join("\n"),
+);
+const attachment = await bundle('export { AttachmentPlugin } from "murm-ui/plugins/attachment";');
+assert(attachment.has("dist/plugins/attachment/attachment.css"), "AttachmentPlugin must include its CSS");
+exclude(attachment, /^dist\/plugins\/(?!attachment\/)/, "AttachmentPlugin import");
+
+await bundle(`
+	export { highlight } from "murm-ui/highlighter";
+	export { createHighlighter as createChatHighlighter } from "murm-ui/highlighter/chat";
+	export { createHighlighter as createCoreHighlighter } from "murm-ui/highlighter/core";
+	export { registerBuiltInLanguages } from "murm-ui/highlighter/languages";
+	export { registerRubyLanguage } from "murm-ui/highlighter/languages/ruby";
+	import "murm-ui/highlighter/theme.css";
+	import "murm-ui/styles/view.css";
+	import "murm-ui/plugins/tools/tools.css";
+`);
+
+// These entries must also load in Node, without CSS loaders or browser globals.
+for (const entry of [
+	"murm-ui",
+	"murm-ui/view",
+	"murm-ui/composer",
+	"murm-ui/sidebar",
+	"murm-ui/highlighter",
+	"murm-ui/highlighter/chat",
+	"murm-ui/highlighter/core",
+	"murm-ui/highlighter/languages",
+	"murm-ui/highlighter/languages/ruby",
+])
+	await import(entry);
 
 console.log("Package smoke passed.");

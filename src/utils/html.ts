@@ -1,4 +1,5 @@
 import type { CodeHighlighter } from "../core/types";
+import { type ChatLabels, defaultLabels } from "../labels";
 import { ICON_COPY } from "./icons";
 
 export type Highlighter = CodeHighlighter;
@@ -24,17 +25,14 @@ const URL_PREFIXES = ["http://", "https://", "mailto:"];
 const IMG_PREFIXES = ["http://", "https://", "data:image/"];
 
 /**
- * Parses a raw HTML string, renders it into the target DOM node,
- * and sanitizes the resulting elements in-place to prevent XSS.
- *
- * @param targetNode - The DOM element that will be mutated/updated.
- * @param rawHtml - The un-sanitized HTML string (usually from marked.parse).
- * @param highlighter - Optional function to apply syntax highlighting to <code> blocks.
+ * Sanitizes HTML and replaces the target's contents, adding code headers and
+ * optional highlighting. Resolves after any asynchronous highlighting finishes.
  */
 export function renderSafeHTML(
 	targetNode: HTMLElement,
 	rawHtml: string,
 	highlighter?: Highlighter,
+	labels: Readonly<ChatLabels> = defaultLabels,
 ): void | Promise<void> {
 	const doc = getParser().parseFromString(rawHtml, "text/html");
 	const walker = document.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
@@ -119,7 +117,7 @@ export function renderSafeHTML(
 	}
 
 	const commit = () => {
-		decorateCodeBlocks(codeElsToDecorate);
+		decorateCodeBlocks(codeElsToDecorate, labels);
 
 		targetNode.innerHTML = "";
 		while (doc.body.firstChild) {
@@ -137,10 +135,7 @@ export function renderSafeHTML(
 function applyHighlightedHTML(el: Element, highlightedHTML: string): void {
 	if (!highlightedHTML) return;
 
-	// Note: We inject the highlighted HTML directly without a second sanitization
-	// pass for performance reasons during rapid LLM streaming.
-	// We operate on the assumption that the provided `highlighter` is
-	// trusted and does not inject malicious tags.
+	// The highlighter contract requires trusted HTML with escaped code text.
 	el.innerHTML = highlightedHTML;
 }
 
@@ -148,7 +143,7 @@ function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
 	return !!value && typeof value === "object" && "then" in value && typeof value.then === "function";
 }
 
-function decorateCodeBlocks(codeEls: Element[]): void {
+function decorateCodeBlocks(codeEls: Element[], labels: Readonly<ChatLabels>): void {
 	for (const codeEl of codeEls) {
 		const pre = codeEl.parentElement;
 		if (!pre || pre.tagName !== "PRE" || pre.parentElement?.classList.contains("mur-code-block")) continue;
@@ -171,8 +166,8 @@ function decorateCodeBlocks(codeEls: Element[]): void {
 		const button = codeEl.ownerDocument.createElement("button");
 		button.className = "mur-code-copy-btn";
 		button.type = "button";
-		button.title = "Copy code";
-		button.setAttribute("aria-label", "Copy code");
+		button.title = labels.copyCode;
+		button.setAttribute("aria-label", labels.copyCode);
 		button.innerHTML = ICON_COPY;
 		header.appendChild(button);
 
@@ -186,7 +181,6 @@ function extractCodeLanguage(codeEl: Element): string | null {
 	return match?.[1] ?? null;
 }
 
-// Validates URLs against an explicit whitelist of safe prefixes.
 function isSafeUrl(url: string, allowedPrefixes: string[]): boolean {
 	const prefix = url.substring(0, 30).trimStart().toLowerCase();
 

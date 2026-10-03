@@ -14,11 +14,7 @@ export class RemoteStorageError extends Error {
 }
 
 export interface RemoteStorageOptions {
-	/**
-	 * Limits the number of messages sent during a save() operation.
-	 * WARNING: If you use this, your backend must upsert messages rather than
-	 * overwrite the entire chat record when the partial save header is present.
-	 */
+	/** Limits saves to the latest messages. Requires the backend's partial-save protocol. */
 	saveLimit?: number;
 }
 
@@ -76,8 +72,8 @@ export class RemoteStorage implements ChatStorage {
 				...session,
 				messages: session.messages.slice(-limit),
 			};
-			headers["X-Murm-Save-Mode"] = "partial";
 		}
+		if (session.hasMoreMessages || payload !== session) headers["X-Murm-Save-Mode"] = "partial";
 
 		const url = this.getPath(`/${encodeURIComponent(session.id)}`);
 		const res = await fetch(url, {

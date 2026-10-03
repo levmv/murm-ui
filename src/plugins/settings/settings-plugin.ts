@@ -30,24 +30,19 @@ export interface SettingsPluginConfig {
 	storage?: SettingsStorage;
 
 	/**
-	 * Optional. A CSS selector for an existing button in your custom HTML.
-	 * If provided, the plugin will NOT create its own button, but will instead
-	 * attach the settings modal click-listener to your existing element.
-	 * The selector is scoped to the chat container unless triggerSelectorScope is "document".
+	 * Uses an existing button to open settings instead of creating one.
+	 * Scoped to the chat container unless triggerSelectorScope is "document".
 	 */
 	triggerSelector?: string;
 	triggerSelectorScope?: "container" | "document";
-	/**
-	 * A factory function that returns the correct provider based on the settings.
-	 * Defaults to returning an OpenAIProvider.
-	 */
+	/** Creates a provider from the settings. Defaults to OpenAIProvider. */
 	createProvider?: (settings: SettingsState) => ChatProvider;
 }
 
 const STORAGE_KEY = "mur_chat_settings";
 let nextSettingsModalId = 0;
 
-const defaultLocalStorageSettingsStorage: SettingsStorage = {
+const localSettings: SettingsStorage = {
 	async get() {
 		return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") as Partial<SettingsState> | null;
 	},
@@ -57,11 +52,10 @@ const defaultLocalStorageSettingsStorage: SettingsStorage = {
 };
 
 export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
-	// Default fallback values
 	const defaults: SettingsState = {
-		endpoint: config?.defaultEndpoint || "https://api.openai.com/v1/chat/completions",
+		endpoint: config?.defaultEndpoint ?? "https://api.openai.com/v1/chat/completions",
 		apiKey: "",
-		model: config?.defaultModel || "gpt-4o-mini",
+		model: config?.defaultModel ?? "gpt-4o-mini",
 		titleModel: config?.defaultTitleModel || "",
 		systemPrompt: config?.defaultSystemPrompt || "",
 	};
@@ -76,7 +70,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 	let settingsRevision = 0;
 	let destroyed = false;
 
-	const storage = config?.storage ?? defaultLocalStorageSettingsStorage;
+	const storage = config?.storage ?? localSettings;
 	const buildProvider = config?.createProvider ?? ((s) => new OpenAIProvider(s.apiKey, s.endpoint, s.model));
 
 	async function loadInitialSettings(ctx: PluginContext) {
@@ -324,6 +318,7 @@ export function SettingsPlugin(config?: SettingsPluginConfig): ChatPlugin {
 				mountedTriggerEl.removeEventListener("click", mountedTriggerHandler);
 			}
 			closeModal?.();
+			if (!config?.triggerSelector) mountedTriggerEl?.remove();
 			modalOverlay = null;
 			closeModal = null;
 			mountedTriggerEl = null;

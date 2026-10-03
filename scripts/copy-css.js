@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-// Recursively copy from src to dist, filtering only for directories and .css files
+// Copy styles while preserving the source directory structure.
 fs.cpSync("src", "dist", {
 	recursive: true,
 	filter: (source) => {

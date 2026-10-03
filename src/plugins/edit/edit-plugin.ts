@@ -1,43 +1,26 @@
 import "./edit.css";
 import { extractPlainText } from "../../core/msg-utils";
 import type { ChatPlugin, Message } from "../../core/types";
-import { el, replaceNodes } from "../../utils/dom";
+import { el } from "../../utils/dom";
 import { ICON_EDIT } from "../../utils/icons";
 
 export interface EditConfig {
-	onSave: (messageId: string, newText: string) => void;
-}
-
-interface EditState {
-	isEditing: boolean;
-	editContainer: HTMLElement;
-	currentMsg: Message;
+	/** Resolves on acceptance. False or rejection keeps the editor open. */
+	// biome-ignore lint/suspicious/noConfusingVoidType: Saving may accept without a return value.
+	onSave: (messageId: string, newText: string) => boolean | void | Promise<boolean | void>;
 }
 
 export function EditPlugin(config: EditConfig): ChatPlugin {
-	const stateMap = new WeakMap<HTMLElement, EditState>();
+	const editors = new WeakMap<HTMLElement, HTMLElement>();
 
-	const ensureState = (parentEl: HTMLElement, msg: Message): EditState => {
-		let state = stateMap.get(parentEl);
-
-		if (!state) {
-			const editContainer = el("div", "mur-edit-container");
-			parentEl.appendChild(editContainer);
-
-			state = {
-				isEditing: false,
-				editContainer,
-				currentMsg: msg,
-			};
-			stateMap.set(parentEl, state);
+	const openEditor = (parentEl: HTMLElement, msg: Message) => {
+		let editor = editors.get(parentEl);
+		if (!editor) {
+			editor = el("div", "mur-edit-container");
+			parentEl.appendChild(editor);
+			editors.set(parentEl, editor);
 		}
 
-		state.currentMsg = msg;
-		return state;
-	};
-
-	const enterEditMode = (parentEl: HTMLElement, state: EditState) => {
-		const msg = state.currentMsg;
 		const currentText = extractPlainText(msg);
 
 		const blocksWrapper = parentEl.querySelector(".mur-message-blocks-wrapper") as HTMLElement | null;
@@ -50,7 +33,6 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 			targetMinWidth = blocksWrapper.offsetWidth + "px";
 		}
 
-		state.isEditing = true;
 		parentEl.classList.add("mur-editing");
 
 		const textarea = el("textarea", "mur-edit-textarea", { spellcheck: false }) as HTMLTextAreaElement;
@@ -58,7 +40,7 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 		const saveBtn = el("button", "mur-save-edit-btn", { textContent: "Save", type: "button" });
 		const controls = el("div", "mur-edit-controls", null, [cancelBtn, saveBtn]);
 
-		replaceNodes(state.editContainer, textarea, controls);
+		editor.replaceChildren(textarea, controls);
 
 		textarea.style.height = targetHeight;
 		textarea.style.minWidth = targetMinWidth;
@@ -73,20 +55,34 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 		textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 
 		const exitEdit = () => {
-			state.isEditing = false;
 			parentEl.classList.remove("mur-editing");
-			state.editContainer.innerHTML = "";
+			editor.innerHTML = "";
 		};
 
 		cancelBtn.addEventListener("click", exitEdit);
 
-		saveBtn.addEventListener("click", () => {
+		let errorEl: HTMLElement | undefined;
+		saveBtn.addEventListener("click", async () => {
+			if (saveBtn.disabled) return;
 			const newText = textarea.value.trim();
-			if (newText && newText !== currentText) {
-				config.onSave(msg.id, newText);
+			if (newText === currentText) {
 				exitEdit();
-			} else {
-				exitEdit();
+				return;
+			}
+			errorEl?.remove();
+			saveBtn.disabled = true;
+			textarea.readOnly = true;
+			try {
+				const accepted = await config.onSave(msg.id, newText);
+				if (accepted !== false && editor.contains(textarea)) exitEdit();
+			} catch (error) {
+				if (!editor.contains(textarea)) return;
+				errorEl ??= el("div", "mur-message-error", { role: "alert" });
+				errorEl.textContent = error instanceof Error ? error.message : String(error);
+				editor.appendChild(errorEl);
+			} finally {
+				saveBtn.disabled = false;
+				textarea.readOnly = false;
 			}
 		});
 
@@ -111,8 +107,7 @@ export function EditPlugin(config: EditConfig): ChatPlugin {
 					title: "Edit message",
 					iconHtml: ICON_EDIT,
 					onClick: (ctx) => {
-						const state = ensureState(ctx.messageEl, ctx.message);
-						enterEditMode(ctx.messageEl, state);
+						openEditor(ctx.messageEl, ctx.message);
 					},
 				},
 			];

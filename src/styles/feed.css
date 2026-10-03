@@ -61,7 +61,6 @@
 	margin-bottom: 0;
 }
 
-/* Grouped headers safely */
 .mur-message h1,
 .mur-message h2,
 .mur-message h3,
@@ -80,7 +79,7 @@
 	color: var(--mur-text-secondary);
 }
 
-/* Adjacent headers spacing */
+/* Keep consecutive headings close together. */
 .mur-message :is(h1, h2, h3, h4, h5, h6) + :is(h1, h2, h3, h4, h5, h6) {
 	margin-top: 0.25rem;
 }
@@ -93,7 +92,6 @@
 	font-size: 0.9em;
 }
 
-/* Code inside headers */
 .mur-message :is(h1, h2, h3, h4, h5, h6) code {
 	background-color: var(--mur-code-heading-bg);
 	padding: 0.2em;
@@ -202,7 +200,6 @@
 	font-weight: 600;
 }
 
-/* Clean hr */
 .mur-message hr {
 	border: none;
 	border-top: 1px solid var(--mur-border);
@@ -289,7 +286,6 @@
 	justify-content: flex-start;
 }
 
-/* Hide actions while generating */
 .mur-message.mur-generating > .mur-message-actions {
 	display: none;
 }
@@ -320,7 +316,7 @@
 	width: 100%;
 }
 
-/* Older-messages spinner sits above the transcript, not below it. */
+/* Keep the history-loading indicator visible at the top of the transcript. */
 .mur-feed-spinner-top {
 	position: sticky;
 	top: 0;

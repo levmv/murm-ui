@@ -1,4 +1,5 @@
 import { uuidv7 } from "../utils/uuid";
+import type { ConversationModel } from "./conversation";
 import { dropEphemeralMessages, extractPlainText } from "./msg-utils";
 import type { Store } from "./store";
 import {
@@ -11,22 +12,25 @@ import {
 	type Message,
 } from "./types";
 
+export type SessionState = Omit<
+	ChatState,
+	"currentSessionId" | "messages" | "generatingMessageId" | "hasMoreMessages"
+> & { olderCursor: string | null };
+
 interface SessionManagerConfig {
-	store: Store<ChatState>;
+	store: Pick<Store<SessionState>, "get" | "set">;
+	conversation: ConversationModel;
 	storage: ChatStorage;
 	isGenerationActive: () => boolean;
 	stopActiveGeneration: () => Promise<void>;
 }
 
-// Page size for upward message pagination (loadOlderMessages).
 const OLDER_MESSAGES_PAGE_SIZE = 100;
 
 export interface ChatSessions {
 	loadHistory(): Promise<void>;
 	loadMore(): Promise<void>;
-	// Loads a page of messages older than the current transcript head and
-	// prepends them. No-op unless the storage implements loadOlderMessages and
-	// the current session has more history.
+	/** Prepends an older page when the storage supports it and more history is available. */
 	loadOlderMessages(): Promise<void>;
 	create(): Promise<void>;
 	switch(id: string): Promise<void>;
@@ -36,7 +40,8 @@ export interface ChatSessions {
 }
 
 export class SessionManager implements ChatSessions {
-	private store: Store<ChatState>;
+	private store: SessionManagerConfig["store"];
+	private conversation: ConversationModel;
 	private storage: ChatStorage;
 	private isGenerationActive: () => boolean;
 	private stopActiveGeneration: () => Promise<void>;
@@ -44,13 +49,12 @@ export class SessionManager implements ChatSessions {
 	private sessionWriteQueues = new Map<string, Promise<void>>();
 	private deletedSessionIds = new Set<string>();
 	private isFetchingSessions = false;
-	private isFetchingOlder = false;
-	private olderCursor: string | null = null;
 	private sessionPageCursor: ChatSessionMeta | null = null;
-	private switchSeq = 0;
+	private navigationRevision = 0;
 
 	constructor(config: SessionManagerConfig) {
 		this.store = config.store;
+		this.conversation = config.conversation;
 		this.storage = config.storage;
 		this.isGenerationActive = config.isGenerationActive;
 		this.stopActiveGeneration = config.stopActiveGeneration;
@@ -68,54 +72,39 @@ export class SessionManager implements ChatSessions {
 		await this.fetchSessionsPage(false);
 	}
 
-	// Call this when the user scrolls to the bottom of the sidebar
 	public async loadMore(): Promise<void> {
 		await this.fetchSessionsPage(true);
 	}
 
-	// Call this when the user scrolls to the top of the transcript.
 	public async loadOlderMessages(): Promise<void> {
 		if (!this.storage.loadOlderMessages) return;
-		if (this.isFetchingOlder || !this.state.hasMoreMessages || !this.olderCursor) return;
-
-		const sessionId = this.state.currentSessionId;
-		const cursor = this.olderCursor;
-
-		this.isFetchingOlder = true;
-		const seq = this.switchSeq;
+		const snapshot = this.conversation.state;
+		if (this.state.isLoadingMessages || this.state.olderCursor === null) return;
+		const sessionId = snapshot.id;
+		const cursor = this.state.olderCursor;
 		this.store.set({ isLoadingMessages: true });
 
 		try {
 			const page = await this.storage.loadOlderMessages(sessionId, cursor, OLDER_MESSAGES_PAGE_SIZE);
 			// Drop the result if the user switched/reloaded the session meanwhile.
-			if (seq !== this.switchSeq || this.state.currentSessionId !== sessionId) return;
-
-			// Prepend onto the *current* messages (a generation may have appended
-			// while we awaited), de-duping any overlap with the existing head.
-			const current = this.state.messages;
-			const existing = new Set(current.map((m) => m.id));
-			const older = page.messages.filter((m) => !existing.has(m.id));
-			this.olderCursor = page.nextOlderMessagesCursor ?? null;
-
-			this.store.set({
-				messages: [...older, ...current],
-				hasMoreMessages: page.hasMore && this.olderCursor !== null,
-				isLoadingMessages: false,
-			});
+			if (this.conversation.state !== snapshot) return;
+			if (page.hasMore && typeof page.nextOlderMessagesCursor !== "string")
+				throw new Error("Older messages page is missing its next cursor");
+			this.conversation.prepend(sessionId, page.messages);
+			this.store.set({ olderCursor: page.hasMore ? (page.nextOlderMessagesCursor ?? null) : null });
 		} catch (error) {
 			console.error("Failed to load older messages", error);
-			if (seq === this.switchSeq && this.state.currentSessionId === sessionId) {
-				this.store.set({ isLoadingMessages: false });
-			}
 		} finally {
-			this.isFetchingOlder = false;
+			if (this.conversation.state === snapshot) this.store.set({ isLoadingMessages: false });
 		}
 	}
 
 	public async create(): Promise<void> {
+		const revision = ++this.navigationRevision;
 		if (this.isGenerationActive()) {
 			await this.stopActiveGeneration();
 		}
+		if (revision !== this.navigationRevision) return;
 		this.startNewSession();
 	}
 
@@ -124,7 +113,12 @@ export class SessionManager implements ChatSessions {
 	}
 
 	public async delete(id: string): Promise<void> {
-		const isCurrent = this.state.currentSessionId === id;
+		if (this.deletedSessionIds.has(id)) return;
+		const sessionMeta =
+			this.state.sessions.find((session) => session.id === id) ??
+			(this.activeSessionMeta?.id === id ? this.activeSessionMeta : null);
+		const isCurrent = this.conversation.state.id === id;
+		const revision = isCurrent ? ++this.navigationRevision : this.navigationRevision;
 		this.deletedSessionIds.add(id);
 		this.activeSessionMeta = this.activeSessionMeta?.id === id ? null : this.activeSessionMeta;
 		this.store.set({
@@ -136,7 +130,7 @@ export class SessionManager implements ChatSessions {
 				await this.stopActiveGeneration();
 			}
 
-			if (isCurrent && this.state.currentSessionId === id) {
+			if (isCurrent && revision === this.navigationRevision && this.conversation.state.id === id) {
 				this.startNewSession();
 			}
 
@@ -145,6 +139,11 @@ export class SessionManager implements ChatSessions {
 			});
 		} catch (error) {
 			console.error(`Failed to delete session "${id}"`, error);
+			this.deletedSessionIds.delete(id);
+			this.store.set({
+				sessions: sessionMeta ? this.withActiveSessionMeta([...this.state.sessions, sessionMeta]) : this.state.sessions,
+				error: { message: "Failed to delete chat." },
+			});
 		}
 	}
 
@@ -152,6 +151,7 @@ export class SessionManager implements ChatSessions {
 		if (this.deletedSessionIds.has(sessionId)) return false;
 
 		const messagesToSave = dropEphemeralMessages(messages);
+		const olderCursor = this.conversation.state.id === sessionId ? this.state.olderCursor : null;
 
 		try {
 			return await this.enqueueSessionWrite(sessionId, async () => {
@@ -172,6 +172,7 @@ export class SessionManager implements ChatSessions {
 					updatedAt: Date.now(),
 					...(typeof isPinned === "boolean" ? { isPinned } : {}),
 					messages: messagesToSave,
+					...(olderCursor !== null ? { hasMoreMessages: true, nextOlderMessagesCursor: olderCursor } : {}),
 				};
 
 				await this.storage.save(sessionToSave);
@@ -179,7 +180,7 @@ export class SessionManager implements ChatSessions {
 				if (this.deletedSessionIds.has(sessionId)) return false;
 
 				const sessionMeta = this.toSessionMeta(sessionToSave);
-				if (this.state.currentSessionId === sessionId) {
+				if (this.conversation.state.id === sessionId) {
 					this.activeSessionMeta = sessionMeta;
 				}
 				this.store.set({
@@ -190,6 +191,8 @@ export class SessionManager implements ChatSessions {
 			});
 		} catch (error) {
 			console.error(`Failed to persist session "${sessionId}"`, error);
+			if (this.conversation.state.id === sessionId && !this.deletedSessionIds.has(sessionId) && !this.state.error)
+				this.store.set({ error: { message: "Failed to save chat." } });
 			return false;
 		}
 	}
@@ -219,7 +222,7 @@ export class SessionManager implements ChatSessions {
 					this.state.sessions.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)),
 				),
 			});
-			if (this.state.currentSessionId === sessionId && this.activeSessionMeta?.id === sessionId) {
+			if (this.conversation.state.id === sessionId && this.activeSessionMeta?.id === sessionId) {
 				this.activeSessionMeta = { ...this.activeSessionMeta, title: nextTitle };
 			}
 		});
@@ -248,19 +251,19 @@ export class SessionManager implements ChatSessions {
 			this.store.set({
 				sessions: this.sortSessionMetas(this.state.sessions.map((s) => (s.id === sessionId ? { ...s, isPinned } : s))),
 			});
-			if (this.state.currentSessionId === sessionId && this.activeSessionMeta?.id === sessionId) {
+			if (this.conversation.state.id === sessionId && this.activeSessionMeta?.id === sessionId) {
 				this.activeSessionMeta = { ...this.activeSessionMeta, isPinned };
 			}
 		});
 	}
 
 	public async close(): Promise<void> {
-		if (this.storage.close) {
-			await this.storage.close();
-		}
+		this.navigationRevision++;
+		await Promise.all(this.sessionWriteQueues.values());
+		await this.storage.close?.();
 	}
 
-	private get state(): ChatState {
+	private get state(): SessionState {
 		return this.store.get();
 	}
 
@@ -279,8 +282,7 @@ export class SessionManager implements ChatSessions {
 				this.sessionPageCursor = result.items[result.items.length - 1];
 			}
 
-			const resultItems = this.withoutDeletedSessions(result.items);
-			const nextSessions = append ? [...this.state.sessions, ...resultItems] : resultItems;
+			const nextSessions = append ? [...this.state.sessions, ...result.items] : result.items;
 
 			this.store.set({
 				sessions: this.withActiveSessionMeta(nextSessions),
@@ -290,65 +292,71 @@ export class SessionManager implements ChatSessions {
 		} catch (error) {
 			console.error("Failed to load sessions", error);
 			this.store.set(
-				this.state.error
+				this.state.error || append
 					? { isLoadingSessions: false }
 					: { isLoadingSessions: false, error: { message: "Failed to load chat history." } },
 			);
+			// Let the pagination control stop automatic loading until the user retries.
+			if (append) throw error;
 		} finally {
 			this.isFetchingSessions = false;
 		}
 	}
 
 	private async loadSession(id: string, failureMessage: string): Promise<void> {
-		if (this.state.currentSessionId === id && !this.state.isLoadingSession) return;
+		// Record intent before stopping/saving, including a return to the current
+		// session: it must cancel any older transition still waiting to start.
+		const revision = ++this.navigationRevision;
+		if (this.conversation.state.id === id && !this.state.isLoadingSession && !this.deletedSessionIds.has(id)) return;
 
 		if (this.isGenerationActive()) {
 			await this.stopActiveGeneration();
 		}
+		if (revision !== this.navigationRevision) return;
 
-		const seq = ++this.switchSeq;
 		this.activeSessionMeta = null;
-		this.olderCursor = null;
-
+		this.conversation.setConversation({ id, messages: [] });
+		const snapshot = this.conversation.state;
 		this.store.set({
-			currentSessionId: id,
-			messages: [],
+			olderCursor: null,
 			isLoadingSession: true,
-			hasMoreMessages: false,
 			isLoadingMessages: false,
 			error: null,
 		});
 
 		try {
+			// A completed generation can still be saving when the user returns.
+			// Read only after this session's queued writes, leaving other chats free.
+			const pendingWrite = this.sessionWriteQueues.get(id);
+			if (pendingWrite) await pendingWrite;
+			if (revision !== this.navigationRevision || this.conversation.state !== snapshot) return;
 			const session = await this.storage.loadOne(id);
-			if (seq !== this.switchSeq) return; // stale
-
-			// User may have navigated again while this one was loading
-			if (this.state.currentSessionId !== id) return;
+			if (revision !== this.navigationRevision || this.conversation.state !== snapshot) return;
 			if (this.deletedSessionIds.has(id)) throw new Error("Chat not found");
 
 			if (!session) throw new Error("Chat not found");
+			if (session.hasMoreMessages && typeof session.nextOlderMessagesCursor !== "string")
+				throw new Error("Chat history is missing its next cursor");
 
 			this.activeSessionMeta = this.toSessionMeta(session);
-			this.olderCursor = session.nextOlderMessagesCursor ?? null;
-			this.store.set({
-				sessions: this.withActiveSessionMeta(this.state.sessions),
+			this.conversation.setConversation({
+				id,
 				messages: session.messages,
+			});
+			this.store.set({
+				olderCursor: session.hasMoreMessages ? (session.nextOlderMessagesCursor ?? null) : null,
+				sessions: this.withActiveSessionMeta(this.state.sessions),
 				isLoadingSession: false,
-				hasMoreMessages: Boolean(session.hasMoreMessages && this.olderCursor !== null),
 			});
 		} catch (error) {
+			if (revision !== this.navigationRevision || this.conversation.state !== snapshot) return;
 			console.error(`Failed to load session "${id}"`, error);
-			if (seq !== this.switchSeq) return;
-			if (this.state.currentSessionId !== id) return;
 
 			this.activeSessionMeta = null;
-			this.olderCursor = null;
+			this.conversation.setConversation({ id: uuidv7(), messages: [] });
 			this.store.set({
-				messages: [],
-				currentSessionId: uuidv7(),
+				olderCursor: null,
 				isLoadingSession: false,
-				hasMoreMessages: false,
 				isLoadingMessages: false,
 				error: { message: failureMessage },
 			});
@@ -357,12 +365,10 @@ export class SessionManager implements ChatSessions {
 
 	private startNewSession(): void {
 		this.activeSessionMeta = null;
-		this.olderCursor = null;
+		this.conversation.setConversation({ id: uuidv7(), messages: [] });
 		this.store.set({
-			currentSessionId: uuidv7(),
-			messages: [],
+			olderCursor: null,
 			isLoadingSession: false,
-			hasMoreMessages: false,
 			isLoadingMessages: false,
 			error: null,
 		});
@@ -378,25 +384,24 @@ export class SessionManager implements ChatSessions {
 	}
 
 	private withActiveSessionMeta(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
-		sessions = this.withoutDeletedSessions(sessions);
 		const seen = new Set<string>();
 		const deduped = sessions.filter((s) => {
-			if (seen.has(s.id)) return false;
+			if (this.deletedSessionIds.has(s.id) || seen.has(s.id)) return false;
 			seen.add(s.id);
 			return true;
 		});
 
-		if (!this.activeSessionMeta || this.deletedSessionIds.has(this.activeSessionMeta.id)) {
-			return this.sortSessionMetas(deduped);
-		}
-		if (deduped.some((session) => session.id === this.activeSessionMeta?.id)) {
-			return this.sortSessionMetas(deduped);
-		}
-		return this.sortSessionMetas([this.activeSessionMeta, ...deduped]);
+		if (
+			this.activeSessionMeta &&
+			!this.deletedSessionIds.has(this.activeSessionMeta.id) &&
+			!seen.has(this.activeSessionMeta.id)
+		)
+			deduped.push(this.activeSessionMeta);
+		return this.sortSessionMetas(deduped);
 	}
 
 	private sortSessionMetas(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
-		return [...sessions].sort((a, b) => {
+		return sessions.sort((a, b) => {
 			const pinnedDelta = Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned));
 			if (pinnedDelta !== 0) return pinnedDelta;
 			return b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
@@ -423,25 +428,20 @@ export class SessionManager implements ChatSessions {
 	}
 
 	private enqueueSessionWrite<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-		const previous = this.sessionWriteQueues.get(sessionId) ?? Promise.resolve();
-		const queued = previous.catch(() => undefined).then(operation);
-		const tracked = queued.then(
+		const previousWrite = this.sessionWriteQueues.get(sessionId) ?? Promise.resolve();
+		const write = previousWrite.then(operation);
+		const settledWrite = write.then(
 			() => undefined,
 			() => undefined,
 		);
 
-		this.sessionWriteQueues.set(sessionId, tracked);
-		void tracked.finally(() => {
-			if (this.sessionWriteQueues.get(sessionId) === tracked) {
+		this.sessionWriteQueues.set(sessionId, settledWrite);
+		void settledWrite.finally(() => {
+			if (this.sessionWriteQueues.get(sessionId) === settledWrite) {
 				this.sessionWriteQueues.delete(sessionId);
 			}
 		});
 
-		return queued;
-	}
-
-	private withoutDeletedSessions(sessions: ChatSessionMeta[]): ChatSessionMeta[] {
-		if (this.deletedSessionIds.size === 0) return sessions;
-		return sessions.filter((session) => !this.deletedSessionIds.has(session.id));
+		return write;
 	}
 }

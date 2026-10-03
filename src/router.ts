@@ -64,21 +64,17 @@ export class AppRouter {
 			onNavigate(this.getId());
 		};
 
-		for (const eventType of this.eventTypes()) {
-			window.addEventListener(eventType, this.handleNavigate);
-		}
+		window.addEventListener(this.eventType(), this.handleNavigate);
 	}
 
 	public destroy() {
 		if (this.type === "none" || !this.handleNavigate) return;
-		for (const eventType of this.eventTypes()) {
-			window.removeEventListener(eventType, this.handleNavigate);
-		}
+		window.removeEventListener(this.eventType(), this.handleNavigate);
 		this.handleNavigate = undefined;
 	}
 
-	private eventTypes(): ("hashchange" | "popstate")[] {
-		return this.type === "hash" ? ["hashchange", "popstate"] : ["popstate"];
+	private eventType(): "hashchange" | "popstate" {
+		return this.type === "hash" ? "hashchange" : "popstate";
 	}
 
 	private decodeId(value: string): string | null {

@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import { closeDropdown } from "./components/dropdown";
+import type { ConversationChange } from "./core/conversation-types";
 import type {
 	ChatPlugin,
 	ChatProvider,
-	ChatRequest,
 	ChatSession,
 	ChatStorage,
+	ChatStreamRequest,
+	ContentBlock,
 	Message,
 	PaginatedSessions,
+	RendererContext,
 	RequestOptions,
-	StreamEvent,
 } from "./core/types";
 
 class MemoryStorage implements ChatStorage {
@@ -190,7 +192,7 @@ async function waitFor(assertion: () => boolean, label: string): Promise<void> {
 }
 
 test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async () => {
-	const container = installDom();
+	const container = installDom("https://example.test/", { includeOpenSidebarButton: false });
 	const { ChatUI } = await import("./main");
 
 	let providerCalls = 0;
@@ -200,14 +202,16 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	let inputContextIsComplete = false;
 
 	const provider: ChatProvider = {
-		async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 			providerCalls++;
 			latestSignal = request.signal;
 			providerMessages.push(request.messages);
 
 			if (providerCalls === 1) {
-				onEvent({ type: "text_delta", messageId: "assistant-1", blockId: "reply", delta: "hello back" });
-				onEvent({ type: "finish", reason: "stop" });
+				onChange([
+					{ type: "block.put", messageId: request.messageId, block: { id: "reply", type: "text", text: "hello back" } },
+				]);
+
 				return;
 			}
 
@@ -220,20 +224,25 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	const plugin: ChatPlugin = {
 		name: "smoke-plugin",
 		onMount: () => lifecycle.push("mount"),
-		onInputMount: (ctx) => {
+		mountComposer: (ctx) => {
 			lifecycle.push("input");
 			inputContextIsComplete =
 				ctx.container === container &&
 				ctx.form === container.querySelector(".mur-chat-form") &&
 				ctx.input === container.querySelector(".mur-chat-input") &&
-				typeof ctx.requestSubmitStateSync === "function";
-		},
-		onUserSubmit: (message) => {
-			message.meta = { fromPlugin: true };
+				typeof ctx.changed === "function";
+			return { destroy: () => lifecycle.push("input-destroy") };
 		},
 		destroy: () => lifecycle.push("destroy"),
 	};
-	const storage = new MemoryStorage();
+	const closed = Promise.withResolvers<void>();
+	let closeCalls = 0;
+	const storage = new (class extends MemoryStorage {
+		close(): Promise<void> {
+			closeCalls++;
+			return closed.promise;
+		}
+	})();
 	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
 
 	const ui = new ChatUI({
@@ -258,29 +267,294 @@ test("ChatUI mounts, submits, stops, runs plugins, and destroys cleanly", async 
 	submit(form);
 	await waitFor(() => providerCalls === 1 && ui.engine.state.generatingMessageId === null, "first reply");
 
-	assert.equal(providerMessages[0][0].meta?.fromPlugin, true);
 	assert.match(container.querySelector(".mur-chat-history")?.textContent ?? "", /hello back/);
 
 	input.value = "second";
 	submit(form);
 	await waitFor(() => providerCalls === 2 && ui.engine.state.generatingMessageId !== null, "second stream");
 	assert.equal(container.querySelector(".mur-send-btn")?.classList.contains("mur-generating"), true);
+	assert.equal(input.readOnly, false);
+	setInputValue(input, "next draft");
+	input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+	assert.equal((latestSignal as AbortSignal | null)?.aborted, false);
 
 	submit(form);
 	await waitFor(() => latestSignal?.aborted === true && ui.engine.state.generatingMessageId === null, "stop");
+	assert.equal(input.value, "next draft");
 
-	await ui.destroy();
+	const closing = ui.destroy();
+	assert.equal(ui.destroy(), closing);
 	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
-	assert.deepEqual(lifecycle, ["mount", "input", "destroy"]);
+	assert.deepEqual(lifecycle, ["mount", "input", "input-destroy", "destroy"]);
 
 	input.value = "after destroy";
 	submit(form);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	assert.equal(providerCalls, 2);
+	assert.equal(closeCalls, 1);
+	closed.reject(new Error("Storage close failed"));
+	await assert.rejects(closing, /Storage close failed/);
+	assert.deepEqual(lifecycle, ["mount", "input", "input-destroy", "destroy"]);
 });
 
-test("ChatUI skips page-scroll when fullscreen is false", async () => {
-	const container = installDom("https://example.test/", { rootClass: "mur-app-embedded" });
+test("ChatUI renders the engine's messages without revisiting history or the composer per token", async (t) => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+	let emit!: (changes: ConversationChange[]) => void;
+	let messageId = "";
+	let runId = "";
+	const { promise: done, resolve: finish } = Promise.withResolvers<void>();
+	const rendered = new Map<string, { block: ContentBlock; context: RendererContext; visits: number }>();
+	const ui = new ChatUI({
+		container,
+		routing: false,
+		enableSidebar: false,
+		storage: new MemoryStorage(),
+		minAgentRunSteps: Infinity,
+		provider: {
+			async streamChat(request, onChange) {
+				messageId = request.messageId;
+				runId = request.runId;
+				emit = onChange;
+				await done;
+			},
+		},
+		plugins: () => [
+			{
+				name: "test-0",
+				renderers: [
+					{
+						matches: () => true,
+						mount(element) {
+							return {
+								update(block, context) {
+									rendered.set(block.id, {
+										block: structuredClone(block),
+										context,
+										visits: (rendered.get(block.id)?.visits ?? 0) + 1,
+									});
+									element.textContent = block.type === "text" ? block.text : block.type;
+								},
+								destroy() {},
+							};
+						},
+					},
+				],
+			},
+		],
+	});
+	t.after(async () => {
+		finish();
+		await ui.destroy();
+	});
+	await ui.engine.setMessages([textMessage("old", "assistant", "History")]);
+	ui.engine.sendMessage("Question");
+	await waitFor(() => Boolean(emit), "provider");
+	emit([{ type: "block.put", messageId, block: { id: "text", type: "text", text: "Start" } }]);
+	await waitFor(() => rendered.has("text"), "first stream frame");
+	const answer = ui.engine.conversation.getMessage(messageId)!;
+	assert.equal(rendered.get("text")!.context.message, answer);
+	assert.equal(ui.engine.state.messages, ui.engine.conversation.state.messages);
+	const oldNode = container.querySelector(".mur-message")!;
+	const oldBlocks = ui.engine.state.messages[0].blocks;
+	let historyReads = 0;
+	Object.defineProperty(ui.engine.state.messages[0], "blocks", {
+		configurable: true,
+		get() {
+			historyReads++;
+			return oldBlocks;
+		},
+	});
+	const observer = new window.MutationObserver(() => {
+		controlMutations++;
+	});
+	let controlMutations = 0;
+	observer.observe(container.querySelector(".mur-chat-form-container")!, {
+		subtree: true,
+		attributes: true,
+		childList: true,
+		characterData: true,
+	});
+	const visits = rendered.get("text")!.visits;
+	for (let i = 0; i < 100; i++) emit([{ type: "text.append", messageId, blockId: "text", delta: "." }]);
+	await waitFor(() => rendered.get("text")!.visits > visits, "coalesced stream frame");
+	observer.disconnect();
+	assert.equal(rendered.get("text")!.visits, visits + 1);
+	assert.equal(historyReads, 0);
+	assert.equal(controlMutations, 0);
+	assert.equal(container.querySelector(".mur-message"), oldNode);
+	assert.deepEqual(rendered.get("text")!.block, { id: "text", type: "text", text: `Start${".".repeat(100)}` });
+
+	emit([
+		{ type: "block.put", messageId, block: { id: "thought", type: "reasoning", text: "Plan" } },
+		{ type: "text.append", messageId, blockId: "thought", delta: " next" },
+		{
+			type: "block.put",
+			messageId,
+			block: { id: "call", type: "tool_call", toolCallId: "call", name: "read", argsText: "", status: "streaming" },
+		},
+		{ type: "tool.update", messageId, blockId: "call", argsDelta: "{}", status: "complete" },
+		{
+			type: "message.put",
+			message: {
+				id: "result",
+				role: "tool",
+				runId,
+				blocks: [{ id: "output", type: "tool_result", toolCallId: "call", outputText: "File contents" }],
+			},
+		},
+	]);
+	await waitFor(() => rendered.has("output"), "tool result");
+	assert.deepEqual(rendered.get("call")!.block, {
+		id: "call",
+		type: "tool_call",
+		toolCallId: "call",
+		name: "read",
+		argsText: "{}",
+		status: "complete",
+	});
+	assert.deepEqual(rendered.get("thought")!.block, {
+		id: "thought",
+		type: "reasoning",
+		text: "Plan next",
+	});
+	assert.equal(rendered.get("output")!.context.message.role, "tool");
+	emit([
+		{
+			type: "message.put",
+			message: {
+				id: "final",
+				role: "assistant",
+				runId,
+				status: "streaming",
+				blocks: [{ id: "final-text", type: "text", text: "Final answer" }],
+				usage: { input: 10, output: 20, total: 30 },
+			},
+		},
+	]);
+	finish();
+	await waitFor(() => rendered.get("final-text")?.context.isGenerating === false, "completed reply");
+	assert.deepEqual(rendered.get("final-text")!.context.message.usage, { input: 10, output: 20, total: 30 });
+	assert.equal(container.querySelectorAll(".mur-generating").length, 0);
+});
+
+test("ChatUI keeps a pending history page through live updates and preserves message order", async (t) => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+	let release!: (page: { messages: Message[]; hasMore: boolean }) => void;
+	const storage = new (class extends MemoryStorage {
+		async loadOlderMessages() {
+			return await new Promise<{ messages: Message[]; hasMore: boolean }>((resolve) => {
+				release = resolve;
+			});
+		}
+	})([
+		{
+			id: "chat",
+			title: "Chat",
+			updatedAt: 1,
+			messages: [textMessage("recent", "assistant", "Recent")],
+			hasMoreMessages: true,
+			nextOlderMessagesCursor: "page",
+		},
+	]);
+	const ui = new ChatUI({
+		container,
+		routing: false,
+		enableSidebar: false,
+		initialSessionId: "chat",
+		storage,
+		provider: {
+			async streamChat(request, onChange) {
+				onChange([
+					{
+						type: "block.put",
+						messageId: request.messageId,
+						block: { id: "reply-text", type: "text", text: "Live reply" },
+					},
+				]);
+			},
+		},
+	});
+	t.after(() => ui.destroy());
+	await waitFor(() => container.querySelector(".mur-chat-history")!.textContent!.includes("Recent"), "initial history");
+	const history = container.querySelector(".mur-chat-history")!;
+	const recent = history.firstElementChild;
+	const scroll = container.querySelector<HTMLElement>(".mur-chat-scroll-area")!;
+	Object.defineProperties(scroll, { scrollHeight: { value: 2000 }, clientHeight: { value: 200 } });
+	for (const top of [800, 100]) {
+		scroll.scrollTop = top;
+		scroll.dispatchEvent(new window.Event("scroll"));
+	}
+	await waitFor(() => Boolean(release), "older page request");
+	ui.engine.sendMessage("New question");
+	await waitFor(() => history.textContent!.includes("Live reply"), "live reply while loading history");
+	assert.equal(container.querySelector<HTMLElement>(".mur-feed-spinner-top")!.hidden, false);
+	release({
+		messages: [textMessage("older", "assistant", "Older"), textMessage("recent", "assistant", "Stale")],
+		hasMore: false,
+	});
+	await waitFor(() => history.textContent!.includes("Older"), "prepended page");
+	assert.equal(history.children[1], recent);
+	assert.match(history.textContent!, /Older\s*Recent\s*New question\s*Live reply/);
+	assert.equal(container.querySelector<HTMLElement>(".mur-feed-spinner-top")!.hidden, true);
+
+	const messages = ui.engine.state.messages;
+	messages.reverse();
+	messages.splice(1, 1);
+	await ui.engine.setMessages(messages);
+	await waitFor(() => /^Live reply\s*Recent\s*Older/.test(history.textContent!), "replacement order");
+	assert.equal(history.querySelectorAll(".mur-message").length, 3);
+});
+
+test("ChatUI accepts file-only input through its composer plugin", async (t) => {
+	const container = installDom();
+	const { ChatUI } = await import("./main");
+	const { AttachmentPlugin } = await import("./plugins/attachment/attachment-plugin");
+	const form = container.querySelector<HTMLFormElement>("form")!;
+	let sent: Message[] | undefined;
+	const ui = new ChatUI({
+		container,
+		routing: false,
+		enableSidebar: false,
+		storage: new MemoryStorage(),
+		provider: {
+			async streamChat(request) {
+				sent = request.messages;
+			},
+		},
+		plugins: () => [
+			AttachmentPlugin({
+				onAttach: ({ file }) => ({
+					id: crypto.randomUUID(),
+					type: "file",
+					name: file.name,
+					mimeType: file.type,
+					data: "contents",
+				}),
+			}),
+		],
+	});
+	t.after(() => ui.destroy());
+	assert.equal(container.querySelector("form"), form);
+	const picker = form.querySelector<HTMLInputElement>('input[type="file"]')!;
+	const file = new window.File(["contents"], "note.txt", { type: "text/plain" });
+	Object.defineProperty(picker, "files", { value: [file, file] });
+	picker.dispatchEvent(new window.Event("change"));
+	await waitFor(() => !container.querySelector<HTMLButtonElement>(".mur-send-btn")!.disabled, "file ready");
+	submit(form);
+	await waitFor(() => Boolean(sent), "file submission");
+	assert.equal(sent!.length, 1);
+	assert.equal(new Set(sent![0].blocks.map((block) => block.id)).size, 2);
+	assert.deepEqual(
+		sent![0].blocks.map(({ id: _id, ...block }) => block),
+		Array.from({ length: 2 }, () => ({ type: "file", mimeType: "text/plain", name: "note.txt", data: "contents" })),
+	);
+	assert.equal(container.querySelectorAll(".mur-attachment-preview-item").length, 0);
+});
+
+test("ChatUI applies embedded layout and skips page-scroll when fullscreen is false", async () => {
+	const container = installDom("https://example.test/");
 	const { ChatUI } = await import("./main");
 
 	const ui = new ChatUI({
@@ -288,18 +562,18 @@ test("ChatUI skips page-scroll when fullscreen is false", async () => {
 		enableSidebar: false,
 		fullscreen: false,
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({ type: "finish", reason: "stop" });
-			},
+			async streamChat(): Promise<void> {},
 		},
 		routing: false,
 		storage: new MemoryStorage(),
 	});
 
 	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
+	assert.equal(container.classList.contains("mur-app-embedded"), true);
 
 	await ui.destroy();
 	assert.equal(document.documentElement.classList.contains("mur-chat-page-scroll"), false);
+	assert.equal(container.classList.contains("mur-app-embedded"), false);
 });
 
 test("ChatUI ref-counts the fullscreen page-scroll class", async () => {
@@ -312,9 +586,7 @@ test("ChatUI ref-counts the fullscreen page-scroll class", async () => {
 
 	const { ChatUI } = await import("./main");
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
+		async streamChat(): Promise<void> {},
 	};
 	const uiA = new ChatUI({
 		container: containerA,
@@ -345,9 +617,10 @@ test("ChatUI passes titleOptions into auto-title generation", async () => {
 	const { ChatUI } = await import("./main");
 	let titleOptions: RequestOptions = {};
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "text_delta", messageId: "assistant-1", blockId: "reply", delta: "hello back" });
-			onEvent({ type: "finish", reason: "stop" });
+		async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
+			onChange([
+				{ type: "block.put", messageId: request.messageId, block: { id: "reply", type: "text", text: "hello back" } },
+			]);
 		},
 		async generateTitle(request): Promise<string> {
 			titleOptions = request.options;
@@ -381,9 +654,7 @@ test("ChatUI marks the app layout when the chat is empty", async () => {
 		container,
 		enableSidebar: false,
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({ type: "finish", reason: "stop" });
-			},
+			async streamChat(): Promise<void> {},
 		},
 		routing: false,
 		storage: new MemoryStorage(),
@@ -402,14 +673,11 @@ test("ChatUI marks the app layout when the chat is empty", async () => {
 	await ui.destroy();
 });
 
-test("ChatUI keeps the non-empty layout state while switching between stored chats", async () => {
+test("ChatUI preserves layout and focuses the input once while switching stored chats", async (t) => {
 	const container = installDom();
 	const { ChatUI } = await import("./main");
 
-	let releaseLoad!: () => void;
-	const loadReleased = new Promise<void>((resolve) => {
-		releaseLoad = resolve;
-	});
+	const { promise: loadReleased, resolve: releaseLoad } = Promise.withResolvers<void>();
 	let delayedLoadStarted = false;
 
 	const storage = new (class extends MemoryStorage {
@@ -438,9 +706,7 @@ test("ChatUI keeps the non-empty layout state while switching between stored cha
 	const ui = new ChatUI({
 		container,
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({ type: "finish", reason: "stop" });
-			},
+			async streamChat(): Promise<void> {},
 		},
 		routing: false,
 		storage,
@@ -448,23 +714,24 @@ test("ChatUI keeps the non-empty layout state while switching between stored cha
 
 	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
 	await ui.engine.sessions.switch("chat-1");
-	await waitFor(
-		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
-		"chat 1 load",
-	);
 
 	assert.equal(container.classList.contains("mur-chat-empty"), false);
+	const input = container.querySelector<HTMLTextAreaElement>(".mur-chat-input")!;
+	const focus = t.mock.method(input, "focus");
 
 	const switchPromise = ui.engine.sessions.switch("chat-2");
 	await waitFor(() => delayedLoadStarted && ui.engine.state.isLoadingSession, "chat 2 load start");
 
 	assert.deepEqual(ui.engine.state.messages, []);
 	assert.equal(container.classList.contains("mur-chat-empty"), false);
+	assert.equal(input.disabled, false);
+	assert.equal(focus.mock.callCount(), 1);
 
 	releaseLoad();
 	await switchPromise;
 
 	assert.equal(container.classList.contains("mur-chat-empty"), false);
+	assert.equal(focus.mock.callCount(), 1);
 
 	await ui.destroy();
 });
@@ -482,9 +749,7 @@ test("ChatUI wires sidebar controls when the sidebar is enabled", async () => {
 	]);
 
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
+		async streamChat(): Promise<void> {},
 	};
 
 	const ui = new ChatUI({
@@ -542,9 +807,7 @@ test("ChatUI restores the persisted desktop sidebar state before enabling transi
 	const ui = new ChatUI({
 		container,
 		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({ type: "finish", reason: "stop" });
-			},
+			async streamChat(): Promise<void> {},
 		},
 		routing: false,
 		storage: new MemoryStorage(),
@@ -570,9 +833,7 @@ test("ChatUI supports headers without visible titles while syncing the window ti
 	]);
 
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
+		async streamChat(): Promise<void> {},
 	};
 
 	const ui = new ChatUI({
@@ -595,29 +856,6 @@ test("ChatUI supports headers without visible titles while syncing the window ti
 	await ui.destroy();
 });
 
-test("ChatUI does not require the sidebar opener when the sidebar is disabled", async () => {
-	const container = installDom("https://example.test/", { includeOpenSidebarButton: false });
-	const { ChatUI } = await import("./main");
-
-	const ui = new ChatUI({
-		container,
-		enableSidebar: false,
-		provider: {
-			async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-				onEvent({ type: "finish", reason: "stop" });
-			},
-		},
-		routing: false,
-		storage: new MemoryStorage(),
-	});
-
-	await waitFor(() => !ui.engine.state.isLoadingSession, "initial load");
-
-	assert.equal(container.querySelector(".mur-open-sidebar-btn"), null);
-
-	await ui.destroy();
-});
-
 test("ChatUI restores per-chat input drafts when switching sessions", async () => {
 	const container = installDom();
 	const { ChatUI } = await import("./main");
@@ -636,9 +874,7 @@ test("ChatUI restores per-chat input drafts when switching sessions", async () =
 		},
 	]);
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
+		async streamChat(): Promise<void> {},
 	};
 
 	const ui = new ChatUI({
@@ -650,52 +886,28 @@ test("ChatUI restores per-chat input drafts when switching sessions", async () =
 
 	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
 	await ui.engine.sessions.switch("chat-1");
-	await waitFor(
-		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
-		"chat 1 load",
-	);
 
 	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
 	const form = container.querySelector(".mur-chat-form") as HTMLFormElement;
 
 	setInputValue(input, "draft for one");
 	await ui.engine.sessions.switch("chat-2");
-	await waitFor(
-		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-2",
-		"chat 2 load",
-	);
 
 	assert.equal(input.value, "");
 
 	setInputValue(input, "draft for two");
 	await ui.engine.sessions.switch("chat-1");
-	await waitFor(
-		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
-		"chat 1 restore",
-	);
 
 	assert.equal(input.value, "draft for one");
 
 	await ui.engine.sessions.switch("chat-2");
-	await waitFor(
-		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-2",
-		"chat 2 restore",
-	);
 
 	assert.equal(input.value, "draft for two");
 
 	submit(form);
 	await waitFor(() => ui.engine.state.generatingMessageId === null, "submitted draft");
 	await ui.engine.sessions.switch("chat-1");
-	await waitFor(
-		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-1",
-		"chat 1 after submit",
-	);
 	await ui.engine.sessions.switch("chat-2");
-	await waitFor(
-		() => !ui.engine.state.isLoadingSession && ui.engine.state.currentSessionId === "chat-2",
-		"chat 2 after submit",
-	);
 
 	assert.equal(input.value, "");
 
@@ -714,9 +926,7 @@ test("ChatUI passes sidebarMenu config into session menus", async () => {
 		},
 	]);
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
+		async streamChat(): Promise<void> {},
 	};
 	let seenEngine: unknown;
 	let seenSessionId = "";
@@ -744,65 +954,6 @@ test("ChatUI passes sidebarMenu config into session menus", async () => {
 	);
 
 	closeDropdown();
-	await ui.destroy();
-});
-
-test("ChatUI keeps the input available while switching chats", async () => {
-	const container = installDom();
-	const { ChatUI } = await import("./main");
-
-	let releaseLoad!: () => void;
-	const loadReleased = new Promise<void>((resolve) => {
-		releaseLoad = resolve;
-	});
-
-	const storage = new (class extends MemoryStorage {
-		override async loadOne(id: string): Promise<ChatSession | null> {
-			await loadReleased;
-			return super.loadOne(id);
-		}
-	})([
-		{
-			id: "chat-1",
-			title: "Stored Chat",
-			updatedAt: 100,
-			messages: [textMessage("msg-1", "user", "stored")],
-		},
-	]);
-
-	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
-	};
-
-	const ui = new ChatUI({
-		container,
-		provider,
-		routing: false,
-		storage,
-	});
-
-	await waitFor(() => !ui.engine.state.isLoadingSessions, "stored history load");
-
-	const input = container.querySelector(".mur-chat-input") as HTMLTextAreaElement;
-	let focusCalls = 0;
-	input.focus = (() => {
-		focusCalls++;
-	}) as HTMLTextAreaElement["focus"];
-
-	(container.querySelector(".mur-sidebar-item-link") as HTMLAnchorElement).click();
-	await waitFor(() => ui.engine.state.isLoadingSession, "stored session load start");
-	await new Promise((resolve) => setTimeout(resolve, 0));
-
-	assert.equal(input.disabled, false);
-	assert.equal(focusCalls, 1);
-
-	releaseLoad();
-
-	await waitFor(() => !ui.engine.state.isLoadingSession, "stored session load");
-	await waitFor(() => focusCalls === 1, "input focus after session load");
-
 	await ui.destroy();
 });
 
@@ -861,9 +1012,7 @@ test("ChatUI replaces an invalid routed chat URL with the blank chat URL", async
 	const { ChatUI } = await import("./main");
 
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
+		async streamChat(): Promise<void> {},
 	};
 
 	const ui = new ChatUI({
@@ -893,15 +1042,9 @@ test("ChatUI keeps a blank route when initial history loads without a URL id", a
 	const container = installDom("https://example.test/");
 	const { ChatUI } = await import("./main");
 
-	let releaseLoad!: () => void;
-	const loadReleased = new Promise<void>((resolve) => {
-		releaseLoad = resolve;
-	});
+	const { promise: loadReleased, resolve: releaseLoad } = Promise.withResolvers<void>();
 
-	let loadStarted!: () => void;
-	const loadStartedPromise = new Promise<void>((resolve) => {
-		loadStarted = resolve;
-	});
+	const { promise: loadStartedPromise, resolve: loadStarted } = Promise.withResolvers<void>();
 
 	const storage = new (class extends MemoryStorage {
 		override async loadSessions(limit: number): Promise<PaginatedSessions> {
@@ -919,9 +1062,7 @@ test("ChatUI keeps a blank route when initial history loads without a URL id", a
 	]);
 
 	const provider: ChatProvider = {
-		async streamChat(_request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
-			onEvent({ type: "finish", reason: "stop" });
-		},
+		async streamChat(): Promise<void> {},
 	};
 
 	const ui = new ChatUI({

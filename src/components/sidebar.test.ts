@@ -1,506 +1,454 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { JSDOM } from "jsdom";
-import type { ChatEngine } from "../core/chat-engine";
-import { closeDropdown } from "./dropdown";
-import { type DeleteConfirmation, Sidebar, type SidebarMenuBuilder } from "./sidebar";
+import { ChatEngine } from "../core/chat-engine";
+import { closeDropdown, showDropdown } from "./dropdown";
+import { Sidebar, type SidebarSession } from "./sidebar";
 
 const originalDocument = globalThis.document;
-const originalIntersectionObserver = globalThis.IntersectionObserver;
+const originalObserver = globalThis.IntersectionObserver;
 const originalConfirm = globalThis.confirm;
+const mounted: Sidebar[] = [];
 
 afterEach(() => {
+	for (const sidebar of mounted) sidebar.destroy();
+	mounted.length = 0;
 	closeDropdown();
 	setGlobal("document", originalDocument);
-	setGlobal("IntersectionObserver", originalIntersectionObserver);
+	setGlobal("IntersectionObserver", originalObserver);
 	setGlobal("confirm", originalConfirm);
 });
 
 function setGlobal(name: string, value: unknown): void {
-	if (value === undefined) {
-		Reflect.deleteProperty(globalThis, name);
-		return;
-	}
-
-	Object.defineProperty(globalThis, name, {
-		configurable: true,
-		value,
-		writable: true,
-	});
+	Object.defineProperty(globalThis, name, { configurable: true, value, writable: true });
 }
 
-function installDom(): HTMLElement {
-	const dom = new JSDOM(`
-		<div class="mur-app">
-			<aside class="mur-sidebar">
-				<button type="button" class="mur-close-sidebar-btn">Close</button>
-				<button type="button" class="mur-new-chat-btn">New</button>
-				<div class="mur-sidebar-content"></div>
-			</aside>
-		</div>
-	`);
-
+function installDom() {
+	const dom = new JSDOM('<div class="mur-app"><main><button class="mur-open-sidebar-btn">Open</button></main></div>', {
+		url: "https://example.test/",
+		pretendToBeVisual: true,
+	});
 	setGlobal("document", dom.window.document);
-
-	return dom.window.document.querySelector(".mur-app") as HTMLElement;
-}
-
-function createEngine(
-	deleteSession: (id: string) => void = () => {},
-	updateTitle: (id: string, title: string) => void | Promise<void> = () => {},
-	updatePinned: (id: string, isPinned: boolean) => void = () => {},
-): ChatEngine {
-	return {
-		sessions: {
-			delete: async (id: string) => {
-				deleteSession(id);
-			},
-			updateTitle: async (id: string, title: string) => {
-				await updateTitle(id, title);
-			},
-			updatePinned: async (id: string, isPinned: boolean) => {
-				updatePinned(id, isPinned);
-			},
-		},
-	} as unknown as ChatEngine;
-}
-
-function createSidebar(
-	container: HTMLElement,
-	options: {
-		engine?: ChatEngine;
-		sidebarMenu?: SidebarMenuBuilder;
-		confirmDelete?: DeleteConfirmation;
-	} = {},
-): Sidebar {
-	return new Sidebar({
-		container,
-		engine: options.engine ?? createEngine(),
-		onNewChat: () => {},
-		onSelectSession: () => {},
-		onLoadMore: () => {},
-		onClose: () => {},
-		getSessionHref: (id) => `#/chat/${encodeURIComponent(id)}`,
-		sidebarMenu: options.sidebarMenu,
-		confirmDelete: options.confirmDelete,
-	});
-}
-
-test("renders without IntersectionObserver and skips sidebar pagination", () => {
-	const container = installDom();
-	let loadMoreCalls = 0;
 	setGlobal("IntersectionObserver", undefined);
-
-	const sidebar = new Sidebar({
-		container,
-		engine: createEngine(),
-		onNewChat: () => {},
-		onSelectSession: () => {},
-		onLoadMore: () => {
-			loadMoreCalls++;
-		},
-		onClose: () => {},
-		getSessionHref: (id) => `#/chat/${id}`,
+	Object.defineProperty(dom.window, "matchMedia", {
+		value: () => ({
+			addEventListener() {},
+			removeEventListener() {},
+			get matches() {
+				return dom.window.innerWidth <= 768;
+			},
+		}),
 	});
+	return document.querySelector<HTMLElement>(".mur-app")!;
+}
 
-	assert.doesNotThrow(() => {
-		sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", true);
-		sidebar.destroy();
-	});
-	assert.equal(loadMoreCalls, 0);
-});
+function mount(config: ConstructorParameters<typeof Sidebar>[0]) {
+	const sidebar = new Sidebar(config);
+	mounted.push(sidebar);
+	return sidebar;
+}
 
-test("setActiveSession matches custom ids without building a selector from the id", () => {
+function clickMenu(id: string, label: string): void {
+	const row = Array.from(document.querySelectorAll<HTMLElement>(".mur-sidebar-item")).find(
+		(row) => row.dataset.sessionId === id,
+	)!;
+	row.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")!.click();
+	const button = Array.from(document.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")).find(
+		(button) => button.textContent === label,
+	);
+	assert.ok(button, `Missing menu item: ${label}`);
+	button.click();
+}
+
+function key(input: HTMLElement, key: string, isComposing = false): void {
+	input.dispatchEvent(
+		new document.defaultView!.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, isComposing }),
+	);
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("creates a complete panel with app content, links and responsive controls", () => {
 	const container = installDom();
-	const selectorHostileId = 'chat"] [data-session-id="other';
-	setGlobal("IntersectionObserver", undefined);
-	const sidebar = new Sidebar({
+	const logo = document.createElement("strong");
+	logo.textContent = "Agent Lab";
+	const footer = document.createElement("button");
+	footer.textContent = "Account";
+	let created = 0;
+	let settings = 0;
+	const collapsed: boolean[] = [];
+	const sidebar = mount({
 		container,
-		engine: createEngine(),
-		onNewChat: () => {},
-		onSelectSession: () => {},
-		onLoadMore: () => {},
-		onClose: () => {},
-		getSessionHref: (id) => `#/chat/${encodeURIComponent(id)}`,
-	});
-
-	sidebar.renderSessions(
-		[
-			{ id: "chat-1", title: "First", updatedAt: 2 },
-			{ id: selectorHostileId, title: "Second", updatedAt: 1 },
+		header: logo,
+		footer,
+		links: [
+			{ label: "Files", href: "/files" },
+			{
+				label: "Settings",
+				onClick: () => {
+					settings++;
+				},
+			},
 		],
-		"chat-1",
-		false,
-	);
-	sidebar.setActiveSession(selectorHostileId);
-
-	const active = container.querySelector(".mur-sidebar-item.mur-active");
-	assert.equal(active?.getAttribute("data-session-id"), selectorHostileId);
-	assert.equal(active?.querySelector(".mur-sidebar-item-link")?.getAttribute("aria-current"), "page");
-
-	sidebar.destroy();
-});
-
-test("renders the built-in session menu and deletes through the engine", () => {
-	const container = installDom();
-	const deletedIds: string[] = [];
-	const sidebar = createSidebar(container, { engine: createEngine((id) => deletedIds.push(id)) });
-	setGlobal("confirm", () => true);
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-
-	const optionsBtn = container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn");
-	assert.ok(optionsBtn);
-	optionsBtn.click();
-
-	const menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item"));
-	assert.deepEqual(
-		menuItems.map((item) => item.textContent),
-		["Rename", "Pin", "Delete"],
-	);
-
-	menuItems[2].click();
-	assert.deepEqual(deletedIds, ["chat-1"]);
-
-	sidebar.destroy();
-});
-
-test("built-in delete asks for confirmation before deleting", () => {
-	const container = installDom();
-	const deletedIds: string[] = [];
-	const prompts: string[] = [];
-	const sidebar = createSidebar(container, { engine: createEngine((id) => deletedIds.push(id)) });
-	setGlobal("confirm", (message: string) => {
-		prompts.push(message);
-		return false;
-	});
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[2]?.click();
-
-	assert.deepEqual(prompts, ['Delete chat "Stored Chat"? This cannot be undone.']);
-	assert.deepEqual(deletedIds, []);
-
-	sidebar.destroy();
-});
-
-test("built-in delete can use a custom confirmation callback", async () => {
-	const container = installDom();
-	const deletedIds: string[] = [];
-	const seenSessions: string[] = [];
-	const sidebar = createSidebar(container, {
-		engine: createEngine((id) => deletedIds.push(id)),
-		confirmDelete: async (session) => {
-			seenSessions.push(session.id);
-			return true;
+		onNew: () => {
+			created++;
+		},
+		onCollapse: (value) => {
+			collapsed.push(value);
 		},
 	});
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[2]?.click();
-
-	await new Promise((resolve) => setTimeout(resolve, 0));
-	assert.deepEqual(seenSessions, ["chat-1"]);
-	assert.deepEqual(deletedIds, ["chat-1"]);
-
+	assert.equal(container.firstElementChild, sidebar.element);
+	assert.equal(container.querySelector(".mur-sidebar-logo")?.firstChild, logo);
+	assert.equal(container.querySelector(".mur-sidebar-footer")?.firstChild, footer);
+	const links = container.querySelectorAll<HTMLElement>(".mur-sidebar-nav-btn");
+	assert.equal(links.length, 3);
+	assert.ok(links[0].querySelector("svg"));
+	assert.equal(links[1].getAttribute("href"), "/files");
+	links[0].click();
+	links[2].click();
+	assert.equal(created, 1);
+	assert.equal(settings, 1);
+	container.querySelector<HTMLButtonElement>(".mur-close-sidebar-btn")!.click();
+	assert.equal(container.classList.contains("mur-sidebar-closed"), true);
+	sidebar.element.click();
+	assert.deepEqual(collapsed, [true, false]);
+	Object.defineProperty(document.defaultView!, "innerWidth", { value: 390, configurable: true });
+	container.querySelector<HTMLButtonElement>(".mur-open-sidebar-btn")!.click();
+	assert.equal(sidebar.element.classList.contains("mur-mobile-open"), true);
+	key(sidebar.element, "Escape");
+	assert.equal(sidebar.element.classList.contains("mur-mobile-open"), false);
+	sidebar.open();
+	links[2].click();
+	assert.equal(sidebar.element.classList.contains("mur-mobile-open"), false);
+	sidebar.open();
+	container.querySelector("main")!.click();
+	assert.equal(sidebar.element.classList.contains("mur-mobile-open"), false);
+	assert.deepEqual(collapsed, [true, false]);
 	sidebar.destroy();
+	assert.equal(container.querySelector(".mur-sidebar"), null);
+	links[0].click();
+	links[2].click();
+	assert.equal(created, 1);
+	assert.equal(settings, 2);
 });
 
-test("closes an open session dropdown on rerender and destroy", () => {
+test("keeps row and open menu identity on polling, with no DOM writes for unchanged data", () => {
 	const container = installDom();
-	const sidebar = createSidebar(container);
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	assert.ok(document.querySelector(".mur-dropdown-menu"));
-
-	sidebar.renderSessions([{ id: "chat-2", title: "Next Chat", updatedAt: 2 }], "chat-2", false);
-	assert.equal(document.querySelector(".mur-dropdown-menu"), null);
-
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	assert.ok(document.querySelector(".mur-dropdown-menu"));
-
-	sidebar.destroy();
-	assert.equal(document.querySelector(".mur-dropdown-menu"), null);
-});
-
-test("built-in pin menu toggles pinned state and enforces the pin limit", () => {
-	const container = installDom();
-	const pinnedUpdates: { id: string; isPinned: boolean }[] = [];
-	const sidebar = createSidebar(container, {
-		engine: createEngine(
-			() => {},
-			() => {},
-			(id, isPinned) => pinnedUpdates.push({ id, isPinned }),
-		),
+	const selected: string[] = [];
+	const sidebar = mount({
+		container,
+		onSelect: (id) => {
+			selected.push(id);
+		},
+		onRename: () => {},
+		getHref: (id) => `#/chat/${encodeURIComponent(id)}`,
 	});
+	const id = 'chat"[]/one';
+	const sessions = [
+		{ id, title: "One" },
+		{ id: "two", title: "Two" },
+	];
+	sidebar.update({ sessions, activeId: id });
+	const row = container.querySelector<HTMLElement>(".mur-sidebar-item")!;
+	const link = row.querySelector<HTMLAnchorElement>("a")!;
+	const modified = new document.defaultView!.MouseEvent("click", { ctrlKey: true, cancelable: true, bubbles: true });
+	link.dispatchEvent(modified);
+	assert.equal(modified.defaultPrevented, false);
+	link.click();
+	assert.deepEqual(selected, [id]);
+	assert.equal(link.getAttribute("aria-current"), "page");
+	row.querySelector<HTMLButtonElement>("button")!.click();
+	const menu = container.querySelector(".mur-dropdown-menu");
+	const button = menu!.querySelector<HTMLButtonElement>("button")!;
+	button.focus();
+	const observer = new document.defaultView!.MutationObserver(() => {});
+	observer.observe(container, { attributes: true, childList: true, characterData: true, subtree: true });
+	for (let i = 0; i < 10; i++) sidebar.update({ sessions: sessions.map((session) => ({ ...session })), activeId: id });
+	assert.equal(observer.takeRecords().length, 0);
+	observer.disconnect();
+	sidebar.update({ sessions: [sessions[1], { id, title: "Updated" }], activeId: "two" });
+	assert.equal(container.querySelectorAll(".mur-sidebar-item")[1], row);
+	assert.equal(row.querySelector("a"), link);
+	assert.equal(link.textContent, "Updated");
+	assert.equal(link.hasAttribute("aria-current"), false);
+	assert.equal(container.querySelector(".mur-dropdown-menu"), menu);
+	assert.equal(document.activeElement, button);
+	sidebar.update({ sessions: [sessions[1]] });
+	assert.equal(container.querySelector(".mur-dropdown-menu"), null);
+});
 
-	sidebar.renderSessions(
-		[
-			{ id: "pin-1", title: "Pinned", updatedAt: 4, isPinned: true },
-			{ id: "pin-2", title: "Pinned 2", updatedAt: 3, isPinned: true },
-			{ id: "pin-3", title: "Pinned 3", updatedAt: 2, isPinned: true },
-			{ id: "chat-1", title: "Stored Chat", updatedAt: 1 },
-		],
-		"chat-1",
-		false,
-	);
+test("preserves a rename draft and selection through reordering and remote title changes", () => {
+	const container = installDom();
+	const renamed: string[] = [];
+	const sidebar = mount({
+		container,
+		onRename: (_id, title) => {
+			renamed.push(title);
+		},
+	});
+	const sessions = [
+		{ id: "a", title: "Original" },
+		{ id: "b", title: "Second" },
+	];
+	sidebar.update({ sessions });
+	clickMenu("a", "Rename");
+	const input = container.querySelector<HTMLInputElement>("input")!;
+	input.value = "My draft";
+	input.setSelectionRange(2, 5);
+	sidebar.update({ sessions: [sessions[1], { id: "a", title: "Remote" }] });
+	assert.equal(container.querySelector("input"), input);
+	assert.equal(document.activeElement, input);
+	assert.equal(input.value, "My draft");
+	assert.equal(input.selectionStart, 2);
+	assert.equal(input.selectionEnd, 5);
+	key(input, "Escape");
+	assert.deepEqual(renamed, []);
+	assert.equal(container.querySelectorAll(".mur-sidebar-item-title")[1].textContent, "Remote");
+	clickMenu("a", "Rename");
+	const next = container.querySelector<HTMLInputElement>("input")!;
+	next.value = " Saved ";
+	key(next, "Enter", true);
+	assert.equal(container.querySelector("input"), next);
+	key(next, "Enter");
+	next.dispatchEvent(new document.defaultView!.Event("blur"));
+	assert.deepEqual(renamed, ["Saved"]);
+	assert.equal(container.querySelectorAll(".mur-sidebar-item-title")[1].textContent, "Saved");
+});
 
-	container.querySelector<HTMLButtonElement>('[data-session-id="pin-1"] .mur-sidebar-options-btn')?.click();
-	let menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item"));
-	assert.equal(menuItems[1].textContent, "Unpin");
-	menuItems[1].click();
-	assert.deepEqual(pinnedUpdates, [{ id: "pin-1", isPinned: false }]);
+test("failed or late rename acknowledgement cannot overwrite newer server data or a reused ID", async () => {
+	const container = installDom();
+	let save = Promise.withResolvers<void>();
+	const sidebar = mount({ container, onRename: () => save.promise });
+	sidebar.update({ sessions: [{ id: "a", title: "Original" }] });
+	clickMenu("a", "Rename");
+	const input = container.querySelector<HTMLInputElement>("input")!;
+	input.value = "Pending";
+	input.dispatchEvent(new document.defaultView!.Event("blur"));
+	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Pending");
+	sidebar.update({ sessions: [{ id: "a", title: "Original" }] });
+	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Pending");
+	save.reject(new Error("Save failed"));
+	await tick();
+	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Original");
+	assert.equal(container.querySelector('[role="alert"]')?.textContent, "Save failed");
+	save = Promise.withResolvers<void>();
+	clickMenu("a", "Rename");
+	const next = container.querySelector<HTMLInputElement>("input")!;
+	next.value = "Pending again";
+	key(next, "Enter");
+	sidebar.update({ sessions: [{ id: "a", title: "Newer server title" }] });
+	save.resolve();
+	await tick();
+	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Newer server title");
+	assert.equal(container.querySelector('[role="alert"]'), null);
 
-	container.querySelector<HTMLButtonElement>('[data-session-id="chat-1"] .mur-sidebar-options-btn')?.click();
-	menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item"));
-	assert.equal(menuItems[1].textContent, "Pin");
-	assert.equal(menuItems[1].disabled, true);
+	save = Promise.withResolvers<void>();
+	clickMenu("a", "Rename");
+	const last = container.querySelector<HTMLInputElement>("input")!;
+	last.value = "Too late";
+	key(last, "Enter");
+	sidebar.update({ sessions: [] });
+	sidebar.update({ sessions: [{ id: "a", title: "Replacement" }] });
+	save.reject(new Error("Old error"));
+	await tick();
+	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Replacement");
+	assert.equal(container.querySelector('[role="alert"]'), null);
+});
 
+test("reconciles menu actions from current app data and removes the trigger when none remain", () => {
+	const container = installDom();
+	interface Session extends SidebarSession {
+		editable: boolean;
+	}
+	const actions: string[] = [];
+	const sidebar = new Sidebar<Session>({
+		container,
+		onRename: () => {},
+		menu: (defaults, session) =>
+			session.editable
+				? [
+						...defaults,
+						{
+							id: "custom",
+							label: session.title,
+							onClick: () => {
+								actions.push(session.title);
+							},
+						},
+					]
+				: [],
+	});
+	const update = (title: string, editable = true) => sidebar.update({ sessions: [{ id: "a", title, editable }] });
+	update("Before");
+	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")!.click();
+	const button = container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[1];
+	button.focus();
+	update("After");
+	assert.equal(container.querySelectorAll(".mur-dropdown-item")[1], button);
+	assert.equal(document.activeElement, button);
+	assert.equal(button.textContent, "After");
+	button.click();
+	assert.deepEqual(actions, ["After"]);
+	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")!.click();
+	update("After", false);
+	assert.equal(container.querySelector(".mur-sidebar-options-btn"), null);
+	assert.equal(container.querySelector(".mur-dropdown-menu"), null);
 	sidebar.destroy();
 });
 
-test("renders pinned sessions with icon and divider", () => {
+test("pin policy and asynchronous delete confirmation stay in callbacks", async () => {
 	const container = installDom();
-	const sidebar = createSidebar(container);
-
-	sidebar.renderSessions(
-		[
-			{ id: "pin-1", title: "Pinned", updatedAt: 2, isPinned: true },
-			{ id: "chat-1", title: "Regular", updatedAt: 1 },
-		],
-		"pin-1",
-		false,
-	);
-
+	const pinned: [string, boolean][] = [];
+	const deleted: string[] = [];
+	let confirmation = Promise.withResolvers<boolean>();
+	const sidebar = mount({
+		container,
+		pinLimit: 1,
+		onPin: (id, pin) => {
+			pinned.push([id, pin]);
+		},
+		onDelete: (id) => {
+			deleted.push(id);
+		},
+		confirmDelete: () => confirmation.promise,
+	});
+	const sessions = [
+		{ id: "a", title: "Pinned", isPinned: true },
+		{ id: "b", title: "Other" },
+	];
+	sidebar.update({ sessions });
 	assert.equal(container.querySelectorAll(".mur-sidebar-pin-icon").length, 1);
 	assert.equal(container.querySelectorAll(".mur-sidebar-pin-divider").length, 1);
-
-	sidebar.destroy();
+	clickMenu("a", "Unpin");
+	assert.deepEqual(pinned, [["a", false]]);
+	clickMenu("b", "Pin");
+	assert.equal(container.querySelector<HTMLButtonElement>(".mur-dropdown-item")!.disabled, true);
+	closeDropdown();
+	clickMenu("b", "Delete");
+	confirmation.resolve(false);
+	await tick();
+	assert.deepEqual(deleted, []);
+	confirmation = Promise.withResolvers<boolean>();
+	clickMenu("b", "Delete");
+	confirmation.resolve(true);
+	await tick();
+	assert.deepEqual(deleted, ["b"]);
+	confirmation = Promise.withResolvers<boolean>();
+	clickMenu("a", "Delete");
+	sidebar.update({ sessions: [] });
+	confirmation.resolve(true);
+	await tick();
+	assert.deepEqual(deleted, ["b"]);
 });
 
-test("rename edits in place and saves on Enter", () => {
+test("manual pagination works without an observer and suppresses duplicate requests", async () => {
 	const container = installDom();
-	const updates: { id: string; title: string }[] = [];
-	const sidebar = createSidebar(container, {
-		engine: createEngine(
-			() => {},
-			(id, title) => {
-				updates.push({ id, title });
-			},
-		),
-	});
-	const session = { id: "chat-1", title: "Stored Chat", updatedAt: 1 };
-
-	sidebar.renderSessions([session], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[0]?.click();
-
-	const input = container.querySelector<HTMLInputElement>(".mur-sidebar-rename-input");
-	assert.ok(input);
-	assert.ok(container.querySelector(".mur-sidebar-item")?.classList.contains("mur-renaming"));
-	input.value = "  Renamed Chat  ";
-	input.dispatchEvent(new input.ownerDocument.defaultView!.KeyboardEvent("keydown", { key: "Enter" }));
-
-	assert.deepEqual(updates, [{ id: "chat-1", title: "Renamed Chat" }]);
-	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Renamed Chat");
-	assert.equal(container.querySelector(".mur-sidebar-item")?.classList.contains("mur-renaming"), false);
-
-	sidebar.destroy();
-});
-
-test("rename saves on blur, cancels on Escape, and skips empty names", () => {
-	const container = installDom();
-	const updates: { id: string; title: string }[] = [];
-	const sidebar = createSidebar(container, {
-		engine: createEngine(
-			() => {},
-			(id, title) => {
-				updates.push({ id, title });
-			},
-		),
-	});
-	const session = { id: "chat-1", title: "Stored Chat", updatedAt: 1 };
-
-	sidebar.renderSessions([session], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[0]?.click();
-	let input = container.querySelector<HTMLInputElement>(".mur-sidebar-rename-input");
-	assert.ok(input);
-	input.value = "Blurred Chat";
-	input.dispatchEvent(new input.ownerDocument.defaultView!.FocusEvent("blur"));
-	assert.deepEqual(updates, [{ id: "chat-1", title: "Blurred Chat" }]);
-
-	sidebar.renderSessions([session], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[0]?.click();
-	input = container.querySelector<HTMLInputElement>(".mur-sidebar-rename-input");
-	assert.ok(input);
-	input.value = "Canceled Chat";
-	input.dispatchEvent(new input.ownerDocument.defaultView!.KeyboardEvent("keydown", { key: "Escape" }));
-
-	sidebar.renderSessions([session], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[0]?.click();
-	input = container.querySelector<HTMLInputElement>(".mur-sidebar-rename-input");
-	assert.ok(input);
-	input.value = " ";
-	input.dispatchEvent(new input.ownerDocument.defaultView!.FocusEvent("blur"));
-
-	assert.deepEqual(updates, [{ id: "chat-1", title: "Blurred Chat" }]);
-	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Stored Chat");
-
-	sidebar.destroy();
-});
-
-test("rename rolls back optimistic title when saving fails", async () => {
-	const container = installDom();
-	const sidebar = createSidebar(container, {
-		engine: createEngine(
-			() => {},
-			async () => {
-				throw new Error("rename failed");
-			},
-		),
-	});
-	const session = { id: "chat-1", title: "Stored Chat", updatedAt: 1 };
-
-	sidebar.renderSessions([session], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-	container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item")[0]?.click();
-
-	const input = container.querySelector<HTMLInputElement>(".mur-sidebar-rename-input");
-	assert.ok(input);
-	input.value = "Unsaved Chat";
-	input.dispatchEvent(new input.ownerDocument.defaultView!.KeyboardEvent("keydown", { key: "Enter" }));
-
-	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Unsaved Chat");
-	await new Promise((resolve) => setTimeout(resolve, 0));
-	assert.equal(container.querySelector(".mur-sidebar-item-title")?.textContent, "Stored Chat");
-
-	sidebar.destroy();
-});
-
-test("custom sidebarMenu can append an item and receives session context with engine", () => {
-	const container = installDom();
-	const engine = createEngine();
-	const seen: unknown[] = [];
-	let customCalls = 0;
-	const sidebar = createSidebar(container, {
-		engine,
-		sidebarMenu: (defaults, ctx) => {
-			seen.push(
-				defaults.map((item) => item.id),
-				ctx,
-			);
-			return [
-				...defaults,
-				{
-					id: "archive",
-					label: "Archive",
-					onClick: () => {
-						customCalls++;
-					},
-				},
-			];
+	const page = Promise.withResolvers<void>();
+	let loads = 0;
+	const sidebar = mount({
+		container,
+		onLoadMore: () => {
+			loads++;
+			return page.promise;
 		},
 	});
-	const session = { id: "chat-1", title: "Stored Chat", updatedAt: 1 };
-
-	sidebar.renderSessions([session], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-
-	assert.deepEqual(seen[0], ["rename", "pin", "delete"]);
-	assert.deepEqual(seen[1], { type: "session", session, engine });
-
-	const menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item"));
-	assert.deepEqual(
-		menuItems.map((item) => item.textContent),
-		["Rename", "Pin", "Delete", "Archive"],
-	);
-	menuItems[3].click();
-	assert.equal(customCalls, 1);
-
-	sidebar.destroy();
-});
-
-test("custom sidebarMenu can replace defaults", () => {
-	const container = installDom();
-	const sidebar = createSidebar(container, {
-		sidebarMenu: () => [{ id: "pin", label: "Pin", onClick: () => {} }],
+	sidebar.update({ sessions: [], hasMore: true, loading: true });
+	assert.match(container.textContent!, /Loading chats/);
+	sidebar.update({ sessions: [{ id: "a", title: "First" }], hasMore: true });
+	const button = container.querySelector<HTMLButtonElement>(".mur-sidebar-load-more-trigger")!;
+	button.click();
+	button.click();
+	assert.equal(loads, 1);
+	assert.equal(button.disabled, true);
+	sidebar.update({
+		sessions: [
+			{ id: "a", title: "First" },
+			{ id: "b", title: "Second" },
+		],
+		hasMore: false,
 	});
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-
-	const menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item"));
-	assert.deepEqual(
-		menuItems.map((item) => item.textContent),
-		["Pin"],
-	);
-
-	sidebar.destroy();
+	page.resolve();
+	await tick();
+	assert.equal(container.querySelector(".mur-sidebar-load-more-trigger"), null);
 });
 
-test("custom sidebarMenu can return defaults unchanged", () => {
+test("failed engine pagination waits for a manual retry and cleans up the observer", async (t) => {
+	t.mock.method(console, "error", () => {});
 	const container = installDom();
-	const sidebar = createSidebar(container, {
-		sidebarMenu: (defaults) => defaults,
-	});
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-
-	const menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item"));
-	assert.deepEqual(
-		menuItems.map((item) => item.textContent),
-		["Rename", "Pin", "Delete"],
+	let intersect!: () => void;
+	let observed = false;
+	let disconnected = false;
+	setGlobal(
+		"IntersectionObserver",
+		class {
+			constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+				intersect = () => callback([{ isIntersecting: true }]);
+			}
+			observe() {
+				observed = true;
+			}
+			unobserve() {
+				observed = false;
+			}
+			disconnect() {
+				disconnected = true;
+			}
+		},
 	);
-
-	sidebar.destroy();
-});
-
-test("rebuilds custom menu items when opening the dropdown", () => {
-	const container = installDom();
-	let builderCalls = 0;
-	const sidebar = createSidebar(container, {
-		sidebarMenu: () => {
-			builderCalls++;
-			return [
-				{
-					id: "dynamic",
-					label: builderCalls === 1 ? "Initial" : "Current",
-					onClick: () => {},
-				},
-			];
+	let loads = 0;
+	const engine = new ChatEngine({
+		provider: { async streamChat() {} },
+		storage: {
+			async loadSessions(_limit, cursor) {
+				if (!cursor) return { items: [{ id: "a", title: "One", updatedAt: 2 }], hasMore: true };
+				loads++;
+				if (loads === 1) throw new Error("Offline");
+				return { items: [{ id: "b", title: "Two", updatedAt: 1 }], hasMore: true };
+			},
+			async loadOne() {
+				return null;
+			},
+			async save() {},
+			async delete() {},
 		},
 	});
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-	container.querySelector<HTMLButtonElement>(".mur-sidebar-options-btn")?.click();
-
-	const menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>(".mur-dropdown-item"));
-	assert.equal(builderCalls, 2);
-	assert.deepEqual(
-		menuItems.map((item) => item.textContent),
-		["Current"],
+	t.after(() => engine.destroy());
+	const sidebar = mount({
+		container,
+		onLoadMore: () => engine.sessions.loadMore(),
+	});
+	engine.subscribe(
+		(state) => state,
+		(state) =>
+			sidebar.update({ sessions: state.sessions, hasMore: state.hasMoreSessions, loading: state.isLoadingSessions }),
 	);
-
+	await engine.sessions.loadHistory();
+	assert.equal(observed, true);
+	intersect();
+	await tick();
+	assert.equal(observed, false);
+	assert.equal(container.querySelector('[role="alert"]')?.textContent, "Offline");
+	container.querySelector<HTMLButtonElement>(".mur-sidebar-load-more-trigger")!.click();
+	await tick();
+	assert.equal(loads, 2);
+	assert.equal(observed, true);
+	assert.deepEqual(
+		engine.state.sessions.map((session) => session.id),
+		["a", "b"],
+	);
 	sidebar.destroy();
+	intersect();
+	assert.equal(loads, 2);
+	assert.equal(disconnected, true);
 });
 
-test("hides the session options button when sidebarMenu returns no items", () => {
+test("destroying a sidebar leaves another component's dropdown alone", () => {
 	const container = installDom();
-	const sidebar = createSidebar(container, {
-		sidebarMenu: () => [],
-	});
-
-	sidebar.renderSessions([{ id: "chat-1", title: "Stored Chat", updatedAt: 1 }], "chat-1", false);
-
-	assert.equal(container.querySelector(".mur-sidebar-options-btn"), null);
-	assert.equal(container.querySelector(".mur-sidebar-item-link")?.textContent, "Stored Chat");
-
+	const sidebar = mount({ container, onRename: () => {} });
+	sidebar.update({ sessions: [{ id: "a", title: "One" }] });
+	showDropdown(container.querySelector<HTMLElement>("main button")!, [
+		{ id: "settings", label: "Settings", onClick: () => {} },
+	]);
 	sidebar.destroy();
+	assert.equal(container.querySelector(".mur-dropdown-item")?.textContent, "Settings");
 });

@@ -36,3 +36,16 @@ test("cloneMessages clones message metadata and nested usage details", () => {
 	assert.deepEqual((messages[0].meta?.provider as { flags: unknown[] }).flags, ["cached"]);
 	assert.deepEqual((messages[0].usage?.details as { nested: { values: unknown[] } }).nested.values, [1, "two", true]);
 });
+
+test("custom JSON payloads are deeply cloned without interpreting prototype keys", () => {
+	const data = JSON.parse('{"__proto__":{"value":[1]},"label":"card"}');
+	const messages: Message[] = [
+		{ id: "m", role: "assistant", blocks: [{ id: "c", type: "custom", kind: "card", data, fallbackText: "card" }] },
+	];
+	const block = cloneMessages(messages)[0].blocks[0];
+	assert.ok(block.type === "custom");
+	assert.deepEqual(block.data, data);
+	assert.equal(Object.getPrototypeOf(block.data), Object.prototype);
+	data.__proto__.value.push(2);
+	assert.notDeepEqual(block.data, data);
+});

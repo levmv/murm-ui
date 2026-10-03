@@ -1,5 +1,6 @@
 import "./tools.css";
-import type { BlockRenderContext, ChatPlugin, ContentBlock, Message } from "../../core/types";
+import type { ContentBlock, Message, MessagePlugin, RendererContext } from "../../core/types";
+import { type ChatLabels, defaultLabels } from "../../labels";
 import { el } from "../../utils/dom";
 import { ICON_CHEVRON } from "../../utils/icons";
 
@@ -7,6 +8,7 @@ type ToolCallBlock = Extract<ContentBlock, { type: "tool_call" }>;
 type ToolResultBlock = Extract<ContentBlock, { type: "tool_result" }>;
 
 export interface ToolRenderContext {
+	labels: Readonly<ChatLabels>;
 	toolCall: ToolCallBlock;
 	toolResult?: ToolResultBlock;
 	message: Message;
@@ -27,6 +29,8 @@ export interface ToolRenderer {
 }
 
 export interface ToolsPluginConfig {
+	/** Hide raw arguments/results; application labels and summaries remain visible. */
+	details?: boolean;
 	defaultExpanded?: boolean | ((ctx: ToolRenderContext) => boolean);
 	maxLabelChars?: number;
 	maxPreviewChars?: number;
@@ -34,11 +38,12 @@ export interface ToolsPluginConfig {
 }
 
 interface ToolState {
+	labels: Readonly<ChatLabels>;
 	expanded: boolean;
+	detailsEnabled: boolean;
 	rootEl: HTMLElement;
 	ctx?: ToolRenderContext;
 	renderer?: ToolRenderer;
-	resultCache?: ToolResultCache;
 	previewText: string;
 	buttonEl: HTMLButtonElement;
 	titleEl: HTMLElement;
@@ -50,61 +55,73 @@ interface ToolState {
 
 interface ToolDetailsState {
 	argsPre: HTMLPreElement;
-	resultSectionEl: HTMLElement;
 	resultTitleEl: HTMLElement;
 	resultPre: HTMLPreElement;
 }
 
-interface ToolResultCache {
-	messages: readonly Message[];
-	messageId: string;
-	blockId: string;
-	toolCallId: string;
-	result: ToolResultBlock;
+interface ToolResultIndex {
+	positions: Map<string, number>;
+	results: Map<string, { position: number; block: ToolResultBlock }[]>;
 }
 
 const DEFAULT_MAX_LABEL_CHARS = 120;
 const DEFAULT_MAX_PREVIEW_CHARS = 240;
 const MAX_ARG_SUMMARY_VALUE_CHARS = 40;
-const EMPTY_MESSAGE: Message = { id: "", role: "assistant", blocks: [] };
 
-export function ToolsPlugin(config: ToolsPluginConfig = {}): ChatPlugin {
-	const stateMap = new WeakMap<HTMLElement, ToolState>();
-
+/** Lifecycle renderer for detailed or summarized tool calls. */
+export function tools(config: ToolsPluginConfig = {}): MessagePlugin {
+	const indexes = new WeakMap<readonly Message[], ToolResultIndex>();
 	return {
 		name: "tools",
-		onBlockRender: (block, containerEl, isGenerating, renderCtx) => {
-			if (block.type !== "tool_call") return false;
-
-			let state = stateMap.get(containerEl);
-			const ctx = createToolContext(block, renderCtx, isGenerating, state);
-			const renderer = config.tools?.[block.name];
-
-			if (!state) {
-				state = createToolState(containerEl, resolveDefaultExpanded(config.defaultExpanded, ctx));
-				containerEl.replaceChildren(state.buttonEl);
-				state.buttonEl.addEventListener("click", () => {
-					state!.expanded = !state!.expanded;
-					syncExpansion(state!);
-				});
-				stateMap.set(containerEl, state);
-			}
-			cacheToolResult(state, block, renderCtx, ctx.toolResult);
-
-			renderTool(containerEl, state, ctx, renderer, config);
-			return true;
-		},
+		renderers: [
+			{
+				matches: (block) => block.type === "tool_call",
+				mount(container) {
+					let state: ToolState | undefined;
+					return {
+						update(block, context) {
+							if (block.type !== "tool_call") return;
+							let index = indexes.get(context.messages);
+							if (!index) {
+								index = indexToolResults(context.messages);
+								indexes.set(context.messages, index);
+							}
+							const position = index.positions.get(context.message.id) ?? 0;
+							const result = index.results.get(block.toolCallId)?.find((entry) => entry.position >= position)?.block;
+							const ctx = createToolContext(block, context, result);
+							if (!state) {
+								state = createToolState(container, resolveDefaultExpanded(config.defaultExpanded, ctx), ctx.labels);
+								container.replaceChildren(state.buttonEl);
+								state.buttonEl.onclick = () => {
+									state!.expanded = !state!.expanded;
+									syncExpansion(state!);
+								};
+							}
+							renderTool(state, ctx, config);
+						},
+						destroy() {
+							if (state) state.buttonEl.onclick = null;
+							state = undefined;
+						},
+					};
+				},
+			},
+		],
 	};
 }
 
-function createToolState(rootEl: HTMLElement, expanded: boolean): ToolState {
+export { tools as ToolsPlugin };
+
+function createToolState(rootEl: HTMLElement, expanded: boolean, labels: Readonly<ChatLabels>): ToolState {
 	const chevronEl = el("span", "mur-tool-chevron", { innerHTML: ICON_CHEVRON });
 	const titleEl = el("span", "mur-tool-title");
 	const statusEl = el("span", "mur-tool-status");
 	const buttonEl = el("button", "mur-tool-summary", { type: "button" }, [statusEl, titleEl, chevronEl]);
 
 	const state = {
+		labels,
 		expanded,
+		detailsEnabled: true,
 		rootEl,
 		previewText: "",
 		buttonEl,
@@ -116,27 +133,29 @@ function createToolState(rootEl: HTMLElement, expanded: boolean): ToolState {
 	return state;
 }
 
-function renderTool(
-	containerEl: HTMLElement,
-	state: ToolState,
-	ctx: ToolRenderContext,
-	renderer: ToolRenderer | undefined,
-	config: ToolsPluginConfig,
-): void {
+function renderTool(state: ToolState, ctx: ToolRenderContext, config: ToolsPluginConfig): void {
+	const container = state.rootEl;
+	const renderer = config.tools?.[ctx.toolCall.name];
 	const status = ctx.toolResult?.isError ? "error" : ctx.toolCall.status;
-	containerEl.className = `mur-content-block mur-block-tool_call mur-tool mur-tool-${status}`;
+	state.detailsEnabled = config.details !== false;
+	const className = `mur-content-block mur-block-tool_call mur-tool mur-tool-${status}${state.detailsEnabled ? "" : " mur-tool-summary-only"}`;
+	if (container.className !== className) container.className = className;
+	if (!state.detailsEnabled) state.expanded = false;
+	const label =
+		rendererLabel(renderer, ctx) ??
+		ctx.toolCall.summary ??
+		(state.detailsEnabled ? defaultToolLabel(ctx.toolCall, ctx.args) : ctx.toolCall.name);
+	const preview = renderer?.preview?.(ctx) ?? (state.detailsEnabled ? defaultPreview(ctx) : undefined);
+	const statusText = ctx.labels.toolStatus(status);
 
-	const label = rendererLabel(renderer, ctx) ?? defaultToolLabel(ctx.toolCall, ctx.args);
-	const preview = renderer?.preview?.(ctx) ?? defaultPreview(ctx);
-	const statusText = statusLabel(status);
-
+	state.labels = ctx.labels;
 	state.ctx = ctx;
 	state.renderer = renderer;
-	state.titleEl.textContent = truncateText(label, config.maxLabelChars ?? DEFAULT_MAX_LABEL_CHARS);
-	state.statusEl.textContent = statusSymbol(status);
-	state.statusEl.title = statusText;
-	state.statusEl.setAttribute("aria-label", statusText);
-	state.buttonEl.setAttribute("aria-label", `${label} (${statusText})`);
+	setText(state.titleEl, truncateText(label, config.maxLabelChars ?? DEFAULT_MAX_LABEL_CHARS));
+	setText(state.statusEl, statusSymbol(status));
+	setAttribute(state.statusEl, "title", statusText);
+	setAttribute(state.statusEl, "aria-label", statusText);
+	setAttribute(state.buttonEl, "aria-label", `${label} (${statusText})`);
 
 	state.previewText = truncateText(preview ?? "", config.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS);
 
@@ -145,25 +164,31 @@ function renderTool(
 
 function createToolContext(
 	toolCall: ToolCallBlock,
-	ctx: BlockRenderContext | undefined,
-	isGenerating: boolean,
-	state: ToolState | undefined,
+	ctx: RendererContext,
+	toolResult: ToolResultBlock | undefined,
 ): ToolRenderContext {
-	const messages = ctx?.messages ?? [];
-	const toolResult = resolveToolResult(toolCall, ctx, state);
-	const args = parseJson(toolCall.argsText);
+	const messages = ctx.messages;
+	let argsParsed = false;
+	let parsedArgs: unknown;
 	const outputText = toolResult?.outputText ?? "";
 	let resultParsed = false;
 	let parsedResult: unknown;
 
 	return {
+		labels: ctx.labels ?? defaultLabels,
 		toolCall,
 		toolResult,
-		message: ctx?.message ?? EMPTY_MESSAGE,
+		message: ctx.message,
 		messages,
-		blockIndex: ctx?.blockIndex ?? -1,
-		isGenerating,
-		args,
+		blockIndex: ctx.blockIndex,
+		isGenerating: ctx.isGenerating,
+		get args() {
+			if (!argsParsed) {
+				parsedArgs = parseJson(toolCall.argsText);
+				argsParsed = true;
+			}
+			return parsedArgs;
+		},
 		argsText: toolCall.argsText,
 		outputText,
 		get result() {
@@ -176,60 +201,23 @@ function createToolContext(
 	};
 }
 
-function resolveToolResult(
-	toolCall: ToolCallBlock,
-	ctx: BlockRenderContext | undefined,
-	state: ToolState | undefined,
-): ToolResultBlock | undefined {
-	const cached = state?.resultCache;
-	if (
-		cached &&
-		ctx &&
-		cached.messages === ctx.messages &&
-		cached.messageId === ctx.message.id &&
-		cached.blockId === toolCall.id &&
-		cached.toolCallId === toolCall.toolCallId
-	) {
-		return cached.result;
-	}
-
-	const result = findToolResult(toolCall.toolCallId, ctx);
-	if (state) cacheToolResult(state, toolCall, ctx, result);
-	return result;
-}
-
-function cacheToolResult(
-	state: ToolState,
-	toolCall: ToolCallBlock,
-	ctx: BlockRenderContext | undefined,
-	result: ToolResultBlock | undefined,
-): void {
-	state.resultCache =
-		result && ctx
-			? {
-					messages: ctx.messages,
-					messageId: ctx.message.id,
-					blockId: toolCall.id,
-					toolCallId: toolCall.toolCallId,
-					result,
-				}
-			: undefined;
-}
-
-function findToolResult(toolCallId: string, ctx: BlockRenderContext | undefined): ToolResultBlock | undefined {
-	if (!ctx) return undefined;
-
-	const messageIndex = ctx.messages.findIndex((message) => message.id === ctx.message.id);
-	const startIndex = messageIndex >= 0 ? messageIndex : 0;
-
-	for (let i = startIndex; i < ctx.messages.length; i++) {
-		const result = ctx.messages[i].blocks.find(
-			(block): block is ToolResultBlock => block.type === "tool_result" && block.toolCallId === toolCallId,
-		);
-		if (result) return result;
-	}
-
-	return undefined;
+function indexToolResults(messages: readonly Message[]): ToolResultIndex {
+	// Structural updates replace the transcript array. All cards share one scan
+	// per revision; WeakMap keys let old transcripts go with their views.
+	const index: ToolResultIndex = { positions: new Map(), results: new Map() };
+	messages.forEach((message, position) => {
+		index.positions.set(message.id, position);
+		for (const block of message.blocks) {
+			if (block.type !== "tool_result") continue;
+			let results = index.results.get(block.toolCallId);
+			if (!results) {
+				results = [];
+				index.results.set(block.toolCallId, results);
+			}
+			results.push({ position, block });
+		}
+	});
+	return index;
 }
 
 function rendererLabel(renderer: ToolRenderer | undefined, ctx: ToolRenderContext): string | undefined {
@@ -246,7 +234,9 @@ function resolveDefaultExpanded(
 }
 
 function syncExpansion(state: ToolState): void {
-	state.buttonEl.setAttribute("aria-expanded", String(state.expanded));
+	if (state.buttonEl.disabled !== !state.detailsEnabled) state.buttonEl.disabled = !state.detailsEnabled;
+	if (!state.detailsEnabled) state.expanded = false;
+	setAttribute(state.buttonEl, "aria-expanded", String(state.expanded));
 	syncPreview(state);
 
 	if (state.expanded && state.ctx) {
@@ -260,14 +250,10 @@ function syncExpansion(state: ToolState): void {
 function renderDetails(state: ToolState): void {
 	const ctx = state.ctx;
 	if (!ctx) return;
-	const detailsEl = ensureDetailsEl(state);
 	const details = ensureDetails(state);
-
-	detailsEl.hidden = false;
-	details.argsPre.textContent = state.renderer?.formatArgs?.(ctx) ?? defaultArgsText(ctx);
-	details.resultTitleEl.textContent = ctx.toolResult?.isError ? "Error" : "Result";
-	details.resultPre.textContent = state.renderer?.formatResult?.(ctx) ?? defaultResultText(ctx);
-	details.resultSectionEl.hidden = false;
+	setText(details.argsPre, state.renderer?.formatArgs?.(ctx) ?? defaultArgsText(ctx));
+	setText(details.resultTitleEl, ctx.toolResult?.isError ? state.labels.toolError : state.labels.toolResult);
+	setText(details.resultPre, state.renderer?.formatResult?.(ctx) ?? defaultResultText(ctx));
 }
 
 function clearDetails(state: ToolState): void {
@@ -281,18 +267,17 @@ function clearDetails(state: ToolState): void {
 function ensureDetails(state: ToolState): ToolDetailsState {
 	if (state.details) return state.details;
 
-	const argsTitleEl = el("div", "mur-tool-section-title", { textContent: "Arguments" });
+	const argsTitleEl = el("div", "mur-tool-section-title", { textContent: state.labels.toolArguments });
 	const argsPre = el("pre", "mur-tool-pre");
 	const argsSectionEl = el("section", "mur-tool-section", {}, [argsTitleEl, argsPre]);
 
-	const resultTitleEl = el("div", "mur-tool-section-title", { textContent: "Result" });
+	const resultTitleEl = el("div", "mur-tool-section-title", { textContent: state.labels.toolResult });
 	const resultPre = el("pre", "mur-tool-pre");
 	const resultSectionEl = el("section", "mur-tool-section", {}, [resultTitleEl, resultPre]);
 
 	ensureDetailsEl(state).replaceChildren(argsSectionEl, resultSectionEl);
 	state.details = {
 		argsPre,
-		resultSectionEl,
 		resultTitleEl,
 		resultPre,
 	};
@@ -307,7 +292,15 @@ function syncPreview(state: ToolState): void {
 	}
 
 	const previewEl = ensurePreviewEl(state);
-	previewEl.textContent = state.previewText;
+	setText(previewEl, state.previewText);
+}
+
+function setText(element: HTMLElement, text: string): void {
+	if (element.textContent !== text) element.textContent = text;
+}
+
+function setAttribute(element: HTMLElement, name: string, value: string): void {
+	if (element.getAttribute(name) !== value) element.setAttribute(name, value);
 }
 
 function ensurePreviewEl(state: ToolState): HTMLElement {
@@ -391,7 +384,7 @@ function compactValue(value: unknown): string {
 
 function defaultPreview(ctx: ToolRenderContext): string | undefined {
 	if (!ctx.toolResult?.isError) return undefined;
-	return ctx.outputText || "Tool failed.";
+	return ctx.outputText || ctx.labels.toolFailed;
 }
 
 function defaultArgsText(ctx: ToolRenderContext): string {
@@ -401,9 +394,9 @@ function defaultArgsText(ctx: ToolRenderContext): string {
 
 function defaultResultText(ctx: ToolRenderContext): string {
 	if (!ctx.toolResult) {
-		if (ctx.toolCall.status === "running") return "Running...";
-		if (ctx.toolCall.status === "pending") return "Waiting for result...";
-		return "No result.";
+		if (ctx.toolCall.status === "running") return ctx.labels.toolRunning;
+		if (ctx.toolCall.status === "pending") return ctx.labels.toolWaiting;
+		return ctx.labels.toolNoResult;
 	}
 
 	if (ctx.result !== undefined) return JSON.stringify(ctx.result, null, 2);
@@ -438,10 +431,6 @@ function statusSymbol(status: ToolCallBlock["status"] | "error"): string {
 		default:
 			return "...";
 	}
-}
-
-function statusLabel(status: ToolCallBlock["status"] | "error"): string {
-	return status;
 }
 
 function truncateText(text: string, maxChars: number): string {

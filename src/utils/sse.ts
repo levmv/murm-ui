@@ -1,14 +1,8 @@
 const MAX_EVENT_SIZE = 1024 * 1024;
 
 /**
- * Parses a Server-Sent Events (SSE) stream from a fetch Response.
- * * NOTE: This is a specialized parser tailored for LLM streaming.
- * It intentionally ignores standard SSE fields such as `event:`, `id:`,
- * and `retry:`. It strictly extracts and concatenates `data:` fields.
- *
- * @param response The Response object from `fetch()`
- * @param onMessage Callback fired for every payload.
- * Return `true` from the callback to cancel the stream.
+ * Reads SSE payloads from a fetch response, joining each event's data fields.
+ * Ignores event, id and retry fields. Return true from onMessage to cancel the stream.
  */
 export async function parseSSE(response: Response, onMessage: (data: string) => boolean | undefined): Promise<void> {
 	if (!response.body) throw new Error("No response body");
@@ -29,33 +23,19 @@ export async function parseSSE(response: Response, onMessage: (data: string) => 
 				buffer += decoder.decode();
 			}
 
-			if (buffer.length > MAX_EVENT_SIZE) {
-				throw new Error("SSE parse error: event buffer exceeded 1MB limit.");
-			}
-
 			while (true) {
-				const nIdx = buffer.indexOf("\n\n");
-				const rIdx = buffer.indexOf("\r\n\r\n");
-
-				let boundaryIdx = -1;
-				let skipChars = 0;
-
-				if (nIdx !== -1 && (rIdx === -1 || nIdx < rIdx)) {
-					boundaryIdx = nIdx;
-					skipChars = 2;
-				} else if (rIdx !== -1) {
-					boundaryIdx = rIdx;
-					skipChars = 4;
+				const boundary = /\r?\n\r?\n/.exec(buffer);
+				if (!boundary) break;
+				if (boundary.index > MAX_EVENT_SIZE) {
+					throw new Error("SSE parse error: event exceeded 1MB limit.");
 				}
 
-				if (boundaryIdx === -1) break;
+				const eventText = buffer.substring(0, boundary.index);
+				buffer = buffer.substring(boundary.index + boundary[0].length);
 
-				const eventStr = buffer.substring(0, boundaryIdx);
-				buffer = buffer.substring(boundaryIdx + skipChars);
-
-				if (eventStr.length > 0) {
-					const data = parseEventData(eventStr);
-					// Strictly check against null; empty string is a valid event payload.
+				if (eventText.length > 0) {
+					const data = parseEventData(eventText);
+					// An empty string is a valid payload; null means no data field.
 					if (data !== null) {
 						if (onMessage(data)) {
 							await reader.cancel();
@@ -65,6 +45,9 @@ export async function parseSSE(response: Response, onMessage: (data: string) => 
 				}
 			}
 
+			if (buffer.length > MAX_EVENT_SIZE) {
+				throw new Error("SSE parse error: event exceeded 1MB limit.");
+			}
 			if (done) break;
 		}
 
@@ -73,12 +56,11 @@ export async function parseSSE(response: Response, onMessage: (data: string) => 
 			if (data !== null) onMessage(data);
 		}
 	} catch (error) {
-		// Tear down the connection on the error path too; releaseLock() alone
-		// leaves the HTTP response streaming until the server closes it.
+		// releaseLock() alone leaves the response streaming after an error.
 		try {
 			await reader.cancel();
 		} catch {
-			// Surfacing the original error matters more.
+			// Preserve the original error if cancellation fails.
 		}
 		throw error;
 	} finally {
@@ -86,32 +68,32 @@ export async function parseSSE(response: Response, onMessage: (data: string) => 
 	}
 }
 
-function parseEventData(eventStr: string): string | null {
+function parseEventData(eventText: string): string | null {
 	let data: string | null = null;
 	let start = 0;
 
-	while (start < eventStr.length) {
-		let end = eventStr.indexOf("\n", start);
-		if (end === -1) end = eventStr.length;
+	while (start < eventText.length) {
+		let end = eventText.indexOf("\n", start);
+		if (end === -1) end = eventText.length;
 
-		let line = eventStr.substring(start, end);
+		let line = eventText.substring(start, end);
 
-		// Handle \r\n endings safely
+		// Remove the remaining CR from a CRLF line ending.
 		if (line.endsWith("\r")) {
 			line = line.substring(0, line.length - 1);
 		}
 
 		if (line.startsWith("data:")) {
-			let val = line.substring(5);
-			// The SSE standard dictates stripping exactly ONE leading space if present.
-			if (val.startsWith(" ")) {
-				val = val.substring(1);
+			let value = line.substring(5);
+			// SSE strips exactly one optional space after the colon.
+			if (value.startsWith(" ")) {
+				value = value.substring(1);
 			}
 
 			if (data === null) {
-				data = val;
+				data = value;
 			} else {
-				data += "\n" + val;
+				data += "\n" + value;
 			}
 		}
 

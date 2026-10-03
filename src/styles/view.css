@@ -1,0 +1,23 @@
+.mur-view .mur-chat-scroll-area {
+	padding: 1.5rem 1rem;
+}
+
+.mur-view .mur-chat-history {
+	padding: 0 0.5rem;
+}
+
+.mur-view-error {
+	width: 100%;
+	max-width: var(--mur-chat-content-width);
+	margin: 0 auto;
+	padding: 0.5rem 1rem;
+	font-size: 0.85rem;
+	color: var(--mur-danger-text);
+}
+
+.mur-view-empty {
+	max-width: var(--mur-chat-content-width);
+	margin: 0 auto;
+	padding: 2rem 0.5rem;
+	color: var(--mur-text-muted);
+}

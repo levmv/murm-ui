@@ -1,86 +1,61 @@
 import "./thinking.css";
-import type { ChatPlugin } from "../../core/types";
+import type { MessagePlugin } from "../../core/types";
+import { defaultLabels } from "../../labels";
 import { el } from "../../utils/dom";
 import { renderSafeHTML } from "../../utils/html";
 import { ICON_CHEVRON } from "../../utils/icons";
 
-interface ThinkingState {
-	isExpanded: boolean;
-	cacheReasoning: string;
-	cacheIsGenerating: boolean;
-	contentEl: HTMLElement;
-	btnSpan: HTMLElement;
-}
-
-const ENCRYPTED_REASONING_FALLBACK = "<i>Thought process is hidden by the model provider.</i>";
-
-function getReasoningDisplayContent(block: { text: string; encrypted?: boolean }): string {
-	if (block.encrypted) return ENCRYPTED_REASONING_FALLBACK;
-	return block.text;
-}
-
-export function ThinkingPlugin(): ChatPlugin {
-	const stateMap = new WeakMap<HTMLElement, ThinkingState>();
-
+/** Collapsible reasoning; content is rendered only when opened. */
+export function thinking(): MessagePlugin {
 	return {
 		name: "thinking",
-		onBlockRender: (block, containerEl, isGenerating) => {
-			if (block.type !== "reasoning") return false;
-
-			let state = stateMap.get(containerEl);
-
-			if (!state) {
-				const btn = el("button", "mur-think-toggle", {
-					innerHTML: ICON_CHEVRON + "<span>Thought Process</span>",
-				});
-
-				const btnSpan = btn.querySelector("span") as HTMLElement;
-				btn.setAttribute("aria-expanded", "false");
-
-				const contentEl = el("div", "mur-think-content");
-				contentEl.hidden = true;
-				const wrapper = el("div", "mur-think-wrapper", {}, [btn, contentEl]);
-
-				containerEl.innerHTML = "";
-				containerEl.appendChild(wrapper);
-
-				state = {
-					isExpanded: false,
-					cacheReasoning: "",
-					cacheIsGenerating: false,
-					contentEl,
-					btnSpan,
-				};
-
-				btn.onclick = () => {
-					state!.isExpanded = !state!.isExpanded;
-					contentEl.hidden = !state!.isExpanded;
-					btn.setAttribute("aria-expanded", String(state!.isExpanded));
-
-					const displayContent = getReasoningDisplayContent(block);
-
-					if (state!.isExpanded && state!.cacheReasoning !== displayContent) {
-						renderSafeHTML(contentEl, displayContent);
-						state!.cacheReasoning = displayContent;
-					}
-				};
-
-				stateMap.set(containerEl, state);
-			}
-
-			if (state.cacheIsGenerating !== isGenerating) {
-				state.btnSpan.textContent = isGenerating ? "Thinking..." : "Thought Process";
-				state.cacheIsGenerating = isGenerating;
-			}
-
-			const displayContent = getReasoningDisplayContent(block);
-
-			if (state.isExpanded && state.cacheReasoning !== displayContent) {
-				renderSafeHTML(state.contentEl, displayContent);
-				state.cacheReasoning = displayContent;
-			}
-
-			return true;
-		},
+		renderers: [
+			{
+				matches: (block) => block.type === "reasoning",
+				mount(container) {
+					const button = el("button", "mur-think-toggle", { type: "button", innerHTML: ICON_CHEVRON });
+					const label = el("span");
+					button.appendChild(label);
+					button.setAttribute("aria-expanded", "false");
+					const contentEl = el("div", "mur-think-content", { hidden: true });
+					container.replaceChildren(el("div", "mur-think-wrapper", null, [button, contentEl]));
+					let expanded = false;
+					let content = "";
+					let encrypted = false;
+					let labels = defaultLabels;
+					let rendered: string | undefined;
+					let renderedEncrypted = false;
+					const render = () => {
+						if (!expanded || (rendered === content && renderedEncrypted === encrypted)) return;
+						if (encrypted) contentEl.replaceChildren(el("i", "", { textContent: content }));
+						else renderSafeHTML(contentEl, content, undefined, labels);
+						rendered = content;
+						renderedEncrypted = encrypted;
+					};
+					button.onclick = () => {
+						expanded = !expanded;
+						contentEl.hidden = !expanded;
+						button.setAttribute("aria-expanded", String(expanded));
+						render();
+					};
+					return {
+						update(block, ctx) {
+							if (block.type !== "reasoning") return;
+							labels = ctx.labels ?? defaultLabels;
+							encrypted = block.encrypted === true;
+							content = encrypted ? labels.hiddenReasoning : block.text;
+							const title = ctx.isGenerating ? labels.thinking : labels.thoughtProcess;
+							if (label.textContent !== title) label.textContent = title;
+							render();
+						},
+						destroy() {
+							button.onclick = null;
+						},
+					};
+				},
+			},
+		],
 	};
 }
+
+export { thinking as ThinkingPlugin };

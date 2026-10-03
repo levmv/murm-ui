@@ -19,11 +19,19 @@ function installDom(url: string): DOMWindow {
 	return dom.window;
 }
 
-test("hash router reads, writes, and stops listening after destroy", () => {
+test("hash router reads, writes, and stops listening after destroy", { timeout: 5000 }, async (t) => {
 	const window = installDom("https://example.test/#/chat/current");
+	t.after(() => window.close());
 	const router = new AppRouter();
 	const navigations: (string | null)[] = [];
 	const specialId = "space/slash%?#✓";
+	async function navigate(action: () => void): Promise<void> {
+		const changed = new Promise<void>((resolve) =>
+			window.addEventListener("hashchange", () => resolve(), { once: true }),
+		);
+		action();
+		await changed;
+	}
 
 	assert.equal(router.getId(), "current");
 	assert.equal(router.hrefFor("next"), "#/chat/next");
@@ -37,23 +45,23 @@ test("hash router reads, writes, and stops listening after destroy", () => {
 	assert.equal(router.getId(), specialId);
 
 	router.listen((id) => navigations.push(id));
-	window.location.hash = "#/chat/from-event";
-	window.dispatchEvent(new window.HashChangeEvent("hashchange"));
-	assert.deepEqual(navigations, ["from-event"]);
-
-	window.history.pushState(null, "", "#/chat/from-popstate");
-	window.dispatchEvent(new window.PopStateEvent("popstate"));
-	assert.deepEqual(navigations, ["from-event", "from-popstate"]);
+	await navigate(() => window.history.back());
+	assert.deepEqual(navigations, ["next"]);
+	await navigate(() => window.history.forward());
+	assert.deepEqual(navigations, ["next", specialId]);
+	await navigate(() => {
+		window.location.hash = "#/chat/from-event";
+	});
+	assert.deepEqual(navigations, ["next", specialId, "from-event"]);
 
 	window.history.pushState(null, "", "#/chat/%E0%A4%A");
 	assert.equal(router.getId(), null);
 
 	router.destroy();
-	window.location.hash = "#/chat/ignored";
-	window.dispatchEvent(new window.HashChangeEvent("hashchange"));
-	window.history.pushState(null, "", "#/chat/also-ignored");
-	window.dispatchEvent(new window.PopStateEvent("popstate"));
-	assert.deepEqual(navigations, ["from-event", "from-popstate"]);
+	await navigate(() => {
+		window.location.hash = "#/chat/ignored";
+	});
+	assert.deepEqual(navigations, ["next", specialId, "from-event"]);
 });
 
 test("path router reads, writes, and reports popstate navigation", () => {

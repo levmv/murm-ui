@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { JSDOM } from "jsdom";
-import { closeDropdown, showDropdown } from "./dropdown";
+import { closeDropdown, showDropdown, updateDropdown } from "./dropdown";
 
 const originalDocument = globalThis.document;
 
@@ -84,6 +84,10 @@ test("aligns left and right edges according to the align option", () => {
 	menu = document.querySelector<HTMLElement>(".mur-dropdown-menu");
 	assert.equal(menu?.style.left, "auto");
 	assert.equal(menu?.style.right, "20px");
+
+	trigger.getBoundingClientRect = () => rect(180, 900, 20, 20);
+	updateDropdown(trigger, [{ id: "delete", label: "Delete", onClick: () => {} }]);
+	assert.equal(menu?.style.top, "160px");
 });
 
 test("defaults to right-edge alignment when the menu would overflow the app", () => {

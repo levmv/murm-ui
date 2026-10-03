@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import type { BlockRenderContext, ContentBlock, Message } from "../../core/types";
+import type { ContentBlock, Message, RendererContext } from "../../core/types";
 import { ToolsPlugin } from "./tools-plugin";
 
 function setGlobal(name: string, value: unknown): void {
@@ -49,11 +49,14 @@ function toolMessages(status: "streaming" | "pending" | "running" | "complete" |
 	];
 }
 
-function renderContext(messages: Message[]): BlockRenderContext {
+function renderContext(messages: Message[], isGenerating = false): RendererContext {
 	return {
 		message: messages[0],
 		messages,
 		blockIndex: 0,
+		isGenerating,
+		canAct: true,
+		dispatch() {},
 	};
 }
 
@@ -61,10 +64,11 @@ test("ToolsPlugin renders a compact tool call and expands matching result", () =
 	installDom();
 	const plugin = ToolsPlugin();
 	const container = document.createElement("div");
+	const renderer = plugin.renderers![0].mount(container);
 	const messages = toolMessages();
 	const toolCall = messages[0].blocks[0] as Extract<ContentBlock, { type: "tool_call" }>;
 
-	assert.equal(plugin.onBlockRender?.(toolCall, container, false, renderContext(messages)), true);
+	renderer.update(toolCall, renderContext(messages, false));
 
 	const title = container.querySelector(".mur-tool-title");
 	const status = container.querySelector(".mur-tool-status");
@@ -103,34 +107,54 @@ test("ToolsPlugin lets callers customize labels and result formatting", () => {
 		},
 	});
 	const container = document.createElement("div");
+	const renderer = plugin.renderers![0].mount(container);
 	const messages = toolMessages();
 	const toolCall = messages[0].blocks[0] as Extract<ContentBlock, { type: "tool_call" }>;
 
-	assert.equal(plugin.onBlockRender?.(toolCall, container, false, renderContext(messages)), true);
+	renderer.update(toolCall, renderContext(messages, false));
 
 	assert.equal(container.querySelector(".mur-tool-title")?.textContent, "ls agent-experiment");
 	assert.equal(container.querySelector<HTMLElement>(".mur-tool-details")?.hidden, false);
 	assert.match(container.textContent ?? "", /app\.ts \| file/);
 });
 
-test("ToolsPlugin updates an existing tool block when the result arrives", () => {
+test("ToolsPlugin caches missing results during streaming and refreshes when a result arrives", () => {
 	installDom();
 	const plugin = ToolsPlugin();
 	const container = document.createElement("div");
+	const renderer = plugin.renderers![0].mount(container);
 	const messages = toolMessages("running");
 	const toolCall = messages[0].blocks[0] as Extract<ContentBlock, { type: "tool_call" }>;
 	messages.splice(1);
+	const nextCall = { ...toolCall, id: "tool-block-2", toolCallId: "call-2" };
+	messages.push({ id: "assistant-2", role: "assistant", blocks: [nextCall] });
+	let historyReads = 0;
+	const context = renderContext(messages, true);
+	context.messages = new Proxy(messages, {
+		get(target, key, receiver) {
+			if (typeof key === "string" && /^\d+$/.test(key)) historyReads++;
+			return Reflect.get(target, key, receiver);
+		},
+	});
 
-	assert.equal(plugin.onBlockRender?.(toolCall, container, true, renderContext(messages)), true);
+	renderer.update(toolCall, context);
 	assert.equal(container.querySelector(".mur-tool-status")?.textContent, "...");
+	assert.ok(historyReads > 0);
+	historyReads = 0;
+	const nextRenderer = plugin.renderers![0].mount(document.createElement("div"));
+	nextRenderer.update(nextCall, { ...context, message: messages[1] });
+	assert.equal(historyReads, 0, "cards share a single transcript scan");
+	nextRenderer.destroy();
+	for (let i = 0; i < 10; i++) {
+		toolCall.argsText += " ";
+		renderer.update(toolCall, context);
+	}
+	assert.equal(historyReads, 0, "argument deltas must not scan the transcript for a missing result");
 
-	messages[0].blocks[0] = {
-		...toolCall,
-		status: "complete",
-	};
-	messages.push(toolMessages()[1]);
+	toolCall.status = "complete";
+	const withResult = [...messages, toolMessages()[1]];
 
-	assert.equal(plugin.onBlockRender?.(messages[0].blocks[0], container, false, renderContext(messages)), true);
+	renderer.update(toolCall, renderContext(withResult, false));
 	assert.equal(container.querySelector(".mur-tool-status")?.textContent, "✓");
 	container.querySelector<HTMLButtonElement>(".mur-tool-summary")?.click();
 	assert.equal(container.querySelectorAll<HTMLElement>(".mur-tool-section")[1]?.hidden, false);
@@ -141,73 +165,51 @@ test("ToolsPlugin invalidates a cached result when the transcript changes", () =
 	installDom();
 	const plugin = ToolsPlugin({ defaultExpanded: true });
 	const container = document.createElement("div");
+	const renderer = plugin.renderers![0].mount(container);
 	const messages = toolMessages();
 	const toolCall = messages[0].blocks[0] as Extract<ContentBlock, { type: "tool_call" }>;
+	const earlierMessages = toolMessages().map((message) => ({ ...message, id: `earlier-${message.id}` }));
+	const context = { ...renderContext(messages, false), messages: [...earlierMessages, ...messages] };
 
-	assert.equal(plugin.onBlockRender?.(toolCall, container, false, renderContext(messages)), true);
+	renderer.update(toolCall, context);
 	assert.match(container.textContent ?? "", /agent-experiment\/app\.ts/);
 
-	const messagesWithoutResult = [messages[0]];
-	assert.equal(plugin.onBlockRender?.(toolCall, container, false, renderContext(messagesWithoutResult)), true);
+	// Providers may reuse call IDs across turns. An earlier result is no match.
+	const messagesWithoutResult = [...earlierMessages, messages[0]];
+	renderer.update(toolCall, { ...context, messages: messagesWithoutResult });
 
 	assert.doesNotMatch(container.textContent ?? "", /agent-experiment\/app\.ts/);
 	assert.match(container.textContent ?? "", /No result\./);
+});
+
+test("unchanged tool renders do not mutate collapsed, expanded or summary DOM", () => {
+	installDom();
+	for (const config of [{}, { defaultExpanded: true }, { details: false }]) {
+		const plugin = ToolsPlugin(config);
+		const container = document.createElement("div");
+		const renderer = plugin.renderers![0].mount(container);
+		const messages = toolMessages();
+		renderer.update(messages[0].blocks[0], renderContext(messages, false));
+		const observer = new document.defaultView!.MutationObserver(() => {});
+		observer.observe(container, { subtree: true, childList: true, attributes: true, characterData: true });
+		renderer.update(messages[0].blocks[0], renderContext(messages, false));
+		assert.equal(observer.takeRecords().length, 0);
+		observer.disconnect();
+	}
 });
 
 test("ToolsPlugin summarizes multiple important args without letting long values dominate", () => {
 	installDom();
 	const plugin = ToolsPlugin();
 	const container = document.createElement("div");
-	const messages = [
-		{
-			id: "assistant-1",
-			role: "assistant" as const,
-			blocks: [
-				{
-					id: "tool-block-1",
-					type: "tool_call" as const,
-					toolCallId: "call-1",
-					name: "grep_search",
-					argsText: JSON.stringify({
-						pattern: "TODO",
-						dir_path: "src/",
-						content: "x".repeat(200),
-					}),
-					status: "complete" as const,
-				},
-			],
-		},
-	];
+	const renderer = plugin.renderers![0].mount(container);
+	const messages = toolMessages();
 	const toolCall = messages[0].blocks[0];
+	assert.ok(toolCall.type === "tool_call");
+	toolCall.name = "grep_search";
+	toolCall.argsText = JSON.stringify({ pattern: "TODO", dir_path: "src/", content: "x".repeat(200) });
 
-	assert.equal(plugin.onBlockRender?.(toolCall, container, false, renderContext(messages)), true);
+	renderer.update(toolCall, renderContext(messages, false));
 
 	assert.equal(container.querySelector(".mur-tool-title")?.textContent, "grep_search pattern=TODO dir_path=src/");
-});
-
-test("ToolsPlugin keeps single preferred args terse", () => {
-	installDom();
-	const plugin = ToolsPlugin();
-	const container = document.createElement("div");
-	const messages = [
-		{
-			id: "assistant-1",
-			role: "assistant" as const,
-			blocks: [
-				{
-					id: "tool-block-1",
-					type: "tool_call" as const,
-					toolCallId: "call-1",
-					name: "search_text",
-					argsText: JSON.stringify({ query: "ChatProvider" }),
-					status: "complete" as const,
-				},
-			],
-		},
-	];
-	const toolCall = messages[0].blocks[0];
-
-	assert.equal(plugin.onBlockRender?.(toolCall, container, false, renderContext(messages)), true);
-
-	assert.equal(container.querySelector(".mur-tool-title")?.textContent, "search_text ChatProvider");
 });

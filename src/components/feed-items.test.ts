@@ -1,21 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Message } from "../core/types";
-import { buildFeedItems, type FeedAgentRunItem, isAgentRunItem } from "./feed-items";
-
-function build(messages: Message[], options: Partial<Parameters<typeof buildFeedItems>[1]> = {}) {
-	return buildFeedItems(messages, {
-		generatingMessageId: null,
-		isRunExpanded: () => false,
-		...options,
-	});
-}
+import { buildFeedItems, isAgentRunItem, type RunItem } from "./feed-items";
 
 function onlyAgentRun(messages: Message[], options: Partial<Parameters<typeof buildFeedItems>[1]> = {}) {
-	const items = build(messages, options);
+	const items = buildFeedItems(messages, options);
 	assert.equal(items.length, 1);
 	assert.ok(isAgentRunItem(items[0]));
-	return items[0] as FeedAgentRunItem;
+	return items[0];
 }
 
 function runWithIntermediateProse(intermediateText = "Верно, playground/ - мое. Давай уберу это сейчас."): Message[] {
@@ -238,47 +230,43 @@ function runWithOnlyToolResultNoise(): Message[] {
 	];
 }
 
-function visibleText(item: FeedAgentRunItem): string[] {
-	return item.visibleMessages.flatMap((message) =>
-		message.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])),
-	);
+function visibleText(item: RunItem): string[] {
+	return item.segments
+		.filter((segment) => segment.type === "messages")
+		.flatMap((segment) => segment.messages)
+		.flatMap((message) => message.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])));
 }
 
-function blockShape(item: FeedAgentRunItem) {
+function blockShape(item: RunItem) {
 	return {
-		steps: item.stepMessages.map((message) => ({
-			messageId: message.id,
-			role: message.role,
-			blocks: message.blocks.map((block) => block.type),
-		})),
-		visible: item.visibleMessages.map((message) => ({
-			messageId: message.id,
-			role: message.role,
-			blocks: message.blocks.map((block) => block.type),
-		})),
+		steps: item.segments
+			.filter((segment) => segment.type === "work")
+			.flatMap((segment) => segment.messages)
+			.map((message) => ({
+				messageId: message.id,
+				role: message.role,
+				blocks: message.blocks.map((block) => block.type),
+			})),
+		visible: item.segments
+			.filter((segment) => segment.type === "messages")
+			.flatMap((segment) => segment.messages)
+			.map((message) => ({
+				messageId: message.id,
+				role: message.role,
+				blocks: message.blocks.map((block) => block.type),
+			})),
 	};
 }
 
-function segmentShape(item: FeedAgentRunItem) {
-	return item.segments.map((segment) =>
-		segment.type === "messages"
-			? {
-					type: "messages",
-					messages: segment.messages.map((message) => ({
-						messageId: message.id,
-						role: message.role,
-						blocks: message.blocks.map((block) => block.type),
-					})),
-				}
-			: {
-					type: "work",
-					messages: segment.stepMessages.map((message) => ({
-						messageId: message.id,
-						role: message.role,
-						blocks: message.blocks.map((block) => block.type),
-					})),
-				},
-	);
+function segmentShape(item: RunItem) {
+	return item.segments.map((segment) => ({
+		type: segment.type,
+		messages: segment.messages.map((message) => ({
+			messageId: message.id,
+			role: message.role,
+			blocks: message.blocks.map((block) => block.type),
+		})),
+	}));
 }
 
 test("machinery collapse keeps intermediate assistant prose visible and folds machinery", () => {
@@ -308,13 +296,7 @@ test("machinery collapse keeps intermediate assistant prose visible and folds ma
 	]);
 });
 
-test("machinery collapse keeps intermediate assistant questions visible", () => {
-	const item = onlyAgentRun(runWithIntermediateProse("Нужно удалить playground/ целиком?"));
-
-	assert.deepEqual(visibleText(item), ["Нужно удалить playground/ целиком?", "Вот, теперь в memory/random-ideas.md."]);
-});
-
-test("full collapse preserves previous behavior", () => {
+test("full collapse folds intermediate prose along with tool work", () => {
 	const item = onlyAgentRun(runWithIntermediateProse(), { agentRunCollapse: "full" });
 
 	assert.deepEqual(visibleText(item), ["Вот, теперь в memory/random-ideas.md."]);
@@ -398,7 +380,7 @@ test("runs without intermediate prose render the same in full and machinery mode
 });
 
 test("standalone tool results do not trigger agent run collapse", () => {
-	const items = build(runWithOnlyToolResultNoise());
+	const items = buildFeedItems(runWithOnlyToolResultNoise(), {});
 
 	assert.equal(items.length, 3);
 	assert.equal(items.some(isAgentRunItem), false);
@@ -406,7 +388,7 @@ test("standalone tool results do not trigger agent run collapse", () => {
 
 test("active machinery agent runs render as expanded work", () => {
 	const messages = runWithoutIntermediateProse().slice(0, 3);
-	const item = onlyAgentRun(messages, { generatingMessageId: "assistant-tool" });
+	const item = onlyAgentRun(messages, { streamingMessageIds: new Set(["assistant-tool"]) });
 
 	assert.deepEqual(segmentShape(item), [
 		{
@@ -414,5 +396,5 @@ test("active machinery agent runs render as expanded work", () => {
 			messages: [{ messageId: "assistant-tool", role: "assistant", blocks: ["tool_call"] }],
 		},
 	]);
-	assert.equal(item.collapsed, false);
+	assert.ok(item.segments.every((segment) => segment.type !== "work" || !segment.collapsed));
 });

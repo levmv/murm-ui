@@ -1,4 +1,5 @@
-import type { ChatProvider, ChatRequest, StreamEvent } from "../../src/core/types";
+import type { ConversationChange } from "../../src/core/conversation-types";
+import type { ChatProvider, ChatRequest, ChatStreamRequest } from "../../src/core/types";
 import { uuidv7 } from "../../src/utils/uuid";
 
 const RESPONSES = [
@@ -49,41 +50,38 @@ const FUN_TITLES = [
 ];
 
 export class MockProvider implements ChatProvider {
-	async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+	async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 		return new Promise((resolve) => {
-			const messageId = uuidv7();
+			const { messageId } = request;
 			const blockId = uuidv7();
 
-			onEvent({
-				type: "message_start",
-				message: { id: messageId, role: "assistant", blocks: [] },
-			});
+			onChange([{ type: "block.put", messageId, block: { id: blockId, type: "text", text: "" } }]);
 
 			const responseIndex = request.messages.filter((message) => message.role === "user").length - 1;
 			const chunks = splitIntoChunks(RESPONSES[Math.max(0, responseIndex) % RESPONSES.length]);
 			let index = 0;
 
-			// Dynamic Speed: Aim for ~1.1 seconds total, capped between 15ms (fast) and 45ms (normal)
+			// Aim for about 1.1 seconds per response, with 15–45 ms between chunks.
 			const intervalMs = Math.max(15, Math.min(45, Math.floor(1100 / chunks.length)));
 			const interval = setInterval(() => {
 				if (request.signal.aborted) {
 					clearInterval(interval);
-					onEvent({ type: "finish", reason: "aborted" });
 					resolve();
 					return;
 				}
 
 				if (index < chunks.length) {
-					onEvent({
-						type: "text_delta",
-						messageId,
-						blockId,
-						delta: chunks[index],
-					});
+					onChange([
+						{
+							type: "text.append",
+							messageId,
+							blockId,
+							delta: chunks[index],
+						},
+					]);
 					index++;
 				} else {
 					clearInterval(interval);
-					onEvent({ type: "finish", reason: "stop" });
 					resolve();
 				}
 			}, intervalMs);

@@ -3,5 +3,7 @@ import "./styles/sidebar.css";
 import "./styles/input.css";
 import "./styles/feed.css";
 import "./styles/dropdown.css";
+import "./styles/view.css";
+import "./styles/composer.css";
 
 export * from "./index";

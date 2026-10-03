@@ -2,185 +2,45 @@
 
 A zero-framework, vanilla TypeScript chat interface for LLMs.
 
-Documentation and the static mock demo live at https://levmv.github.io/murm-ui/. The npm package also includes local reference files under `docs/`.
+Use `ChatUI` for a complete chat with a model provider and history storage, or combine `ChatView`, `Composer` and `Sidebar` with your own backend.
 
-Built for developers who need a functional chat UI without framework overhead. No React, no virtual DOM, no build pipeline complexity—just a small, composable library that handles chat state, rendering, and user interaction.
+- Streaming Markdown with incremental DOM updates and optional syntax highlighting.
+- Plugins for tool calls, reasoning, attachments and message actions.
+- Light and dark themes, fullscreen and embedded layouts.
+- One runtime dependency: `marked`. No UI framework or virtual DOM.
 
-### Key Features
-- **Minimal dependencies:** Only `marked` as an external runtime dependency. The optional syntax highlighter ships inside the package.
-- **Simple build:** Single-command bundling with esbuild. No transpilation config required.
-- **Efficient rendering**: Reference-based DOM updates and throttled markdown parsing to handle streaming responses without layout thrashing.
-- **Highly Modular:** Bring your own backend, bring your own AI provider, and only load the UI plugins you actually need.
+[Documentation](docs/guide.md) · [Demo](https://levmv.github.io/murm-ui/demo/)
 
----
-
-### Install
+## Install
 
 ```sh
 npm install murm-ui
 ```
 
-### Usage
+## Quick start
 
-The UI is heavily decoupled. You assemble the chat by passing in a **Provider** (how it talks to the AI), **Storage** (how it saves history), and **Plugins** (extra UI features).
+Start from the [HTML shell](docs/chat-shell.html), then connect a provider and storage:
 
-Here is a complete example. In browser apps, `OpenAIProvider` usually points at an app-owned backend proxy; BYOK or local tools can pass a user-provided token directly.
-
-```typescript
-import {
-	ChatUI,
-	IndexedDBStorage,
-	OpenAIProvider,
-} from "murm-ui/with-css";
-import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+```ts
+import { ChatUI, IndexedDBStorage, OpenAIProvider } from "murm-ui/with-css";
 import { CopyPlugin } from "murm-ui/plugins/copy";
-import { EditPlugin } from "murm-ui/plugins/edit";
-import { ThinkingPlugin } from "murm-ui/plugins/thinking";
-import { highlight } from "murm-ui/highlighter";
-import "murm-ui/highlighter/theme.css";
 
-const ui = new ChatUI({
-	container: "#app",
-	provider: new OpenAIProvider("USER_PROVIDED_OR_PROXY_TOKEN", "/api/chat/completions", "gpt-4o-mini"),
-	storage: new IndexedDBStorage(),
-	agentRunCollapse: "machinery",
-	plugins: (chatApi) => [
-		AttachmentPlugin(),
-		ThinkingPlugin(),
-		CopyPlugin(),
-		EditPlugin({
-			onSave: (id, text) => chatApi.editAndResubmit(id, text),
-		}),
-	],
-	highlighter: highlight,
+new ChatUI({
+  container: ".mur-app",
+  provider: new OpenAIProvider("", "/api/chat/completions", "your-model"),
+  storage: new IndexedDBStorage(),
+  plugins: () => [CopyPlugin()],
 });
 ```
 
-Code block headers are enabled by default.
-The built-in highlighter escapes plain or unknown-language code blocks.
+`OpenAIProvider` accepts OpenAI-compatible endpoints, including local servers and application proxies. `murm-ui/with-css` includes the core styles; plugin imports include their own CSS.
 
-Agent runs default to `agentRunCollapse: "machinery"`: tool calls, tool results, and reasoning blocks fold under "Worked" at their position in the run, while every assistant text block stays visible in order. Pass `agentRunCollapse: "full"` to collapse the whole run and show only the final assistant prose.
+For an application that already manages conversations and requests, see [ChatView and Composer](docs/guide.md#chatview-and-composer). They create their own markup and work independently of providers and storage.
 
-For agent-oriented interfaces that should reveal reasoning while work is active, use `AgentThinkingPlugin()` from `murm-ui/plugins/agent-thinking` instead of `ThinkingPlugin()`. It renders reasoning as a muted italic preview that expands on click, then collapses with the rest of the agent work.
+## Development
 
-The root package entry is side-effect-free. For bundlers that support CSS imports, `murm-ui/with-css` includes the core styles automatically. You can also import the CSS assets explicitly:
+Run `npm ci`, then:
 
-```typescript
-// Core styles
-import "murm-ui/styles/base.css";
-import "murm-ui/styles/sidebar.css";
-import "murm-ui/styles/input.css";
-import "murm-ui/styles/feed.css";
-import "murm-ui/styles/dropdown.css";
-
-// Plugin styles (import only what you use)
-import "murm-ui/plugins/agent-thinking/agent-thinking.css";
-import "murm-ui/plugins/attachment/attachment.css";
-import "murm-ui/plugins/edit/edit.css";
-import "murm-ui/plugins/thinking/thinking.css";
-
-// Highlighter theme (optional)
-import "murm-ui/highlighter/theme.css";
-```
-
-Plugin entrypoints such as `murm-ui/plugins/attachment` import their own CSS, so apps only ship styles for plugins they enable.
-
-You provide the HTML skeleton. See `example/index.html` for the standard class names expected by `ChatUI`.
-The `.mur-app` root is a full-viewport shell by default. For embedded use, add `mur-app-embedded` to the root and pass `fullscreen: false` to `ChatUI`.
-
-Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-theme="light"` or `data-theme="dark"` on `.mur-app` for an explicit theme, or omit `data-theme` to follow the user's `prefers-color-scheme` setting.
-
-### Remote Storage API
-
-`RemoteStorage` takes the API root as its first argument. For the endpoints below, use `new RemoteStorage("/api", getToken)`. It sends `Authorization: Bearer <token>` when the token callback returns a value.
-
-**1. List Chats - Cursor Paginated**
-* **GET** `/api/chats?limit=20&cursor=1710629000000&cursorId=chat-5&cursorPinned=true`
-* `cursor` (timestamp), `cursorId` (string ID), and `cursorPinned` (boolean) are optional. When present, they should point to the `isPinned`, `updatedAt`, and `id` of the last item from the previous page.
-* Chats are sorted by pinned first, then `updatedAt` descending.
-* `isPinned` is optional metadata. If you expose the built-in pin menu, preserve it in list/save/meta responses and support pinned-first ordering.
-*   **Response (200 OK):** 
-    ```json
-    {
-      "items": [
-        { "id": "chat-1", "title": "React vs Vue", "updatedAt": 1710629000000, "isPinned": true },
-        { "id": "chat-2", "title": "Explain Quantum Computing", "updatedAt": 1710628000000 }
-      ],
-      "hasMore": false
-    }
-    ```
-
-**2. Get A Chat**
-*   **GET** `/api/chats/:id`
-*   **Response (200 OK):**
-    ```json
-    {
-      "id": "chat-1",
-      "title": "React vs Vue",
-      "updatedAt": 1710629000000,
-      "messages": [
-        {
-          "id": "msg-1",
-          "role": "user",
-          "blocks": [{ "id": "text-1", "type": "text", "text": "Hello" }]
-        },
-        {
-          "id": "msg-2",
-          "role": "assistant",
-          "blocks": [{ "id": "text-2", "type": "text", "text": "Hi there!" }]
-        }
-      ]
-    }
-    ```
-
-**3. Save A Chat**
-*   **PUT** `/api/chats/:id`
-*   **Body:** Same JSON shape as the Get A Chat response.
-*   **Response (200 OK):** `{ "success": true }`
-
-> **Optimization: `saveLimit`**
-> By default, `RemoteStorage` sends the entire message array every time the chat is saved. This works well for simple backends that store a whole chat document:
-> ```ts
-> new RemoteStorage("/api", getToken)
-> ```
->
-> For long chats or slower connections, you can limit saves to the most recent messages:
-> ```ts
-> new RemoteStorage("/api", getToken, { saveLimit: 20 })
-> ```
->
-> When messages are sliced, `RemoteStorage` still sends the same JSON shape, but adds `X-Murm-Save-Mode: partial`. If that header is absent, treat the request as a complete chat replacement.
->
-> If you use partial saves, your backend must not blindly overwrite the stored chat. Instead:
-> 1. Look at the `id` of the first message in the incoming payload.
-> 2. Upsert all incoming messages.
-> 3. Delete stored messages for this chat that have an `id` newer than the first payload message, but are not present in the payload. This cleans up edited or aborted response tails.
->
-> For backend-paginated transcripts, `GET /api/chats/:id` may return `hasMoreMessages: true` and an opaque `nextOlderMessagesCursor`. `RemoteStorage` sends that cursor as `before` to `GET /api/chats/:id?before=<cursor>&limit=<n>`; older pages return `{ messages, hasMore, nextOlderMessagesCursor? }`. This cursor is separate from `Message.id`.
-
-**4. Delete A Chat**
-*   **DELETE** `/api/chats/:id`
-*   **Response (200 OK):** `{ "success": true }`
-
-**5. Update Chat Metadata**
-*   **POST** `/api/chats/:id/meta`
-*   **Description:** The UI calls this to update background data, such as when the LLM auto-generates a smart title.
-*   **Body:** `{ "title": "A Smart Summary" }`
-*   **Response (200 OK):** `{ "success": true }`
-
-### Browser Support
-
-This library emits conservative **ES2018** JavaScript, but its real browser baseline is determined by the Web APIs required for streaming chat.
-
-Supported runtime baseline:
-* Chrome 66+
-* Firefox 65+
-* Safari 12.1+
-
-Required browser APIs include `fetch`, streaming `Response.body`, `ReadableStream.getReader`, `TextDecoder`, `AbortController`, `crypto.getRandomValues`, and either IndexedDB or a custom storage implementation.
-
-We prioritize graceful degradation for optional enhancements:
-* Clipboard API support enables copy buttons when available.
-* `ResizeObserver` improves sticky scrolling when available.
-* `IntersectionObserver` enables automatic sidebar pagination when available.
-* CSS features like `:has` and `field-sizing: content` are progressive enhancements; older browsers keep the core chat experience.
+- `npm run dev:next` — component demo at `http://localhost:8000`.
+- `npm run build:demo` — documentation and chat demo in `docs/dist`.
+- `npm run verify` — lint, types, tests, build and package checks.

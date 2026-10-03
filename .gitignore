@@ -7,3 +7,7 @@ docs/demo/bundle.css
 docs/demo/bundle.js
 example/index.css
 example/index.js
+example/bundle.css
+example/bundle.js
+example/next/bundle.js
+example/next/bundle.css

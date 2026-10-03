@@ -1,5 +1,6 @@
 import "./agent-thinking.css";
-import type { ChatPlugin } from "../../core/types";
+import type { MessagePlugin } from "../../core/types";
+import { type ChatLabels, defaultLabels } from "../../labels";
 import { el } from "../../utils/dom";
 
 export interface AgentThinkingPluginConfig {
@@ -7,6 +8,10 @@ export interface AgentThinkingPluginConfig {
 }
 
 interface AgentThinkingState {
+	labels: Readonly<ChatLabels>;
+	destroyed: boolean;
+	renderedExpanded?: boolean;
+	renderedExpandable?: boolean;
 	expanded: boolean;
 	expandable: boolean;
 	explicitExpandable: boolean;
@@ -17,42 +22,51 @@ interface AgentThinkingState {
 }
 
 const DEFAULT_PREVIEW_LINES = 3;
-const ENCRYPTED_REASONING_FALLBACK = "Thought process is hidden by the model provider.";
 
-export function AgentThinkingPlugin(config: AgentThinkingPluginConfig = {}): ChatPlugin {
-	const stateMap = new WeakMap<HTMLElement, AgentThinkingState>();
+/** Inline reasoning preview with an expandable body. */
+export function agentThinking(config: AgentThinkingPluginConfig = {}): MessagePlugin {
 	const previewLines = Math.max(1, Math.floor(config.previewLines ?? DEFAULT_PREVIEW_LINES));
-
 	return {
-		name: "agent-thinking",
-		onBlockRender: (block, containerEl) => {
-			if (block.type !== "reasoning") return false;
-
-			const content = reasoningContent(block);
-			if (content.trim().length === 0) return false;
-
-			let state = stateMap.get(containerEl);
-			if (!state) {
-				state = createState(previewLines);
-				containerEl.replaceChildren(state.previewEl);
-				stateMap.set(containerEl, state);
-			}
-
-			containerEl.className = "mur-content-block mur-block-reasoning mur-agent-think";
-			state.previewEl.style.setProperty("--mur-agent-think-preview-lines", String(previewLines));
-			if (state.contentCache !== content) {
-				state.textEl.textContent = content;
-				state.contentCache = content;
-				state.explicitExpandable = countExplicitLines(content) > previewLines;
-				state.expandable = state.explicitExpandable;
-			}
-			syncState(state);
-			if (!state.explicitExpandable && !state.expanded) queueMeasure(state);
-
-			return true;
-		},
+		name: "agentThinking",
+		renderers: [
+			{
+				matches: (block) => block.type === "reasoning" && (block.encrypted === true || block.text.trim().length > 0),
+				mount(container) {
+					const state = createState(previewLines);
+					container.className = "mur-content-block mur-block-reasoning mur-agent-think";
+					container.replaceChildren(state.previewEl);
+					return {
+						update(block, context) {
+							if (block.type !== "reasoning") return;
+							state.labels = context.labels ?? defaultLabels;
+							const content = block.encrypted ? state.labels.hiddenReasoning : block.text;
+							if (state.contentCache === content) return;
+							state.textEl.textContent = content;
+							state.contentCache = content;
+							state.explicitExpandable = countExplicitLines(content) > previewLines;
+							if (state.explicitExpandable) {
+								state.expandable = true;
+								syncState(state);
+							} else if (!state.expanded) queueMeasure(state);
+						},
+						destroy() {
+							state.destroyed = true;
+							state.previewEl.onclick = null;
+							state.previewEl.onkeydown = null;
+							const win = state.previewEl.ownerDocument.defaultView;
+							if (state.measureFrame !== null) {
+								if (win?.cancelAnimationFrame) win.cancelAnimationFrame(state.measureFrame);
+								else if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(state.measureFrame);
+							}
+						},
+					};
+				},
+			},
+		],
 	};
 }
+
+export { agentThinking as AgentThinkingPlugin };
 
 function createState(previewLines: number): AgentThinkingState {
 	const textEl = el("span", "mur-agent-think-text");
@@ -60,6 +74,8 @@ function createState(previewLines: number): AgentThinkingState {
 	previewEl.style.setProperty("--mur-agent-think-preview-lines", String(previewLines));
 
 	const state: AgentThinkingState = {
+		labels: defaultLabels,
+		destroyed: false,
 		expanded: false,
 		expandable: false,
 		explicitExpandable: false,
@@ -69,13 +85,13 @@ function createState(previewLines: number): AgentThinkingState {
 		textEl,
 	};
 
-	previewEl.addEventListener("click", () => toggleExpanded(state));
-	previewEl.addEventListener("keydown", (event) => {
+	previewEl.onclick = () => toggleExpanded(state);
+	previewEl.onkeydown = (event) => {
 		if (event.key !== "Enter" && event.key !== " ") return;
 		if (!state.expandable) return;
 		event.preventDefault();
 		toggleExpanded(state);
-	});
+	};
 
 	syncState(state);
 	return state;
@@ -85,10 +101,14 @@ function toggleExpanded(state: AgentThinkingState): void {
 	if (!state.expandable) return;
 	state.expanded = !state.expanded;
 	syncState(state);
+	if (!state.expanded && !state.explicitExpandable) queueMeasure(state);
 }
 
 function syncState(state: AgentThinkingState): void {
 	if (!state.expandable) state.expanded = false;
+	if (state.renderedExpanded === state.expanded && state.renderedExpandable === state.expandable) return;
+	state.renderedExpanded = state.expanded;
+	state.renderedExpandable = state.expandable;
 
 	state.previewEl.dataset.expandable = String(state.expandable);
 	state.previewEl.dataset.expanded = String(state.expanded);
@@ -97,7 +117,7 @@ function syncState(state: AgentThinkingState): void {
 		state.previewEl.setAttribute("role", "button");
 		state.previewEl.tabIndex = 0;
 		state.previewEl.setAttribute("aria-expanded", String(state.expanded));
-		state.previewEl.setAttribute("aria-label", "Toggle reasoning");
+		state.previewEl.setAttribute("aria-label", state.labels.toggleReasoning);
 		return;
 	}
 
@@ -108,15 +128,11 @@ function syncState(state: AgentThinkingState): void {
 }
 
 function queueMeasure(state: AgentThinkingState): void {
+	if (state.measureFrame !== null) return;
 	const win = state.previewEl.ownerDocument.defaultView;
 	const requestFrame =
 		win?.requestAnimationFrame?.bind(win) ??
 		(typeof requestAnimationFrame === "function" ? requestAnimationFrame : undefined);
-	const cancelFrame =
-		win?.cancelAnimationFrame?.bind(win) ??
-		(typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : undefined);
-
-	if (state.measureFrame !== null && cancelFrame) cancelFrame(state.measureFrame);
 
 	if (!requestFrame) {
 		measureExpandable(state);
@@ -130,18 +146,13 @@ function queueMeasure(state: AgentThinkingState): void {
 }
 
 function measureExpandable(state: AgentThinkingState): void {
-	if (state.expanded || state.explicitExpandable) return;
+	if (state.destroyed || state.expanded || state.explicitExpandable) return;
 
 	const measuredExpandable = state.textEl.scrollHeight > state.textEl.clientHeight + 1;
 	if (state.expandable === measuredExpandable) return;
 
 	state.expandable = measuredExpandable;
 	syncState(state);
-}
-
-function reasoningContent(block: { text: string; encrypted?: boolean }): string {
-	if (block.encrypted) return ENCRYPTED_REASONING_FALLBACK;
-	return block.text;
 }
 
 function countExplicitLines(text: string): number {

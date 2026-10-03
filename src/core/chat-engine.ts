@@ -1,16 +1,17 @@
 import { uuidv7 } from "../utils/uuid";
-import { cloneMessages, dropEphemeralMessages } from "./msg-utils";
-import { type ChatSessions, SessionManager } from "./session-manager";
+import { ConversationModel } from "./conversation";
+import type { ConversationChange } from "./conversation-types";
+import { cloneBlock, cloneMessages, dropEphemeralMessages } from "./msg-utils";
+import { type ChatSessions, SessionManager, type SessionState } from "./session-manager";
 import { Store } from "./store";
-import { applyStreamEventToState, type StreamReducerEvent } from "./stream-reducer";
 import type {
 	ChatPlugin,
 	ChatProvider,
 	ChatRequest,
 	ChatRequestDefaults,
-	ChatRequestPatch,
 	ChatState,
 	ChatStorage,
+	ContentBlock,
 	Message,
 	ReadonlyChatRequest,
 	RequestOptions,
@@ -27,14 +28,15 @@ export interface ChatEngineConfig {
 interface ActiveGeneration {
 	id: string;
 	sessionId: string;
-	currentMessageId: string;
+	runId: string;
 	controller: AbortController;
 	provider: ChatProvider;
 	requestDefaults: ChatRequestDefaults;
 }
 
 export class ChatEngine {
-	private store: Store<ChatState>;
+	readonly conversation = new ConversationModel();
+	private store: Store<SessionState>;
 	private readonly sessionManager: SessionManager;
 	public readonly sessions: ChatSessions;
 
@@ -46,28 +48,28 @@ export class ChatEngine {
 	private activeGeneration: ActiveGeneration | null = null;
 	private autoTitleControllers = new Set<AbortController>();
 	private isDestroyed = false;
+	private destroyPromise?: Promise<void>;
 
 	constructor(config: ChatEngineConfig) {
 		this.provider = config.provider;
-		this.titleOptions = this.mergeDefinedOptions({}, config.titleOptions ?? {});
+		this.titleOptions = this.mergeRequestOptions({}, config.titleOptions ?? {});
 		this.titleInstructions = config.titleInstructions;
 
 		const startingId = config.initialSessionId || uuidv7();
 
-		this.store = new Store<ChatState>({
+		this.conversation.setConversation({ id: startingId, messages: [] });
+		this.store = new Store<SessionState>({
 			sessions: [],
 			hasMoreSessions: false,
-			currentSessionId: startingId,
-			messages: [],
-			generatingMessageId: null,
 			isLoadingSession: !!config.initialSessionId,
 			isLoadingSessions: false,
-			hasMoreMessages: false,
 			isLoadingMessages: false,
+			olderCursor: null,
 			error: null,
 		});
 		this.sessionManager = new SessionManager({
 			store: this.store,
+			conversation: this.conversation,
 			storage: config.storage,
 			isGenerationActive: () => this.isBusy,
 			stopActiveGeneration: () => this.stopGeneration(),
@@ -84,19 +86,22 @@ export class ChatEngine {
 	}
 
 	public get state(): ChatState {
-		return this.store.get();
+		const { olderCursor, ...session } = this.store.get();
+		return {
+			...session,
+			currentSessionId: this.conversation.state.id,
+			messages: this.conversation.state.messages,
+			generatingMessageId: this.activeGeneration?.id ?? null,
+			hasMoreMessages: olderCursor !== null,
+		};
 	}
 
 	public subscribe<U>(selector: (state: ChatState) => U, listener: (selectedState: U) => void): () => void {
-		return this.store.subscribe(selector, listener);
-	}
-
-	public subscribeHot(listener: (state: ChatState) => void): () => void {
-		return this.store.subscribeHot(listener);
+		return this.store.subscribe(() => selector(this.state), listener);
 	}
 
 	public onChange<U>(selector: (state: ChatState) => U, listener: (selectedState: U) => void): () => void {
-		return this.store.onChange(selector, listener);
+		return this.store.onChange(() => selector(this.state), listener);
 	}
 
 	private get isBusy() {
@@ -104,105 +109,106 @@ export class ChatEngine {
 	}
 
 	public async setProvider(newProvider: ChatProvider) {
-		if (this.isBusy) await this.stopGeneration();
+		if (this.isDestroyed) return;
 		this.provider = newProvider;
+		if (this.isBusy) await this.stopGeneration();
 	}
 
 	public clearError() {
+		const id = this.state.error?.id;
+		const message = id ? this.conversation.getMessage(id) : undefined;
+		if (message?.error)
+			this.conversation.apply({
+				conversationId: this.conversation.state.id,
+				changes: [{ type: "message.state", messageId: message.id, status: "complete" }],
+			});
 		this.store.set({ error: null });
 	}
 
-	public sendMessage(content: string): boolean {
-		if (this.isBusy || this.state.isLoadingSession) return false;
+	public sendMessage(content: string, blocks: ContentBlock[] = []): boolean {
+		if (this.isDestroyed || this.isBusy || this.state.isLoadingSession) return false;
 
-		const currentMessages = dropEphemeralMessages(this.state.messages);
 		const now = Date.now();
 		const userMessageId = uuidv7();
 
-		const userMsg: Message = {
+		const userMessage: Message = {
 			id: userMessageId,
 			role: "user",
-			blocks: content ? [{ id: uuidv7(), type: "text", text: content }] : [],
+			blocks: [...blocks.map(cloneBlock), ...(content ? [{ id: uuidv7(), type: "text" as const, text: content }] : [])],
 			runId: userMessageId,
 			createdAt: now,
 			updatedAt: now,
 		};
 
-		for (const plugin of this.plugins) {
-			try {
-				plugin.onUserSubmit?.(userMsg);
-			} catch (error) {
-				console.error(`Plugin "${plugin.name}" failed during onUserSubmit`, error);
-			}
-		}
+		if (userMessage.blocks.length === 0) return false;
 
-		if (userMsg.blocks.length === 0) return false;
-
-		void this.startGeneration([...currentMessages, userMsg]);
+		this.startGeneration(
+			userMessage,
+			this.state.messages.filter((message) => message.ephemeral),
+		);
 		return true;
 	}
 
 	public editAndResubmit(messageId: string, newContent: string): boolean {
-		if (this.isBusy) return false;
+		if (this.isDestroyed || this.isBusy) return false;
 
-		const currentMessages = dropEphemeralMessages(this.state.messages);
+		const currentMessages = this.state.messages;
 		const targetIndex = currentMessages.findIndex((m) => m.id === messageId);
 
 		if (targetIndex === -1) return false;
 		if (currentMessages[targetIndex].role !== "user") return false;
 
-		// Truncate history to remove everything AFTER the edited message
-		// and update the edited message itself
-		const updatedMessages = currentMessages.slice(0, targetIndex + 1);
-
-		// Preserve non-text blocks (like images/files) and append the edited text
-		const preservedBlocks = updatedMessages[targetIndex].blocks.filter((b) => b.type !== "text");
-		const newTextBlock = newContent ? [{ id: uuidv7(), type: "text" as const, text: newContent }] : [];
-		const finalBlocks = [...preservedBlocks, ...newTextBlock];
+		// Keep attachments and other non-text blocks when replacing the prompt.
+		const original = currentMessages[targetIndex];
+		const preservedBlocks = original.blocks.filter((b) => b.type !== "text");
+		const textBlocks = newContent ? [{ id: uuidv7(), type: "text" as const, text: newContent }] : [];
+		const finalBlocks = [...preservedBlocks, ...textBlocks];
 		const now = Date.now();
 
 		if (finalBlocks.length === 0) return false;
 
-		updatedMessages[targetIndex] = {
-			...updatedMessages[targetIndex],
+		const edited = {
+			...original,
 			blocks: finalBlocks,
-			runId: updatedMessages[targetIndex].runId ?? updatedMessages[targetIndex].id,
-			createdAt: updatedMessages[targetIndex].createdAt ?? now,
+			runId: original.runId ?? original.id,
+			createdAt: original.createdAt ?? now,
 			updatedAt: now,
 		};
 
-		void this.startGeneration(updatedMessages);
+		this.startGeneration(
+			edited,
+			currentMessages.filter((message, index) => index > targetIndex || message.ephemeral),
+		);
 		return true;
 	}
 
-	/**
-	 * Completely replaces the current session's message history and attempts to save it to storage.
-	 * Useful for clearing history, compacting context, or modifying past messages.
-	 */
+	/** Replaces the current history and saves it to storage. */
 	public async setMessages(messages: Message[]): Promise<boolean> {
+		if (this.isDestroyed) return false;
 		if (this.isBusy) {
 			console.warn("Cannot modify history while the AI is generating a response.");
 			return false;
 		}
 
-		this.store.set({ messages });
+		this.conversation.setConversation({ id: this.conversation.state.id, messages });
+		this.store.set({ isLoadingSession: false, isLoadingMessages: false, olderCursor: null, error: null });
 		return await this.persistCurrentSession();
 	}
 
 	/**
-	 * Sets global default request parameters for outgoing chat requests.
-	 * `instructions` and `tools` are request-level model inputs; `options` are provider options.
+	 * Sets defaults for subsequent requests. instructions and tools are model inputs;
+	 * options contains provider-specific parameters.
 	 */
 	public setRequestDefaults(defaults: Partial<ChatRequestDefaults>) {
 		this.requestDefaults = {
 			...this.requestDefaults,
 			...defaults,
-			options: this.mergeDefinedOptions(this.requestDefaults.options ?? {}, defaults.options ?? {}),
+			options: this.mergeRequestOptions(this.requestDefaults.options ?? {}, defaults.options ?? {}),
 		};
 	}
 
 	public setTitleOptions(options: Partial<RequestOptions>) {
-		this.titleOptions = this.mergeDefinedOptions(this.titleOptions, options);
+		this.titleOptions = this.mergeRequestOptions(this.titleOptions, options);
 	}
 
 	public setTitleInstructions(instructions: string | undefined) {
@@ -210,116 +216,93 @@ export class ChatEngine {
 	}
 
 	public async stopGeneration() {
-		if (!this.isBusy) return;
-
 		const generation = this.activeGeneration;
 		if (!generation) return;
 
 		generation.controller.abort();
-		this.applyStreamEvent(generation.id, { type: "finish", reason: "aborted" });
 		await this.finalizeGeneration(generation.id, true);
 	}
 
-	public async destroy() {
+	public destroy(): Promise<void> {
+		if (this.destroyPromise) return this.destroyPromise;
 		this.isDestroyed = true;
-		this.abortAutoTitles();
-		await this.stopGeneration();
-		await this.sessionManager.close();
 		this.store.clearAllListeners();
+		this.abortAutoTitles();
+		this.destroyPromise = this.stopGeneration().finally(() => this.sessionManager.close());
+		return this.destroyPromise;
 	}
 
-	private async startGeneration(contextMessages: Message[]) {
+	private startGeneration(userMessage: Message, removed: Message[]) {
 		const generationId = uuidv7();
-		const initialMessageId = generationId;
 		const sessionId = this.state.currentSessionId;
-		const provider = this.provider;
-		const controller = new AbortController();
-		const signal = controller.signal;
-		this.activeGeneration = {
-			id: generationId,
-			sessionId,
-			currentMessageId: initialMessageId,
-			controller,
-			provider,
-			requestDefaults: this.cloneRequestDefaults(),
-		};
+		const runId = userMessage.runId ?? userMessage.id;
 
-		// Instantly create an empty assistant message so the UI shows a loading state
+		// Show a loading state before the provider emits its first block.
 		const now = Date.now();
-		const runId = findLastUserRunId(contextMessages) ?? initialMessageId;
-		const assistantMsg: Message = {
-			id: initialMessageId,
+		const assistantMessage: Message = {
+			id: generationId,
 			role: "assistant",
 			blocks: [],
 			runId,
 			createdAt: now,
 			updatedAt: now,
 			ephemeral: true,
+			status: "streaming",
 		};
-
-		const updatedMessages = [...contextMessages, assistantMsg];
-
-		this.store.set({
-			messages: updatedMessages,
-			generatingMessageId: initialMessageId,
-			error: null,
-		});
-
-		let wasAborted = false;
+		const changes: ConversationChange[] = removed.map((message) => ({ type: "message.remove", messageId: message.id }));
+		changes.push({ type: "message.put", message: userMessage }, { type: "message.put", message: assistantMessage });
+		const generation: ActiveGeneration = {
+			id: generationId,
+			sessionId,
+			runId,
+			controller: new AbortController(),
+			provider: this.provider,
+			requestDefaults: this.cloneRequestDefaults(),
+		};
+		this.activeGeneration = generation;
+		// Reject malformed input synchronously so the composer keeps its draft.
 		try {
-			const payloadParams = await this.prepareRequestParams(contextMessages, signal);
-			if (signal.aborted) {
-				wasAborted = true;
-				return;
-			}
+			this.conversation.apply({ conversationId: sessionId, changes });
+		} catch (error) {
+			this.activeGeneration = null;
+			throw error;
+		}
+		this.store.set({ error: null });
+		void this.runGeneration(generation);
+	}
 
-			await provider.streamChat(payloadParams, (event) => {
-				if (signal.aborted) return;
-				if (event.type === "finish" && event.reason === "aborted") {
-					wasAborted = true;
-				}
-				this.applyStreamEvent(generationId, event);
+	private async runGeneration(generation: ActiveGeneration) {
+		const { id: generationId, sessionId, runId, provider, controller, requestDefaults } = generation;
+		const { signal } = controller;
+		let error: string | undefined;
+		try {
+			const contextMessages = dropEphemeralMessages(this.conversation.state.messages);
+			const preparedRequest = await this.prepareRequest(contextMessages, signal, requestDefaults);
+			if (signal.aborted) return;
+			await provider.streamChat({ ...preparedRequest, messageId: generationId, runId }, (changes) => {
+				if (signal.aborted || this.activeGeneration?.id !== generationId) return;
+				this.conversation.apply({ conversationId: sessionId, changes });
 			});
 		} catch (err: unknown) {
-			if (signal.aborted) {
-				wasAborted = true;
-				return;
-			}
+			if (signal.aborted) return;
 
-			const errorMessage =
+			error =
 				err instanceof Error
 					? err.message
 					: typeof err === "object" && err !== null
 						? JSON.stringify(err)
 						: String(err);
-
-			this.applyStreamEvent(generationId, { type: "error", message: errorMessage });
 		} finally {
-			await this.finalizeGeneration(generationId, wasAborted || signal.aborted);
+			await this.finalizeGeneration(generationId, signal.aborted, error);
 		}
 	}
 
-	/**
-	 * Applies reducer events without cloning active stream blocks.
-	 * @param generationId The ID we generated locally to track the active generation.
-	 */
-	private applyStreamEvent(generationId: string, event: StreamReducerEvent) {
-		const generation = this.activeGeneration;
-		if (generation?.id !== generationId) return;
-
-		let currentMessageId = generation.currentMessageId;
-		this.store.mutateHot((state) => {
-			currentMessageId = applyStreamEventToState(state, generation.currentMessageId, event);
-		});
-		generation.currentMessageId = currentMessageId;
-	}
-
-	private async prepareRequestParams(
+	private async prepareRequest(
 		messages: Message[],
 		signal: AbortSignal,
 		requestDefaults: ChatRequestDefaults = this.requestDefaults,
 	): Promise<ChatRequest> {
-		const payloadParams: ChatRequest = {
+		const preparedRequest: ChatRequest = {
 			messages: [...messages],
 			instructions: requestDefaults.instructions,
 			tools: requestDefaults.tools ? [...requestDefaults.tools] : undefined,
@@ -328,67 +311,94 @@ export class ChatEngine {
 		};
 
 		for (const plugin of this.plugins) {
-			if (signal.aborted) return payloadParams;
+			if (signal.aborted) return preparedRequest;
 
 			if (plugin.beforeSubmit) {
 				const request: ReadonlyChatRequest = {
-					messages: [...payloadParams.messages],
-					instructions: payloadParams.instructions,
-					tools: payloadParams.tools ? [...payloadParams.tools] : undefined,
-					options: { ...payloadParams.options },
+					messages: [...preparedRequest.messages],
+					instructions: preparedRequest.instructions,
+					tools: preparedRequest.tools ? [...preparedRequest.tools] : undefined,
+					options: { ...preparedRequest.options },
 					signal,
 				};
 				const patch = await plugin.beforeSubmit(request);
-				if (signal.aborted) return payloadParams;
+				if (signal.aborted) return preparedRequest;
 
 				if (patch) {
-					if (patch.messages) payloadParams.messages = patch.messages;
-					if (hasPatchField(patch, "instructions")) {
-						payloadParams.instructions = patch.instructions;
+					if (patch.messages) preparedRequest.messages = patch.messages;
+					if (Object.hasOwn(patch, "instructions")) {
+						preparedRequest.instructions = patch.instructions;
 					}
-					if (hasPatchField(patch, "tools")) {
-						payloadParams.tools = patch.tools ? [...patch.tools] : undefined;
+					if (Object.hasOwn(patch, "tools")) {
+						preparedRequest.tools = patch.tools ? [...patch.tools] : undefined;
 					}
 					if (patch.options) {
-						payloadParams.options = this.mergeDefinedOptions(payloadParams.options, patch.options) as RequestOptions;
+						preparedRequest.options = this.mergeRequestOptions(
+							preparedRequest.options,
+							patch.options,
+						) as RequestOptions;
 					}
 				}
 			}
 		}
 
-		payloadParams.messages = dropEphemeralMessages(payloadParams.messages);
+		preparedRequest.messages = dropEphemeralMessages(preparedRequest.messages);
 
-		return payloadParams;
+		return preparedRequest;
 	}
 
-	private async finalizeGeneration(generationId: string, wasAborted: boolean = false) {
+	private async finalizeGeneration(generationId: string, wasAborted = false, error?: string) {
 		const generation = this.activeGeneration;
 		if (generation?.id !== generationId) return;
 		this.activeGeneration = null;
-
-		if (wasAborted) {
-			this.removeAbortedEphemeralMessage(generation.currentMessageId);
+		const changes: ConversationChange[] = [];
+		let errorMessageId: string | undefined;
+		const now = Date.now();
+		for (const message of this.conversation.state.messages) {
+			if (message.runId !== generation.runId || message.status !== "streaming") continue;
+			if (wasAborted && message.ephemeral) {
+				changes.push({ type: "message.remove", messageId: message.id });
+				continue;
+			}
+			for (const block of message.blocks) {
+				if (block.type === "tool_call" && block.status === "streaming")
+					changes.push({
+						type: "tool.update",
+						messageId: message.id,
+						blockId: block.id,
+						status: error || wasAborted ? "error" : "complete",
+					});
+			}
+			changes.push({
+				type: "message.state",
+				messageId: message.id,
+				status: error ? "error" : "complete",
+				error,
+				updatedAt: now,
+			});
+			errorMessageId = message.id;
 		}
-
-		if (this.state.generatingMessageId !== null) {
-			this.store.set({ generatingMessageId: null });
-		}
-
+		this.conversation.apply({
+			conversationId: generation.sessionId,
+			changes,
+		});
 		try {
+			// Capture and enqueue before notifying idle: a subscriber may navigate.
 			const finalMessages = cloneMessages(this.state.messages);
 			const persistentMessages = dropEphemeralMessages(finalMessages);
-			const hasError = this.state.error !== null;
-			const saved = await this.sessionManager.persistSessionSnapshot(generation.sessionId, finalMessages);
+			const saving = this.sessionManager.persistSessionSnapshot(generation.sessionId, finalMessages);
+			this.store.set({ error: error ? { message: error, ...(errorMessageId ? { id: errorMessageId } : {}) } : null });
+			const saved = await saving;
 
 			if (!saved) return;
 
-			// Auto-title trigger
-			if (!hasError && !wasAborted && generation.provider.generateTitle) {
-				const assistantRepliesCount = persistentMessages.filter(
+			// Generate a title after the first successful assistant reply.
+			if (!error && !wasAborted && generation.provider.generateTitle) {
+				const assistantReplyCount = persistentMessages.filter(
 					(m) => m.role === "assistant" && m.blocks.length > 0,
 				).length;
 
-				if (assistantRepliesCount === 1) {
+				if (assistantReplyCount === 1) {
 					void this.triggerAutoTitle(
 						generation.sessionId,
 						persistentMessages,
@@ -402,17 +412,8 @@ export class ChatEngine {
 		}
 	}
 
-	private removeAbortedEphemeralMessage(pendingId: string): void {
-		const pendingMessage = this.state.messages.find((m) => m.id === pendingId);
-		if (!pendingMessage?.ephemeral) return;
-
-		this.store.set({
-			messages: this.state.messages.filter((m) => m.id !== pendingId),
-		});
-	}
-
 	private async persistCurrentSession(): Promise<boolean> {
-		const { currentSessionId, messages } = this.store.get();
+		const { currentSessionId, messages } = this.state;
 		return await this.sessionManager.persistSessionSnapshot(currentSessionId, cloneMessages(messages));
 	}
 
@@ -437,11 +438,11 @@ export class ChatEngine {
 				signal: controller.signal,
 			};
 
-			const smartTitle = await provider.generateTitle!(titleRequest);
-			if (!smartTitle) return;
+			const title = await provider.generateTitle!(titleRequest);
+			if (!title) return;
 			if (controller.signal.aborted || this.isDestroyed || this.sessionManager.isDeleted(sessionId)) return;
 
-			await this.sessionManager.updateTitle(sessionId, smartTitle);
+			await this.sessionManager.updateTitle(sessionId, title);
 		} catch (e) {
 			if (controller.signal.aborted) return;
 			console.error("Failed to auto-generate title", e);
@@ -457,7 +458,8 @@ export class ChatEngine {
 		this.autoTitleControllers.clear();
 	}
 
-	private mergeDefinedOptions(base: Partial<RequestOptions>, patch: Partial<RequestOptions>): Partial<RequestOptions> {
+	/** Explicit undefined values remove inherited options. */
+	private mergeRequestOptions(base: Partial<RequestOptions>, patch: Partial<RequestOptions>): Partial<RequestOptions> {
 		const next: Partial<RequestOptions> = { ...base };
 		for (const [key, value] of Object.entries(patch)) {
 			if (value === undefined) {
@@ -476,18 +478,4 @@ export class ChatEngine {
 			options: { ...defaults.options },
 		};
 	}
-}
-
-function findLastUserRunId(messages: readonly Message[]): string | undefined {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const message = messages[i];
-		if (message.role === "user") return message.runId ?? message.id;
-	}
-
-	return undefined;
-}
-
-function hasPatchField(patch: ChatRequestPatch, key: keyof ChatRequestPatch): boolean {
-	// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is ES2022, but core targets ES2018.
-	return Object.prototype.hasOwnProperty.call(patch, key);
 }

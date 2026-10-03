@@ -1,41 +1,35 @@
 import type { AgentRunCollapse, ContentBlock, Message } from "../core/types";
 
-export type FeedItem = Message | FeedAgentRunItem;
+export type FeedItem = Message | RunItem;
 
-export type FeedAgentRunSegment = FeedAgentRunMessagesSegment | FeedAgentRunWorkSegment;
+export type RunSegment = MessageSegment | WorkSegment;
 
-export interface FeedAgentRunMessagesSegment {
+export interface MessageSegment {
 	type: "messages";
 	id: string;
 	messages: readonly Message[];
 }
 
-export interface FeedAgentRunWorkSegment {
+export interface WorkSegment {
 	type: "work";
 	id: string;
-	runId: string;
-	stepMessages: readonly Message[];
+	messages: readonly Message[];
 	collapsed: boolean;
 	durationMs?: number;
 }
 
-export interface FeedAgentRunItem {
+export interface RunItem {
 	type: "agent_run";
 	id: string;
 	runId: string;
 	userMessage: Message;
-	segments: readonly FeedAgentRunSegment[];
-	stepMessages: readonly Message[];
-	visibleMessages: readonly Message[];
-	finalMessage: Message;
-	collapsed: boolean;
-	durationMs?: number;
+	segments: readonly RunSegment[];
 }
 
-export interface BuildFeedItemsOptions {
-	generatingMessageId: string | null;
-	isRunExpanded?: (runId: string) => boolean;
-	isWorkSegmentExpanded?: (segmentId: string) => boolean;
+export interface FeedOptions {
+	streamingMessageIds?: ReadonlySet<string>;
+	showReasoning?: boolean;
+	isExpanded?: (segmentId: string) => boolean;
 	minAgentRunSteps?: number;
 	agentRunCollapse?: AgentRunCollapse;
 }
@@ -43,7 +37,14 @@ export interface BuildFeedItemsOptions {
 const DEFAULT_MIN_AGENT_RUN_STEPS = 1;
 const DEFAULT_AGENT_RUN_COLLAPSE: AgentRunCollapse = "machinery";
 
-export function buildFeedItems(messages: readonly Message[], options: BuildFeedItemsOptions): readonly FeedItem[] {
+export function buildFeedItems(messages: readonly Message[], options: FeedOptions): readonly FeedItem[] {
+	if (options.showReasoning === false) {
+		messages = messages.map((message) =>
+			message.blocks.some((block) => block.type === "reasoning")
+				? { ...message, blocks: message.blocks.filter((block) => block.type !== "reasoning") }
+				: message,
+		);
+	}
 	const items: FeedItem[] = [];
 	const minAgentRunSteps = options.minAgentRunSteps ?? DEFAULT_MIN_AGENT_RUN_STEPS;
 	const agentRunCollapse = options.agentRunCollapse ?? DEFAULT_AGENT_RUN_COLLAPSE;
@@ -55,7 +56,7 @@ export function buildFeedItems(messages: readonly Message[], options: BuildFeedI
 			const runEndIndex = findRunEndIndex(messages, index);
 			const runItem =
 				runEndIndex - index >= 2
-					? buildAgentRunItem(messages, index, runEndIndex, options, minAgentRunSteps, agentRunCollapse)
+					? buildRun(messages, index, runEndIndex, options, minAgentRunSteps, agentRunCollapse)
 					: null;
 
 			if (runItem) {
@@ -71,7 +72,7 @@ export function buildFeedItems(messages: readonly Message[], options: BuildFeedI
 	return items;
 }
 
-export function isAgentRunItem(item: FeedItem): item is FeedAgentRunItem {
+export function isAgentRunItem(item: FeedItem): item is RunItem {
 	return "type" in item && item.type === "agent_run";
 }
 
@@ -97,18 +98,18 @@ function findRunEndIndex(messages: readonly Message[], userIndex: number): numbe
 	return endIndex;
 }
 
-function buildAgentRunItem(
+function buildRun(
 	messages: readonly Message[],
 	userIndex: number,
 	runEndIndex: number,
-	options: BuildFeedItemsOptions,
+	options: FeedOptions,
 	minAgentRunSteps: number,
 	agentRunCollapse: AgentRunCollapse,
-): FeedAgentRunItem | null {
+): RunItem | null {
 	let isActiveRun = false;
-	if (options.generatingMessageId) {
+	if (options.streamingMessageIds?.size) {
 		for (let i = userIndex; i < runEndIndex; i++) {
-			if (messages[i].id !== options.generatingMessageId) continue;
+			if (!options.streamingMessageIds.has(messages[i].id)) continue;
 			if (agentRunCollapse !== "machinery") return null;
 			isActiveRun = true;
 			break;
@@ -116,25 +117,21 @@ function buildAgentRunItem(
 	}
 
 	const userMessage = messages[userIndex];
-	const finalMessageIndex = findFinalAssistantProseIndex(messages, userIndex + 1, runEndIndex);
+	const finalMessageIndex = findFinalReplyIndex(messages, userIndex + 1, runEndIndex);
 	if (finalMessageIndex === -1 && !isActiveRun) return null;
 	if (agentRunCollapse === "full" && finalMessageIndex !== runEndIndex - 1) return null;
 
 	const runId = userMessage.runId ?? userMessage.id;
-	const isWorkSegmentExpanded = (segmentId: string) =>
-		isActiveRun || options.isWorkSegmentExpanded?.(segmentId) || options.isRunExpanded?.(runId) || false;
+	const isExpanded = (segmentId: string) => isActiveRun || options.isExpanded?.(segmentId) || false;
 	const segments =
 		agentRunCollapse === "full"
-			? buildFullSegments(messages, userIndex, finalMessageIndex, runId, isWorkSegmentExpanded)
-			: buildMachinerySegments(messages, userIndex, runEndIndex, runId, isWorkSegmentExpanded);
-	const stepMessages = flattenStepMessages(segments);
-	if (countAgentStepMessages(stepMessages) < minAgentRunSteps) return null;
-
-	const visibleMessages = flattenVisibleMessages(segments);
-	const collapsed = segments
-		.filter((segment): segment is FeedAgentRunWorkSegment => segment.type === "work")
-		.every((segment) => segment.collapsed);
-	const finalMessage = messages[finalMessageIndex === -1 ? runEndIndex - 1 : finalMessageIndex];
+			? buildFullSegments(messages, userIndex, finalMessageIndex, runId, isExpanded)
+			: buildMachinerySegments(messages, userIndex, runEndIndex, runId, isExpanded);
+	const stepIds = new Set<string>();
+	for (const segment of segments) {
+		if (segment.type === "work") for (const message of segment.messages) stepIds.add(message.id);
+	}
+	if (stepIds.size < minAgentRunSteps) return null;
 
 	return {
 		type: "agent_run",
@@ -142,11 +139,6 @@ function buildAgentRunItem(
 		runId,
 		userMessage,
 		segments,
-		stepMessages,
-		visibleMessages,
-		finalMessage,
-		collapsed,
-		durationMs: calculateRunDuration(userMessage, finalMessage),
 	};
 }
 
@@ -155,24 +147,23 @@ function buildFullSegments(
 	userIndex: number,
 	finalMessageIndex: number,
 	runId: string,
-	isWorkSegmentExpanded: (segmentId: string) => boolean,
-): FeedAgentRunSegment[] {
+	isExpanded: (segmentId: string) => boolean,
+): RunSegment[] {
 	const stepMessages = buildFullStepMessages(messages, userIndex + 1, finalMessageIndex);
 	const finalMachineryBlocks = machineryBlocks(messages[finalMessageIndex]);
 	if (finalMachineryBlocks.length > 0) {
-		stepMessages.push(createFilteredMessage(messages[finalMessageIndex], finalMachineryBlocks));
+		stepMessages.push({ ...messages[finalMessageIndex], blocks: finalMachineryBlocks });
 	}
 
 	const visibleFinalBlocks = proseBlocks(messages[finalMessageIndex]);
-	const segments: FeedAgentRunSegment[] = [];
+	const segments: RunSegment[] = [];
 	if (stepMessages.length > 0) {
 		const id = `${runId}:work:0`;
 		segments.push({
 			type: "work",
 			id,
-			runId,
-			stepMessages,
-			collapsed: !isWorkSegmentExpanded(id),
+			messages: stepMessages,
+			collapsed: !isExpanded(id),
 			durationMs: calculateRunDuration(messages[userIndex], messages[finalMessageIndex]),
 		});
 	}
@@ -180,7 +171,7 @@ function buildFullSegments(
 		segments.push({
 			type: "messages",
 			id: `${runId}:messages:0`,
-			messages: [createFilteredMessage(messages[finalMessageIndex], visibleFinalBlocks)],
+			messages: [{ ...messages[finalMessageIndex], blocks: visibleFinalBlocks }],
 		});
 	}
 	return segments;
@@ -190,7 +181,7 @@ function buildFullStepMessages(messages: readonly Message[], startIndex: number,
 	const stepMessages: Message[] = [];
 	for (let i = startIndex; i < finalMessageIndex; i++) {
 		const stepBlocks = messages[i].blocks.filter(isRenderableStepBlock);
-		if (stepBlocks.length > 0) stepMessages.push(createFilteredMessage(messages[i], stepBlocks));
+		if (stepBlocks.length > 0) stepMessages.push({ ...messages[i], blocks: stepBlocks });
 	}
 	return stepMessages;
 }
@@ -200,9 +191,9 @@ function buildMachinerySegments(
 	userIndex: number,
 	runEndIndex: number,
 	runId: string,
-	isWorkSegmentExpanded: (segmentId: string) => boolean,
-): FeedAgentRunSegment[] {
-	const segments: FeedAgentRunSegment[] = [];
+	isExpanded: (segmentId: string) => boolean,
+): RunSegment[] {
+	const segments: RunSegment[] = [];
 	let pendingKind: "messages" | "work" | null = null;
 	let pendingMessages: Message[] = [];
 
@@ -220,9 +211,8 @@ function buildMachinerySegments(
 			segments.push({
 				type: "work",
 				id,
-				runId,
-				stepMessages: pendingMessages,
-				collapsed: !isWorkSegmentExpanded(id),
+				messages: pendingMessages,
+				collapsed: !isExpanded(id),
 			});
 		}
 		pendingKind = null;
@@ -233,7 +223,7 @@ function buildMachinerySegments(
 		if (blocks.length === 0) return;
 		if (pendingKind !== kind) flush();
 		pendingKind = kind;
-		pendingMessages.push(createFilteredMessage(message, blocks));
+		pendingMessages.push({ ...message, blocks });
 	};
 
 	for (let i = userIndex + 1; i < runEndIndex; i++) {
@@ -241,7 +231,7 @@ function buildMachinerySegments(
 	}
 
 	flush();
-	moveLeadingReasoningIntoNextWorkSegment(segments);
+	mergeLeadingReasoning(segments);
 	applyWorkDurations(segments, messages[userIndex]);
 	return segments;
 }
@@ -282,19 +272,7 @@ function blockKind(block: ContentBlock): "messages" | "work" | null {
 	return null;
 }
 
-function flattenStepMessages(segments: readonly FeedAgentRunSegment[]): Message[] {
-	return segments.flatMap((segment) => (segment.type === "work" ? segment.stepMessages : []));
-}
-
-function countAgentStepMessages(messages: readonly Message[]): number {
-	return new Set(messages.map((message) => message.id)).size;
-}
-
-function flattenVisibleMessages(segments: readonly FeedAgentRunSegment[]): Message[] {
-	return segments.flatMap((segment) => (segment.type === "messages" ? segment.messages : []));
-}
-
-function applyWorkDurations(segments: FeedAgentRunSegment[], userMessage: Message): void {
+function applyWorkDurations(segments: RunSegment[], userMessage: Message): void {
 	let previousVisibleMessage = userMessage;
 
 	for (let i = 0; i < segments.length; i++) {
@@ -305,7 +283,7 @@ function applyWorkDurations(segments: FeedAgentRunSegment[], userMessage: Messag
 		}
 
 		const nextVisibleMessage = findNextVisibleMessage(segments, i + 1);
-		const lastStepMessage = segment.stepMessages[segment.stepMessages.length - 1];
+		const lastStepMessage = segment.messages[segment.messages.length - 1];
 		if (!lastStepMessage) continue;
 		const boundaryDurationMs = nextVisibleMessage
 			? calculateRunDuration(previousVisibleMessage, nextVisibleMessage)
@@ -314,7 +292,7 @@ function applyWorkDurations(segments: FeedAgentRunSegment[], userMessage: Messag
 	}
 }
 
-function findNextVisibleMessage(segments: readonly FeedAgentRunSegment[], startIndex: number): Message | undefined {
+function findNextVisibleMessage(segments: readonly RunSegment[], startIndex: number): Message | undefined {
 	for (let i = startIndex; i < segments.length; i++) {
 		const segment = segments[i];
 		if (segment.type === "messages") return segment.messages[0];
@@ -322,11 +300,11 @@ function findNextVisibleMessage(segments: readonly FeedAgentRunSegment[], startI
 	return undefined;
 }
 
-function moveLeadingReasoningIntoNextWorkSegment(segments: FeedAgentRunSegment[]): void {
+function mergeLeadingReasoning(segments: RunSegment[]): void {
 	const firstSegment = segments[0];
 	const secondSegment = segments[1];
 	if (firstSegment?.type !== "work" || secondSegment?.type !== "messages") return;
-	if (!isReasoningOnlyWorkSegment(firstSegment)) return;
+	if (!isReasoningOnly(firstSegment)) return;
 
 	const nextWorkIndex = segments.findIndex((segment, index) => index > 1 && segment.type === "work");
 	if (nextWorkIndex === -1) return;
@@ -336,13 +314,13 @@ function moveLeadingReasoningIntoNextWorkSegment(segments: FeedAgentRunSegment[]
 
 	segments[nextWorkIndex] = {
 		...nextWorkSegment,
-		stepMessages: [...firstSegment.stepMessages, ...nextWorkSegment.stepMessages],
+		messages: [...firstSegment.messages, ...nextWorkSegment.messages],
 	};
 	segments.shift();
 }
 
-function isReasoningOnlyWorkSegment(segment: FeedAgentRunWorkSegment): boolean {
-	return segment.stepMessages.every(
+function isReasoningOnly(segment: WorkSegment): boolean {
+	return segment.messages.every(
 		(message) =>
 			message.role === "assistant" &&
 			message.blocks.length > 0 &&
@@ -350,11 +328,7 @@ function isReasoningOnlyWorkSegment(segment: FeedAgentRunWorkSegment): boolean {
 	);
 }
 
-function createFilteredMessage(message: Message, blocks: Message["blocks"]): Message {
-	return { ...message, blocks };
-}
-
-function findFinalAssistantProseIndex(messages: readonly Message[], startIndex: number, endIndex: number): number {
+function findFinalReplyIndex(messages: readonly Message[], startIndex: number, endIndex: number): number {
 	for (let i = endIndex - 1; i >= startIndex; i--) {
 		const message = messages[i];
 		if (message.role === "assistant" && proseBlocks(message).length > 0) return i;
@@ -378,6 +352,7 @@ function isProseBlock(block: ContentBlock): boolean {
 		case "text":
 			return block.text.trim().length > 0;
 		case "artifact":
+		case "custom":
 		case "file":
 			return true;
 		case "reasoning":
@@ -396,6 +371,7 @@ function isCollapsibleBlock(block: ContentBlock): boolean {
 		case "tool_result":
 		case "text":
 		case "artifact":
+		case "custom":
 		case "file":
 			return false;
 	}
@@ -410,6 +386,7 @@ function hasVisibleBlock(block: ContentBlock): boolean {
 		case "tool_call":
 		case "tool_result":
 		case "artifact":
+		case "custom":
 		case "file":
 			return true;
 	}

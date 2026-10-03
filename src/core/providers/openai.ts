@@ -1,6 +1,7 @@
 import { parseSSE } from "../../utils/sse";
 import { uuidv7 } from "../../utils/uuid";
-import type { ChatProvider, ChatRequest, FinishReason, Message, StreamEvent } from "../types";
+import type { ConversationChange } from "../conversation-types";
+import type { ChatProvider, ChatRequest, ChatStreamRequest, Message } from "../types";
 
 type OpenAIStreamDelta = {
 	content?: string | null;
@@ -49,7 +50,7 @@ export class OpenAIProvider implements ChatProvider {
 		private model: string,
 	) {}
 
-	async streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+	async streamChat(request: ChatStreamRequest, onChange: (changes: ConversationChange[]) => void): Promise<void> {
 		const { model = this.model, ...restOptions } = request.options;
 
 		const response = await fetch(this.endpoint, {
@@ -70,146 +71,115 @@ export class OpenAIProvider implements ChatProvider {
 		});
 
 		if (!response.ok) {
-			const errorMsg = await this.extractErrorMessage(response);
-			throw new Error(`API Error ${response.status}: ${errorMsg}`);
+			const errorMessage = await this.extractErrorMessage(response);
+			throw new Error(`API Error ${response.status}: ${errorMessage}`);
 		}
 
-		let messageStarted = false;
-		let currentMessageId = uuidv7();
-		let currentTextBlockId: string | null = null;
-		let currentReasoningBlockId: string | null = null;
-
-		// Map OpenAI's tool call index to our block IDs
-		const activeToolCalls = new Map<number, string>();
-
-		let finishEmitted = false;
+		const { messageId } = request;
+		let textBlockId: string | undefined;
+		let reasoningBlockId: string | undefined;
+		const toolBlockIds = new Map<number, string>();
 
 		await parseSSE(response, (data) => {
 			if (data === "[DONE]") return true;
-
-			// Flat try/catch: Just parse and exit early if it's a broken chunk
 			let parsed: OpenAIStreamChunk;
 			try {
 				parsed = JSON.parse(data);
 			} catch {
-				return; // Ignore partial/broken JSON payload
+				return;
 			}
+			const changes: ConversationChange[] = [];
 			if (parsed.usage) {
 				const input = parsed.usage.prompt_tokens ?? 0;
 				const output = parsed.usage.completion_tokens ?? 0;
-				onEvent({
-					type: "usage",
-					input,
-					output,
-					total: parsed.usage.total_tokens ?? input + output,
-					cacheRead: parsed.usage.prompt_tokens_details?.cached_tokens ?? 0,
+				changes.push({
+					type: "message.state",
+					messageId,
+					usage: {
+						input,
+						output,
+						total: parsed.usage.total_tokens ?? input + output,
+						cacheRead: parsed.usage.prompt_tokens_details?.cached_tokens ?? 0,
+					},
 				});
 			}
-
 			const choice = parsed.choices?.[0];
-			if (!choice) return;
-
-			// 1. Emit start event on first chunk
-			if (!messageStarted) {
-				currentMessageId = parsed.id || currentMessageId;
-				onEvent({
-					type: "message_start",
-					message: { id: currentMessageId, role: "assistant", blocks: [] },
-				});
-				messageStarted = true;
+			const delta = choice?.delta ?? {};
+			const reasoning = this.extractReasoning(delta);
+			if (reasoning) {
+				textBlockId = undefined;
+				if (!reasoningBlockId) {
+					reasoningBlockId = uuidv7();
+					changes.push({
+						type: "block.put",
+						messageId,
+						block: {
+							id: reasoningBlockId,
+							type: "reasoning",
+							text: reasoning.encrypted ? "" : reasoning.text,
+							...(reasoning.encrypted ? { encrypted: true } : {}),
+						},
+					});
+				} else
+					changes.push({
+						type: "text.append",
+						messageId,
+						blockId: reasoningBlockId,
+						delta: reasoning.text,
+						encrypted: reasoning.encrypted,
+					});
 			}
-
-			const delta: OpenAIStreamDelta = choice.delta ?? {};
-
-			// 2. Handle Reasoning
-			const reasoningData = this.extractReasoning(delta);
-			if (reasoningData) {
-				if (!currentReasoningBlockId) currentReasoningBlockId = uuidv7();
-				currentTextBlockId = null;
-
-				onEvent({
-					type: "reasoning_delta",
-					messageId: currentMessageId,
-					blockId: currentReasoningBlockId,
-					delta: reasoningData.text,
-					encrypted: reasoningData.encrypted,
-				});
-			}
-
-			// 3. Handle Text Content
 			if (delta.content) {
-				if (!currentTextBlockId) currentTextBlockId = uuidv7();
-				onEvent({
-					type: "text_delta",
-					messageId: currentMessageId,
-					blockId: currentTextBlockId,
-					delta: delta.content,
-				});
+				reasoningBlockId = undefined;
+				if (!textBlockId) {
+					textBlockId = uuidv7();
+					changes.push({ type: "block.put", messageId, block: { id: textBlockId, type: "text", text: delta.content } });
+				} else changes.push({ type: "text.append", messageId, blockId: textBlockId, delta: delta.content });
 			}
-
-			// 4. Handle Tool Calls
-			if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
-				for (const tc of delta.tool_calls) {
-					const index = tc.index;
-					// If it has an ID, it's a new tool call
-					if (tc.id) {
-						currentTextBlockId = null;
-
-						const blockId = uuidv7();
-						activeToolCalls.set(index, blockId);
-						onEvent({
-							type: "tool_call_start",
-							messageId: currentMessageId,
-							block: {
-								id: blockId,
-								type: "tool_call",
-								toolCallId: tc.id,
-								name: tc.function?.name || "",
-								argsText: tc.function?.arguments || "",
-								status: "streaming",
-							},
+			for (const call of delta.tool_calls ?? []) {
+				if (call.id) {
+					textBlockId = undefined;
+					reasoningBlockId = undefined;
+					const id = uuidv7();
+					toolBlockIds.set(call.index, id);
+					changes.push({
+						type: "block.put",
+						messageId,
+						block: {
+							id,
+							type: "tool_call",
+							toolCallId: call.id,
+							name: call.function?.name ?? "",
+							argsText: call.function?.arguments ?? "",
+							status: "streaming",
+						},
+					});
+				} else {
+					const blockId = toolBlockIds.get(call.index);
+					if (blockId)
+						changes.push({
+							type: "tool.update",
+							messageId,
+							blockId,
+							name: call.function?.name,
+							argsDelta: call.function?.arguments,
 						});
-					}
-					// Otherwise, it's appending arguments to an existing tool call
-					else if (activeToolCalls.has(index)) {
-						onEvent({
-							type: "tool_call_delta",
-							messageId: currentMessageId,
-							blockId: activeToolCalls.get(index)!,
-							name: tc.function?.name,
-							argsDelta: tc.function?.arguments || "",
-						});
-					}
 				}
 			}
-
-			// 5. Handle Finish Reason
-			if (choice.finish_reason) {
-				if (choice.finish_reason === "content_filter") {
-					throw new Error("Generation stopped by provider content filter.");
-				}
-				if (choice.finish_reason === "network_error") {
-					throw new Error("Generation stopped due to a provider network error.");
-				}
-
-				const reasonMap: Record<string, FinishReason> = {
-					stop: "stop",
-					length: "length",
-					tool_calls: "tool_use",
-				};
-				onEvent({
-					type: "finish",
-					reason: reasonMap[choice.finish_reason] || "stop",
-				});
-				finishEmitted = true;
-			}
+			if (changes.length) onChange(changes);
+			if (choice?.finish_reason === "content_filter") throw new Error("Generation stopped by provider content filter.");
+			if (choice?.finish_reason === "network_error")
+				throw new Error("Generation stopped due to a provider network error.");
 			return undefined;
 		});
-
-		// If it finishes normally but didn't emit a finish reason (some providers do this)
-		if (!finishEmitted) {
-			onEvent({ type: "finish", reason: "stop" });
-		}
+		const completionChanges: ConversationChange[] = Array.from(toolBlockIds.values(), (blockId) => ({
+			type: "tool.update",
+			messageId,
+			blockId,
+			status: "complete",
+		}));
+		completionChanges.push({ type: "message.state", messageId, status: "complete", updatedAt: Date.now() });
+		onChange(completionChanges);
 	}
 
 	private async extractErrorMessage(response: Response): Promise<string> {
@@ -293,11 +263,10 @@ export class OpenAIProvider implements ChatProvider {
 		const result: Record<string, unknown>[] = [];
 		const serializedToolCallIds = new Set<string>();
 
-		for (const msg of messages) {
-			// Tool messages map 1:1 to API tool responses.
-			// They contain only the execution output, so we bypass standard processing.
-			if (msg.role === "tool") {
-				for (const block of msg.blocks) {
+		for (const message of messages) {
+			// Include results only for tool calls already serialized into this request.
+			if (message.role === "tool") {
+				for (const block of message.blocks) {
 					if (block.type === "tool_result" && serializedToolCallIds.has(block.toolCallId)) {
 						result.push({
 							role: "tool",
@@ -309,11 +278,11 @@ export class OpenAIProvider implements ChatProvider {
 				continue;
 			}
 
-			const payload: Record<string, unknown> = { role: msg.role };
+			const payload: Record<string, unknown> = { role: message.role };
 			const toolCalls: Record<string, unknown>[] = [];
-			const contentArray: OpenAIContentPart[] = [];
+			const contentParts: OpenAIContentPart[] = [];
 
-			for (const block of msg.blocks) {
+			for (const block of message.blocks) {
 				switch (block.type) {
 					case "tool_call":
 						if (block.status === "complete") {
@@ -327,14 +296,14 @@ export class OpenAIProvider implements ChatProvider {
 						break;
 
 					case "text":
-						contentArray.push({ type: "text", text: block.text });
+						contentParts.push({ type: "text", text: block.text });
 						break;
 
 					case "file":
 						if (block.mimeType.startsWith("image/")) {
-							contentArray.push({ type: "image_url", image_url: { url: block.data } });
+							contentParts.push({ type: "image_url", image_url: { url: block.data } });
 						} else {
-							contentArray.push({
+							contentParts.push({
 								type: "text",
 								text: `\n\n--- File: ${block.name || "Unknown"} ---\n${block.data}`,
 							});
@@ -343,41 +312,36 @@ export class OpenAIProvider implements ChatProvider {
 
 					case "reasoning":
 					case "artifact":
-						// Intentionally omitted.
-						// Reasoning tokens and internal UI artifacts are not sent back in context.
+					case "custom":
+						// Display-only blocks are excluded from provider context.
 						break;
 				}
 			}
 
-			if (msg.role === "assistant" && contentArray.length === 0 && toolCalls.length === 0) {
+			if (message.role === "assistant" && contentParts.length === 0 && toolCalls.length === 0) {
 				continue;
 			}
 
 			if (toolCalls.length > 0) {
 				payload.tool_calls = toolCalls;
 			}
-			// Conform to OpenAI's expected content structures
-			if (msg.role === "assistant") {
-				// Assistant messages strictly require a string or null (never an array)
-				if (contentArray.length === 0) {
+			if (message.role === "assistant") {
+				// Send assistant text as a single string, or null for tool-only messages.
+				if (contentParts.length === 0) {
 					payload.content = toolCalls.length > 0 ? null : "";
 				} else {
-					// Safely flatten any multiple text blocks into a single string
-					payload.content = contentArray
+					payload.content = contentParts
 						.filter((c) => c.type === "text")
 						.map((c) => (c as { text: string }).text)
 						.join("\n\n");
 				}
 			} else {
-				// User messages can safely use the multimodal array format
-				if (contentArray.length === 0) {
+				if (contentParts.length === 0) {
 					payload.content = toolCalls.length > 0 ? null : "";
-				} else if (contentArray.length === 1 && contentArray[0].type === "text") {
-					// Fast path for simple text messages
-					payload.content = contentArray[0].text;
+				} else if (contentParts.length === 1 && contentParts[0].type === "text") {
+					payload.content = contentParts[0].text;
 				} else {
-					// Multimodal or multi-part message
-					payload.content = contentArray;
+					payload.content = contentParts;
 				}
 			}
 
@@ -393,7 +357,7 @@ export class OpenAIProvider implements ChatProvider {
 	}
 
 	private extractReasoning(delta: OpenAIStreamDelta): { text: string; encrypted: boolean } | null {
-		// Check for encrypted reasoning (e.g., Anthropic via OpenRouter / Some DeepSeek setups)
+		// Keep the hidden-reasoning marker without retaining encrypted payloads.
 		if (delta.reasoning && typeof delta.reasoning === "object" && typeof delta.reasoning.encrypted === "string") {
 			return { text: "", encrypted: true };
 		}
@@ -401,7 +365,6 @@ export class OpenAIProvider implements ChatProvider {
 			return { text: "", encrypted: true };
 		}
 
-		// Check for standard reasoning
 		for (const field of REASONING_FIELDS) {
 			if (typeof delta[field] === "string" && delta[field].length > 0) {
 				return { text: delta[field], encrypted: false };

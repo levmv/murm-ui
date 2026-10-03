@@ -9,87 +9,84 @@ const INDEXED_PINNED_FIELD = "isPinnedKey";
 type StoredSessionMeta = ChatSessionMeta & { [INDEXED_PINNED_FIELD]: number };
 
 export class IndexedDBStorage implements ChatStorage {
-	private db: IDBDatabase | null = null;
-	private dbPromise: Promise<IDBDatabase> | null = null;
+	private connection: Promise<IDBDatabase> | null = null;
 
 	constructor(private dbName: string = "MurmDB") {}
 
-	private async getDB(): Promise<IDBDatabase> {
-		if (this.db) return this.db;
-		if (this.dbPromise) return this.dbPromise;
+	private getDB(): Promise<IDBDatabase> {
+		if (this.connection) return this.connection;
 
-		this.dbPromise = new Promise((resolve, reject) => {
-			try {
-				if (typeof indexedDB === "undefined") {
-					throw new Error("IndexedDB is not supported in this environment.");
+		const opening = new Promise<IDBDatabase>((resolve, reject) => {
+			if (typeof indexedDB === "undefined") {
+				throw new Error("IndexedDB is not supported in this environment.");
+			}
+
+			const request = indexedDB.open(this.dbName, DB_VERSION);
+
+			request.onerror = () => {
+				reject(request.error);
+			};
+			request.onblocked = () => {
+				reject(new Error("Database upgrade blocked. Close other tabs or DevTools and refresh."));
+			};
+			request.onsuccess = () => {
+				if (this.connection !== opening) {
+					request.result.close();
+					reject(new Error("Database was closed while opening."));
+				} else {
+					resolve(request.result);
+				}
+			};
+
+			request.onupgradeneeded = (event) => {
+				const db = (event.target as IDBOpenDBRequest).result;
+				const tx = (event.target as IDBOpenDBRequest).transaction;
+				if (!tx) throw new Error("IndexedDB upgrade transaction is unavailable.");
+
+				let metaStore: IDBObjectStore;
+				if (!db.objectStoreNames.contains(STORE_META)) {
+					metaStore = db.createObjectStore(STORE_META, {
+						keyPath: "id",
+					});
+				} else {
+					metaStore = tx.objectStore(STORE_META);
 				}
 
-				const request = indexedDB.open(this.dbName, DB_VERSION);
+				if (metaStore.indexNames.contains("by_updated")) {
+					metaStore.deleteIndex("by_updated");
+				}
+				if (metaStore.indexNames.contains("by_updated_id")) {
+					metaStore.deleteIndex("by_updated_id");
+				}
+				if (metaStore.indexNames.contains(INDEX_META_BY_PINNED_UPDATED_ID)) {
+					metaStore.deleteIndex(INDEX_META_BY_PINNED_UPDATED_ID);
+				}
+				metaStore.createIndex(INDEX_META_BY_PINNED_UPDATED_ID, [INDEXED_PINNED_FIELD, "updatedAt", "id"], {
+					unique: false,
+				});
 
-				request.onerror = () => {
-					this.dbPromise = null;
-					reject(request.error);
+				if (!db.objectStoreNames.contains(STORE_MSGS)) {
+					db.createObjectStore(STORE_MSGS, { keyPath: "id" });
+				}
+
+				const normalizeReq = metaStore.openCursor();
+				normalizeReq.onsuccess = () => {
+					const cursor = normalizeReq.result;
+					if (!cursor) return;
+					const value = cursor.value;
+					if (typeof value[INDEXED_PINNED_FIELD] !== "number") {
+						cursor.update(this.toStoredMeta(value));
+					}
+					cursor.continue();
 				};
-				request.onblocked = () => {
-					this.dbPromise = null;
-					reject(new Error("Database upgrade blocked. Close other tabs or DevTools and refresh."));
-				};
-				request.onsuccess = () => {
-					this.db = request.result;
-					resolve(this.db);
-				};
-
-				request.onupgradeneeded = (event) => {
-					const db = (event.target as IDBOpenDBRequest).result;
-					const tx = (event.target as IDBOpenDBRequest).transaction;
-					if (!tx) throw new Error("IndexedDB upgrade transaction is unavailable.");
-
-					let metaStore: IDBObjectStore;
-					if (!db.objectStoreNames.contains(STORE_META)) {
-						metaStore = db.createObjectStore(STORE_META, {
-							keyPath: "id",
-						});
-					} else {
-						metaStore = tx.objectStore(STORE_META);
-					}
-
-					if (metaStore.indexNames.contains("by_updated")) {
-						metaStore.deleteIndex("by_updated");
-					}
-					if (metaStore.indexNames.contains("by_updated_id")) {
-						metaStore.deleteIndex("by_updated_id");
-					}
-					if (metaStore.indexNames.contains(INDEX_META_BY_PINNED_UPDATED_ID)) {
-						metaStore.deleteIndex(INDEX_META_BY_PINNED_UPDATED_ID);
-					}
-					if (!metaStore.indexNames.contains(INDEX_META_BY_PINNED_UPDATED_ID)) {
-						metaStore.createIndex(INDEX_META_BY_PINNED_UPDATED_ID, [INDEXED_PINNED_FIELD, "updatedAt", "id"], {
-							unique: false,
-						});
-					}
-
-					if (!db.objectStoreNames.contains(STORE_MSGS)) {
-						db.createObjectStore(STORE_MSGS, { keyPath: "id" });
-					}
-
-					const normalizeReq = metaStore.openCursor();
-					normalizeReq.onsuccess = () => {
-						const cursor = normalizeReq.result;
-						if (!cursor) return;
-						const value = cursor.value;
-						if (typeof value[INDEXED_PINNED_FIELD] !== "number") {
-							cursor.update(this.toStoredMeta(value));
-						}
-						cursor.continue();
-					};
-				};
-			} catch (err) {
-				this.dbPromise = null;
-				reject(err);
-			}
+			};
 		});
 
-		return this.dbPromise;
+		this.connection = opening;
+		void opening.catch(() => {
+			if (this.connection === opening) this.connection = null;
+		});
+		return opening;
 	}
 
 	async loadSessions(limit: number, cursor?: ChatSessionMeta): Promise<PaginatedSessions> {
@@ -193,14 +190,9 @@ export class IndexedDBStorage implements ChatStorage {
 	}
 
 	close(): void {
-		if (this.db) {
-			this.db.close();
-			this.db = null;
-		}
-		if (this.dbPromise) {
-			this.dbPromise.then((db) => db.close()).catch(() => {});
-			this.dbPromise = null;
-		}
+		const connection = this.connection;
+		this.connection = null;
+		connection?.then((db) => db.close()).catch(() => {});
 	}
 
 	private async runTx<T>(

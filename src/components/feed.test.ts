@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import type { AgentRunCollapse, ChatPlugin, Message, MessageActionContext } from "../core/types";
+import type { AgentRunCollapse, ChatPlugin, Message } from "../core/types";
 import { AgentThinkingPlugin } from "../plugins/agent-thinking/agent-thinking-plugin";
 import { CopyPlugin } from "../plugins/copy/copy-plugin";
-import { EditPlugin } from "../plugins/edit/edit-plugin";
 import { ThinkingPlugin } from "../plugins/thinking/thinking-plugin";
 import { ToolsPlugin } from "../plugins/tools/tools-plugin";
 import { Feed } from "./feed";
@@ -469,76 +468,44 @@ async function flushMicrotasks(): Promise<void> {
 	await Promise.resolve();
 }
 
-test("generation start schedules one smooth scroll", () => {
-	const { feed, frameCount, flushFrames, scrollCalls } = createFeedHarness();
+test("desktop generation coalesces streaming updates into one smooth scroll", () => {
+	const { feed, frameCount, flushFrames, scrollCalls, scrollListenerCounts } = createFeedHarness();
+	const currentMessages = messages();
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
 
-	feed.update(messages(), "assistant-1", false, true);
+	feed.scrollToLatest();
+	feed.update(currentMessages, { streamingMessageIds: new Set(["assistant-1"]) });
+	feed.update(currentMessages, { streamingMessageIds: new Set(["assistant-1"]) });
 
 	assert.equal(frameCount(), 1);
 	flushFrames();
 	assert.deepEqual(scrollCalls, ["smooth"]);
 
 	feed.destroy();
-});
-
-test("chat history is marked busy while a response is generating", () => {
-	const { feed, root } = createFeedHarness();
-	const history = root.querySelector<HTMLElement>(".mur-chat-history");
-	assert.ok(history);
-	const originalSetAttribute = history.setAttribute.bind(history);
-	let busyAttributeWrites = 0;
-	history.setAttribute = ((name: string, value: string) => {
-		if (name === "aria-busy") busyAttributeWrites++;
-		originalSetAttribute(name, value);
-	}) as typeof history.setAttribute;
-
-	feed.update(messages(), "assistant-1", false, true);
-	assert.equal(history.getAttribute("aria-busy"), "true");
-	assert.equal(busyAttributeWrites, 1);
-
-	feed.update(messages(), "assistant-1", false, false);
-	assert.equal(history.getAttribute("aria-busy"), "true");
-	assert.equal(busyAttributeWrites, 1);
-
-	feed.update(messages(), null, false, false);
-	assert.equal(history.getAttribute("aria-busy"), "false");
-	assert.equal(busyAttributeWrites, 2);
-
-	feed.destroy();
-});
-
-test("desktop feed listens only to the scroll area", () => {
-	const { feed, scrollListenerCounts } = createFeedHarness();
-
-	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
-	feed.destroy();
 	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
 });
 
-test("mobile feed listens only to window scroll", () => {
-	const { feed, scrollListenerCounts } = createFeedHarness({ mobile: true });
-
-	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 1 });
-	feed.destroy();
-	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
-});
-
-test("mobile embedded feed listens only to the scroll area", () => {
-	const { feed, scrollListenerCounts } = createFeedHarness({ fullscreen: false, mobile: true });
-
-	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
-	feed.destroy();
-	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
-});
-
-test("feed swaps scroll listener targets when the mobile query changes", () => {
-	const { feed, scrollListenerCounts, triggerMediaChange } = createFeedHarness();
-
+test("changing the mobile layout transfers the scroll listener and resets its position baseline", () => {
+	const { feed, root, frameCount, flushFrames, triggerMediaChange, scrollListenerCounts } = createFeedHarness();
+	const scrollArea = root.querySelector<HTMLElement>(".mur-chat-scroll-area");
+	assert.ok(scrollArea);
+	const currentMessages = messages();
 	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
 
+	feed.update(currentMessages);
+	flushFrames();
+
+	setScrollMetrics(scrollArea, { scrollTop: 400, scrollHeight: 500, clientHeight: 100 });
+	scrollArea.dispatchEvent(new window.Event("scroll"));
+
+	setWindowScrollMetrics({ scrollTop: 100, scrollHeight: 1000, clientHeight: 500 });
 	triggerMediaChange(true);
 	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 1 });
+	window.dispatchEvent(new window.Event("scroll"));
 
+	feed.update(currentMessages);
+
+	assert.equal(frameCount(), 1);
 	triggerMediaChange(false);
 	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
 
@@ -546,34 +513,14 @@ test("feed swaps scroll listener targets when the mobile query changes", () => {
 	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
 });
 
-test("feed resets scroll position baseline when swapping scroll targets", () => {
-	const { feed, root, frameCount, flushFrames, scrollCalls, triggerMediaChange } = createFeedHarness();
-	const scrollArea = root.querySelector<HTMLElement>(".mur-chat-scroll-area");
-	assert.ok(scrollArea);
-	const currentMessages = messages();
-
-	feed.update(currentMessages, null, false, false);
-	flushFrames();
-	scrollCalls.length = 0;
-
-	setScrollMetrics(scrollArea, { scrollTop: 400, scrollHeight: 500, clientHeight: 100 });
-	scrollArea.dispatchEvent(new window.Event("scroll"));
-
-	setWindowScrollMetrics({ scrollTop: 100, scrollHeight: 1000, clientHeight: 500 });
-	triggerMediaChange(true);
-	window.dispatchEvent(new window.Event("scroll"));
-
-	feed.update(currentMessages, null, false, false);
-
-	assert.equal(frameCount(), 1);
-
-	feed.destroy();
-});
-
 test("mobile generation scrolls the window", () => {
-	const { feed, frameCount, flushFrames, scrollCalls, windowScrollCalls } = createFeedHarness({ mobile: true });
+	const { feed, frameCount, flushFrames, scrollCalls, windowScrollCalls, scrollListenerCounts } = createFeedHarness({
+		mobile: true,
+	});
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 1 });
 
-	feed.update(messages(), "assistant-1", false, true);
+	feed.scrollToLatest();
+	feed.update(messages(), { streamingMessageIds: new Set(["assistant-1"]) });
 
 	assert.equal(frameCount(), 1);
 	flushFrames();
@@ -581,15 +528,18 @@ test("mobile generation scrolls the window", () => {
 	assert.deepEqual(windowScrollCalls, ["smooth"]);
 
 	feed.destroy();
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
 });
 
 test("mobile embedded generation scrolls the scroll area", () => {
-	const { feed, frameCount, flushFrames, scrollCalls, windowScrollCalls } = createFeedHarness({
+	const { feed, frameCount, flushFrames, scrollCalls, windowScrollCalls, scrollListenerCounts } = createFeedHarness({
 		fullscreen: false,
 		mobile: true,
 	});
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 1, window: 0 });
 
-	feed.update(messages(), "assistant-1", false, true);
+	feed.scrollToLatest();
+	feed.update(messages(), { streamingMessageIds: new Set(["assistant-1"]) });
 
 	assert.equal(frameCount(), 1);
 	flushFrames();
@@ -597,83 +547,84 @@ test("mobile embedded generation scrolls the scroll area", () => {
 	assert.deepEqual(windowScrollCalls, []);
 
 	feed.destroy();
+	assert.deepEqual(scrollListenerCounts(), { scrollArea: 0, window: 0 });
 });
 
-test("streaming update does not downgrade a pending smooth scroll", () => {
-	const { feed, frameCount, flushFrames, scrollCalls } = createFeedHarness();
-	const currentMessages = messages();
+test("resize observer flushes a pending smooth scroll once, retaining its behavior", () => {
+	const { feed, frameCount, flushFrames, scrollCalls, triggerResize } = createFeedHarness({ resizeObserver: true });
 
-	feed.update(currentMessages, "assistant-1", false, true);
-	feed.update(currentMessages, "assistant-1", false, false);
+	feed.scrollToLatest();
+	feed.update(messages(), { streamingMessageIds: new Set(["assistant-1"]) });
+	triggerResize();
 
-	assert.equal(frameCount(), 1);
+	assert.equal(frameCount(), 0);
+	assert.deepEqual(scrollCalls, ["smooth"]);
 	flushFrames();
 	assert.deepEqual(scrollCalls, ["smooth"]);
 
 	feed.destroy();
 });
 
-test("hot update inserts a message appended to the same array reference", async () => {
-	const { feed, root } = createFeedHarness();
-	const currentMessages = messages();
+test("resizing follows the bottom before paint, with or without a pending frame", () => {
+	const { feed, root, frameCount, flushFrames, triggerResize } = createFeedHarness({ resizeObserver: true });
+	const area = root.querySelector<HTMLElement>(".mur-chat-scroll-area")!;
+	setScrollMetrics(area, { scrollTop: 100, scrollHeight: 600, clientHeight: 500 });
+	area.dispatchEvent(new window.Event("scroll"));
+	feed.update(messages(), { streamingMessageIds: new Set(["assistant-1"]) });
+	assert.equal(frameCount(), 1);
+	let writes = 0;
+	area.scrollTo = (options?: ScrollToOptions | number) => {
+		assert.equal(typeof options, "object");
+		writes++;
+		area.scrollTop = (options as ScrollToOptions).top! - area.clientHeight;
+	};
+	// Async Markdown has added a line after the render update.
+	setScrollMetrics(area, { scrollTop: 100, scrollHeight: 626, clientHeight: 500 });
+	triggerResize();
+	assert.equal(area.scrollTop, 126);
+	assert.equal(frameCount(), 0);
+	flushFrames();
+	assert.equal(writes, 1);
 
-	feed.update(currentMessages, "assistant-1", false, true);
-	currentMessages.push({
-		id: "assistant-2",
-		role: "assistant",
-		blocks: [{ id: "assistant-2-text", type: "text", text: "final answer" }],
+	setScrollMetrics(area, { scrollTop: 126, scrollHeight: 650, clientHeight: 500 });
+	triggerResize();
+	assert.equal(area.scrollTop, 150);
+	assert.equal(frameCount(), 0);
+	flushFrames();
+	assert.equal(writes, 2);
+	feed.destroy();
+});
+
+test("late content resizing neither reads layout nor pulls a history reader to the bottom", () => {
+	const { feed, root, frameCount, scrollCalls, triggerResize } = createFeedHarness({ resizeObserver: true });
+	const area = root.querySelector<HTMLElement>(".mur-chat-scroll-area")!;
+	setScrollMetrics(area, { scrollTop: 500, scrollHeight: 1000, clientHeight: 500 });
+	area.dispatchEvent(new window.Event("scroll"));
+	setScrollMetrics(area, { scrollTop: 200, scrollHeight: 1000, clientHeight: 500 });
+	area.dispatchEvent(new window.Event("scroll"));
+	Object.defineProperty(area, "scrollHeight", {
+		get() {
+			throw new Error("Unnecessary layout read");
+		},
 	});
-	feed.update(currentMessages, null, false, false);
-	await flushMicrotasks();
-
-	const renderedMessages = root.querySelectorAll(".mur-message");
-	assert.equal(renderedMessages.length, 3);
-	assert.match(renderedMessages[2].textContent ?? "", /final answer/);
-
-	feed.destroy();
-});
-
-test("hot update replaces a placeholder node after message id adoption", async () => {
-	const { feed, root } = createFeedHarness();
-	const currentMessages = messages();
-
-	feed.update(currentMessages, "assistant-1", false, true);
-	currentMessages[1].id = "provider-message";
-	currentMessages[1].blocks = [{ id: "provider-text", type: "text", text: "adopted answer" }];
-	feed.update(currentMessages, null, false, false);
-	await flushMicrotasks();
-
-	const renderedMessages = root.querySelectorAll(".mur-message");
-	assert.equal(renderedMessages.length, 2);
-	assert.match(renderedMessages[1].textContent ?? "", /adopted answer/);
-
-	feed.destroy();
-});
-
-test("resize observer scrolls through the scheduler", () => {
-	const { feed, frameCount, flushFrames, scrollCalls, triggerResize } = createFeedHarness({ resizeObserver: true });
-
 	triggerResize();
-
-	assert.equal(frameCount(), 1);
+	assert.equal(area.scrollTop, 200);
 	assert.deepEqual(scrollCalls, []);
-	flushFrames();
-	assert.deepEqual(scrollCalls, ["auto"]);
-
+	assert.equal(frameCount(), 0);
 	feed.destroy();
+	triggerResize();
+	assert.deepEqual(scrollCalls, []);
 });
 
-test("resize observer does not replace a pending render scroll", () => {
-	const { feed, frameCount, flushFrames, scrollCalls, triggerResize } = createFeedHarness({ resizeObserver: true });
-
-	feed.update(messages(), "assistant-1", false, true);
+test("fullscreen mobile resize follows the window in the same rendering cycle", () => {
+	const { feed, frameCount, scrollCalls, windowScrollCalls, triggerResize } = createFeedHarness({
+		mobile: true,
+		resizeObserver: true,
+	});
 	triggerResize();
-
-	assert.equal(frameCount(), 1);
+	assert.equal(frameCount(), 0);
 	assert.deepEqual(scrollCalls, []);
-	flushFrames();
-	assert.deepEqual(scrollCalls, ["smooth"]);
-
+	assert.deepEqual(windowScrollCalls, ["auto"]);
 	feed.destroy();
 });
 
@@ -682,7 +633,7 @@ test("loading a session resets sticky bottom intent", () => {
 	const scrollArea = root.querySelector<HTMLElement>(".mur-chat-scroll-area");
 	assert.ok(scrollArea);
 
-	feed.update(messages(), null, false, false);
+	feed.update(messages());
 	flushFrames();
 	scrollCalls.length = 0;
 
@@ -691,22 +642,17 @@ test("loading a session resets sticky bottom intent", () => {
 	setScrollMetrics(scrollArea, { scrollTop: 100, scrollHeight: 500, clientHeight: 100 });
 	scrollArea.dispatchEvent(new window.Event("scroll"));
 
-	feed.update(messages(), null, false, false);
+	feed.update(messages());
 	assert.equal(frameCount(), 0);
 
-	feed.update([], null, true, false);
-	feed.update(
-		[
-			{
-				id: "new-user-1",
-				role: "user",
-				blocks: [{ id: "new-user-1-text", type: "text", text: "New chat" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
+	feed.update([], { loading: true });
+	feed.update([
+		{
+			id: "new-user-1",
+			role: "user",
+			blocks: [{ id: "new-user-1-text", type: "text", text: "New chat" }],
+		},
+	]);
 
 	assert.equal(frameCount(), 1);
 	flushFrames();
@@ -736,7 +682,7 @@ test("prepended older messages preserve scroll when feed items regroup", () => {
 		blocks: [{ id: "final-text", type: "text", text: "Current visible answer." }],
 	};
 
-	feed.update([currentHead], null, false, false);
+	feed.update([currentHead]);
 	flushFrames();
 	feed.setOlderMessagesState(true, false);
 
@@ -748,41 +694,36 @@ test("prepended older messages preserve scroll when feed items regroup", () => {
 
 	const beforeTop = metrics.getScrollTop();
 	const beforeHeight = scrollArea.scrollHeight;
-	feed.update(
-		[
-			{
-				id: "user-1",
-				role: "user",
-				runId: "run-1",
-				blocks: [{ id: "user-text", type: "text", text: "Please inspect it" }],
-			},
-			{
-				id: "assistant-tool",
-				role: "assistant",
-				runId: "run-1",
-				blocks: [
-					{
-						id: "tool-call",
-						type: "tool_call",
-						toolCallId: "call-1",
-						name: "inspect",
-						argsText: "{}",
-						status: "complete",
-					},
-				],
-			},
-			{
-				id: "tool-result",
-				role: "tool",
-				runId: "run-1",
-				blocks: [{ id: "tool-result-block", type: "tool_result", toolCallId: "call-1", outputText: "ok" }],
-			},
-			currentHead,
-		],
-		null,
-		false,
-		false,
-	);
+	feed.update([
+		{
+			id: "user-1",
+			role: "user",
+			runId: "run-1",
+			blocks: [{ id: "user-text", type: "text", text: "Please inspect it" }],
+		},
+		{
+			id: "assistant-tool",
+			role: "assistant",
+			runId: "run-1",
+			blocks: [
+				{
+					id: "tool-call",
+					type: "tool_call",
+					toolCallId: "call-1",
+					name: "inspect",
+					argsText: "{}",
+					status: "complete",
+				},
+			],
+		},
+		{
+			id: "tool-result",
+			role: "tool",
+			runId: "run-1",
+			blocks: [{ id: "tool-result-block", type: "tool_result", toolCallId: "call-1", outputText: "ok" }],
+		},
+		currentHead,
+	]);
 
 	assert.equal(metrics.getScrollTop(), beforeTop + scrollArea.scrollHeight - beforeHeight);
 	scrollArea.dispatchEvent(new window.Event("scroll"));
@@ -805,39 +746,78 @@ test("older message loading shows a visible status", () => {
 	feed.destroy();
 });
 
-test("global errors without a message id are ignored by the feed", () => {
-	const { feed, root } = createFeedHarness();
-
-	feed.update(messages(), null, false, false, { message: "Chat not found. Started a new one." });
-
-	assert.equal(root.querySelector(".mur-message-error"), null);
-
+test("prepend compensation does not double the browser's native scroll anchoring", () => {
+	const { feed, root, flushFrames } = createFeedHarness({ fullscreen: false });
+	const area = root.querySelector<HTMLElement>(".mur-chat-scroll-area")!;
+	let emulateNativeAnchor = false;
+	let previousHeight = 0;
+	const metrics = setComputedScrollMetrics(area, {
+		scrollTop: 0,
+		clientHeight: 500,
+		scrollHeight: () => {
+			const height = 900 + root.querySelectorAll(".mur-message").length * 100;
+			if (emulateNativeAnchor) metrics.setScrollTop(metrics.getScrollTop() + height - previousHeight);
+			previousHeight = height;
+			return height;
+		},
+	});
+	const current = messages();
+	feed.update(current);
+	flushFrames();
+	metrics.setScrollTop(400);
+	area.dispatchEvent(new window.Event("scroll"));
+	metrics.setScrollTop(300);
+	area.dispatchEvent(new window.Event("scroll"));
+	emulateNativeAnchor = true;
+	feed.update([{ id: "older", role: "user", blocks: [] }, ...current]);
+	assert.equal(metrics.getScrollTop(), 400);
 	feed.destroy();
 });
 
-test("text blocks render markdown directly into the block container", async () => {
-	const { feed, root } = createFeedHarness();
+test("pagination spinner compensates once even when the browser anchors it", () => {
+	const { feed, root } = createFeedHarness({ fullscreen: false });
+	const area = root.querySelector<HTMLElement>(".mur-chat-scroll-area")!;
+	const metrics = setComputedScrollMetrics(area, { scrollTop: 0, clientHeight: 500, scrollHeight: () => 1500 });
+	metrics.setScrollTop(400);
+	area.dispatchEvent(new window.Event("scroll"));
+	metrics.setScrollTop(300);
+	area.dispatchEvent(new window.Event("scroll"));
+	const spinner = root.querySelector<HTMLElement>(".mur-feed-spinner-top")!;
+	let previousHeight = 0;
+	Object.defineProperty(spinner, "offsetHeight", {
+		get() {
+			const height = spinner.hidden ? 0 : 42;
+			metrics.setScrollTop(metrics.getScrollTop() + height - previousHeight);
+			previousHeight = height;
+			return height;
+		},
+	});
+	feed.setOlderMessagesState(true, true);
+	assert.equal(metrics.getScrollTop(), 342);
+	feed.setOlderMessagesState(true, false);
+	assert.equal(metrics.getScrollTop(), 300);
+	feed.destroy();
+});
 
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-1", type: "text", text: "Hello **world**" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-	await flushMicrotasks();
-
-	const block = root.querySelector<HTMLElement>(".mur-block-text");
-	assert.ok(block);
-	assert.equal(block.querySelector(".mur-message-content"), null);
-	assert.equal(block.firstElementChild?.tagName, "P");
-	assert.match(block.textContent ?? "", /Hello world/);
-
+test("composer shrinkage at the bottom does not request history; scrolling up still does", () => {
+	let pages = 0;
+	const { feed, root } = createFeedHarness({
+		fullscreen: false,
+		onReachTop: () => {
+			pages++;
+		},
+	});
+	const area = root.querySelector<HTMLElement>(".mur-chat-scroll-area")!;
+	feed.setOlderMessagesState(true, false);
+	setScrollMetrics(area, { scrollTop: 180, scrollHeight: 780, clientHeight: 600 });
+	area.dispatchEvent(new window.Event("scroll"));
+	// Browser clamps scrollTop as removal of attachments increases the viewport.
+	setScrollMetrics(area, { scrollTop: 80, scrollHeight: 780, clientHeight: 700 });
+	area.dispatchEvent(new window.Event("scroll"));
+	assert.equal(pages, 0);
+	setScrollMetrics(area, { scrollTop: 40, scrollHeight: 780, clientHeight: 700 });
+	area.dispatchEvent(new window.Event("scroll"));
+	assert.equal(pages, 1);
 	feed.destroy();
 });
 
@@ -853,18 +833,13 @@ test("code block copy button writes the rendered code text", async () => {
 		},
 	});
 
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-1", type: "text", text: "```ts\nconst x = 1;\n```" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
+	feed.update([
+		{
+			id: "assistant-1",
+			role: "assistant",
+			blocks: [{ id: "text-1", type: "text", text: "```ts\nconst x = 1;\n```" }],
+		},
+	]);
 	await flushMicrotasks();
 
 	const copyBtn = root.querySelector<HTMLButtonElement>(".mur-code-copy-btn");
@@ -880,178 +855,13 @@ test("code block copy button writes the rendered code text", async () => {
 	feed.destroy();
 });
 
-test("copy action reads the latest message for a reused node", async () => {
-	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
-	const copied: string[] = [];
-
-	setGlobal("navigator", {
-		clipboard: {
-			writeText: async (text: string) => {
-				copied.push(text);
-			},
-		},
-	});
-
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-1", type: "text", text: "Old text" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-
-	const copyBtn = root.querySelector<HTMLButtonElement>(".mur-action-icon-btn");
-	assert.ok(copyBtn);
-
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-2", type: "text", text: "New text" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-
-	copyBtn.click();
-	await flushMicrotasks();
-
-	assert.deepEqual(copied, ["New text"]);
-
-	feed.destroy();
-});
-
-test("copy action is omitted for assistant messages without text blocks", () => {
-	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
-
-	setGlobal("navigator", {
-		clipboard: {
-			writeText: async () => {},
-		},
-	});
-
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [
-					{
-						id: "tool-1",
-						type: "tool_call",
-						toolCallId: "call-1",
-						name: "list_files",
-						argsText: '{"path":"src"}',
-						status: "complete",
-					},
-				],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-
-	assert.equal(root.querySelector(".mur-message-actions"), null);
-
-	feed.destroy();
-});
-
-test("message actions are shown again when they become applicable", () => {
-	const { feed, root } = createFeedHarness({ plugins: [CopyPlugin()] });
-
-	setGlobal("navigator", {
-		clipboard: {
-			writeText: async () => {},
-		},
-	});
-
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-1", type: "text", text: "Text" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-
-	const actions = root.querySelector<HTMLElement>(".mur-message-actions");
-	assert.ok(actions);
-
-	feed.update([{ id: "assistant-1", role: "assistant", blocks: [] }], null, false, false);
-	assert.equal(actions.hidden, true);
-
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-2", type: "text", text: "Text again" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-
-	assert.equal(actions.hidden, false);
-
-	feed.destroy();
-});
-
-test("plugin action buttons are initialized once for a message node", () => {
-	let callCount = 0;
-	const plugin: ChatPlugin = {
-		name: "share",
-		getActionButtons: () => {
-			callCount++;
-			return [
-				{
-					id: "share",
-					title: "Share",
-					iconHtml: "<span>S</span>",
-					onClick: () => {},
-				},
-			];
-		},
-	};
-	const { feed, root } = createFeedHarness({ plugins: [plugin] });
-
-	feed.update(
-		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Old text" }] }],
-		null,
-		false,
-		false,
-	);
-	feed.update(
-		[{ id: "user-1", role: "user", blocks: [{ id: "text-2", type: "text", text: "New text" }] }],
-		null,
-		false,
-		false,
-	);
-
-	assert.equal(callCount, 1);
-	assert.equal(root.querySelectorAll(".mur-action-icon-btn").length, 1);
-
-	feed.destroy();
-});
-
 test("agent runs collapse intermediate messages after generation finishes", async () => {
-	const { feed, root } = createFeedHarness();
+	const { feed, root } = createFeedHarness({ plugins: [ToolsPlugin()] });
+	feed.update(agentRunMessages().slice(0, 3), { streamingMessageIds: new Set(["assistant-tool"]) });
+	assert.equal(root.querySelector(".mur-agent-run-summary")?.getAttribute("aria-expanded"), "true");
+	assert.ok(root.querySelector(".mur-agent-run-steps .mur-tool-summary"));
 
-	feed.update(agentRunMessages(), null, false, false);
+	feed.update(agentRunMessages());
 	await flushMicrotasks();
 
 	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
@@ -1070,6 +880,8 @@ test("agent runs collapse intermediate messages after generation finishes", asyn
 	assert.equal(root.querySelectorAll(".mur-agent-run-steps .mur-message").length, 1);
 	assert.equal(root.querySelector(".mur-agent-run-steps .mur-message-tool"), null);
 	assert.equal(root.querySelectorAll(".mur-message").length, 3);
+	root.querySelector<HTMLButtonElement>(".mur-agent-run-steps .mur-tool-summary")!.click();
+	assert.match(root.querySelector(".mur-tool-details")?.textContent ?? "", /src\/index\.ts/);
 
 	feed.destroy();
 });
@@ -1090,7 +902,7 @@ test("agent run work summary includes the tool call count", async () => {
 		},
 	];
 
-	feed.update(transcript, null, false, false);
+	feed.update(transcript);
 	await flushMicrotasks();
 
 	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "2 tool calls, 1m 59s");
@@ -1098,34 +910,10 @@ test("agent run work summary includes the tool call count", async () => {
 	feed.destroy();
 });
 
-test("agent run work omits standalone tool result rows but keeps tool details", async () => {
-	const { feed, root } = createFeedHarness({ plugins: [ToolsPlugin()] });
-
-	feed.update(agentRunMessages(), null, false, false);
-	await flushMicrotasks();
-
-	root.querySelector<HTMLButtonElement>(".mur-agent-run-summary")?.click();
-	await flushMicrotasks();
-
-	assert.equal(root.querySelector(".mur-agent-run-steps .mur-message-tool"), null);
-	const toolSummary = root.querySelector<HTMLButtonElement>(".mur-agent-run-steps .mur-tool-summary");
-	assert.ok(toolSummary);
-
-	toolSummary.click();
-	await flushMicrotasks();
-
-	const details = root.querySelector<HTMLElement>(".mur-agent-run-steps .mur-tool-details");
-	assert.ok(details);
-	assert.match(details.textContent ?? "", /Result/);
-	assert.match(details.textContent ?? "", /src\/index\.ts/);
-
-	feed.destroy();
-});
-
 test("machinery agent runs keep assistant prose visible and fold tool calls", async () => {
 	const { feed, root } = createFeedHarness();
 
-	feed.update(agentRunWithIntermediateProse(), null, false, false);
+	feed.update(agentRunWithIntermediateProse());
 	await flushMicrotasks();
 
 	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
@@ -1160,7 +948,7 @@ test("machinery agent runs keep assistant prose visible and fold tool calls", as
 test("agent run work toggles expand only their own segment", async () => {
 	const { feed, root } = createFeedHarness();
 
-	feed.update(agentRunWithTwoWorkSegments(), null, false, false);
+	feed.update(agentRunWithTwoWorkSegments());
 	await flushMicrotasks();
 
 	const summaries = Array.from(root.querySelectorAll<HTMLButtonElement>(".mur-agent-run-summary"));
@@ -1187,7 +975,7 @@ test("agent run work toggles expand only their own segment", async () => {
 test("agent run work duration omits zero values from coarse timestamps", async () => {
 	const { feed, root } = createFeedHarness();
 
-	feed.update(agentRunWithSameTimestampWork(), null, false, false);
+	feed.update(agentRunWithSameTimestampWork());
 	await flushMicrotasks();
 
 	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "1 tool call");
@@ -1204,7 +992,7 @@ test("agent run final reasoning stays inside the folded work segment", async () 
 		...finalMessage.blocks,
 	];
 
-	feed.update(transcript, null, false, false);
+	feed.update(transcript);
 	await flushMicrotasks();
 
 	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
@@ -1251,7 +1039,7 @@ test("reasoning-only agent work uses a thought summary", async () => {
 		},
 	];
 
-	feed.update(transcript, null, false, false);
+	feed.update(transcript);
 	await flushMicrotasks();
 
 	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "Thought for 10s");
@@ -1274,7 +1062,7 @@ test("agent thinking plugin renders folded reasoning as inline preview text", as
 		...finalMessage.blocks,
 	];
 
-	feed.update(transcript, null, false, false);
+	feed.update(transcript);
 	await flushMicrotasks();
 
 	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
@@ -1301,28 +1089,11 @@ test("agent thinking plugin renders folded reasoning as inline preview text", as
 test("agent run grouping falls back to user boundaries for old transcripts without run ids", async () => {
 	const { feed, root } = createFeedHarness();
 
-	feed.update(agentRunMessages({ runId: false }), null, false, false);
+	feed.update(agentRunMessages({ runId: false }));
 	await flushMicrotasks();
 
 	assert.equal(root.querySelector(".mur-agent-run-summary")?.textContent, "1 tool call, 1m 59s");
 	assert.equal(root.querySelectorAll(".mur-message").length, 2);
-
-	feed.destroy();
-});
-
-test("active machinery agent runs render compact expanded work", () => {
-	const { feed, root } = createFeedHarness();
-	const transcript = agentRunMessages().slice(0, 3);
-
-	feed.update(transcript, "assistant-tool", false, false);
-
-	const summary = root.querySelector<HTMLButtonElement>(".mur-agent-run-summary");
-	assert.ok(summary);
-	assert.equal(summary.getAttribute("aria-expanded"), "true");
-	assert.equal(root.querySelectorAll(".mur-agent-run-steps .mur-message").length, 1);
-	const history = root.querySelector<HTMLElement>(".mur-chat-history");
-	assert.ok(history);
-	assert.equal(Array.from(history.children).filter((child) => child.classList.contains("mur-message")).length, 0);
 
 	feed.destroy();
 });
@@ -1350,7 +1121,7 @@ test("text-only multi-assistant replies stay flat", async () => {
 		},
 	];
 
-	feed.update(transcript, null, false, false);
+	feed.update(transcript);
 	await flushMicrotasks();
 
 	assert.equal(root.querySelector(".mur-agent-run-summary"), null);
@@ -1361,169 +1132,12 @@ test("text-only multi-assistant replies stay flat", async () => {
 	feed.destroy();
 });
 
-test("plugin action buttons wait for generation to finish before initialization", () => {
-	let callCount = 0;
-	const plugin: ChatPlugin = {
-		name: "tool-output",
-		getActionButtons: (msg) => {
-			callCount++;
-			const hasToolCall = msg.blocks.some((block) => block.type === "tool_call");
-			return hasToolCall
-				? [
-						{
-							id: "view-output",
-							title: "View output",
-							iconHtml: "<span>O</span>",
-							onClick: () => {},
-						},
-					]
-				: [];
-		},
-	};
-	const { feed, root } = createFeedHarness({ plugins: [plugin] });
-
-	feed.update(
-		[{ id: "assistant-1", role: "assistant", blocks: [{ id: "text-1", type: "text", text: "Working" }] }],
-		"assistant-1",
-		false,
-		false,
-	);
-
-	assert.equal(callCount, 0);
-	assert.equal(root.querySelector(".mur-message-actions"), null);
-
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [
-					{ id: "text-1", type: "text", text: "Working" },
-					{
-						id: "tool-1",
-						type: "tool_call",
-						toolCallId: "call-1",
-						name: "render_chart",
-						argsText: "{}",
-						status: "complete",
-					},
-				],
-			},
-		],
-		null,
-		false,
-		false,
-	);
-
-	assert.equal(callCount, 1);
-	assert.equal(root.querySelector<HTMLButtonElement>("[data-action-id='view-output']")?.title, "View output");
-
-	feed.destroy();
-});
-
-test("plugin action clicks receive the latest message and DOM context", () => {
-	const clicks: MessageActionContext[] = [];
-	const plugin: ChatPlugin = {
-		name: "share",
-		getActionButtons: () => [
-			{
-				id: "share",
-				title: "Share",
-				iconHtml: "<span>S</span>",
-				onClick: (ctx) => {
-					clicks.push(ctx);
-				},
-			},
-		],
-	};
-	const { feed, root } = createFeedHarness({ plugins: [plugin] });
-
-	feed.update(
-		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Old text" }] }],
-		null,
-		false,
-		false,
-	);
-	const button = root.querySelector<HTMLButtonElement>(".mur-action-icon-btn");
-	assert.ok(button);
-
-	feed.update(
-		[{ id: "user-1", role: "user", blocks: [{ id: "text-2", type: "text", text: "New text" }] }],
-		null,
-		false,
-		false,
-	);
-
-	button.click();
-
-	assert.equal(clicks.length, 1);
-	assert.equal(clicks[0].message.blocks[0].id, "text-2");
-	assert.equal(clicks[0].buttonEl, button);
-	assert.equal(clicks[0].messageEl, root.querySelector(".mur-message"));
-	assert.equal(clicks[0].actionId, "share");
-	assert.equal(clicks[0].pluginName, "share");
-
-	feed.destroy();
-});
-
-test("empty plugin action definitions do not create an action bar", () => {
-	const plugin: ChatPlugin = {
-		name: "empty",
-		getActionButtons: () => [],
-	};
-	const { feed, root } = createFeedHarness({ plugins: [plugin] });
-
-	feed.update(
-		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Hello" }] }],
-		null,
-		false,
-		false,
-	);
-
-	assert.equal(root.querySelector(".mur-message-actions"), null);
-
-	feed.destroy();
-});
-
-test("edit plugin action opens the editor and saves changes", () => {
-	const saved: { id: string; text: string }[] = [];
-	const { feed, root } = createFeedHarness({
-		plugins: [EditPlugin({ onSave: (id, text) => saved.push({ id, text }) })],
-	});
-
-	feed.update(
-		[{ id: "user-1", role: "user", blocks: [{ id: "text-1", type: "text", text: "Original text" }] }],
-		null,
-		false,
-		false,
-	);
-
-	const editButton = root.querySelector<HTMLButtonElement>("[data-action-id='edit']");
-	assert.ok(editButton);
-	assert.equal(root.querySelector(".mur-edit-container"), null);
-
-	editButton.click();
-
-	assert.ok(root.querySelector(".mur-edit-container"));
-	const textarea = root.querySelector<HTMLTextAreaElement>(".mur-edit-textarea");
-	const saveButton = root.querySelector<HTMLButtonElement>(".mur-save-edit-btn");
-	assert.ok(textarea);
-	assert.ok(saveButton);
-	assert.equal(textarea.value, "Original text");
-
-	textarea.value = "Updated text";
-	saveButton.click();
-
-	assert.deepEqual(saved, [{ id: "user-1", text: "Updated text" }]);
-	assert.equal(root.querySelector(".mur-edit-textarea"), null);
-
-	feed.destroy();
-});
-
 test("message-scoped errors render only on the matching message", () => {
 	const { feed, root } = createFeedHarness();
 
-	feed.update(messages(), "assistant-1", false, false, { message: "Provider failed", id: "assistant-1" });
+	const transcript = messages();
+	transcript[1].error = "Provider failed";
+	feed.update(transcript, { streamingMessageIds: new Set(["assistant-1"]) });
 
 	const errors = root.querySelectorAll(".mur-message-error");
 	assert.equal(errors.length, 1);
@@ -1536,9 +1150,7 @@ test("message-scoped errors render only on the matching message", () => {
 test("a throwing plugin does not break block rendering or other plugins' actions", async () => {
 	const brokenPlugin: ChatPlugin = {
 		name: "broken",
-		onBlockRender: () => {
-			throw new Error("render boom");
-		},
+
 		getActionButtons: () => {
 			throw new Error("actions boom");
 		},
@@ -1551,18 +1163,13 @@ test("a throwing plugin does not break block rendering or other plugins' actions
 		},
 	});
 
-	feed.update(
-		[
-			{
-				id: "assistant-1",
-				role: "assistant",
-				blocks: [{ id: "text-1", type: "text", text: "Still **rendered**" }],
-			},
-		],
-		null,
-		false,
-		false,
-	);
+	feed.update([
+		{
+			id: "assistant-1",
+			role: "assistant",
+			blocks: [{ id: "text-1", type: "text", text: "Still **rendered**" }],
+		},
+	]);
 	await flushMicrotasks();
 
 	assert.match(root.querySelector(".mur-block-text")?.textContent ?? "", /Still rendered/);

@@ -18,7 +18,7 @@
 	flex-shrink: 0;
 }
 
-.mur-attachment-preview-item.mur-attachment-processing {
+.mur-attachment-preview-item[data-attachment-state="uploading"] {
 	opacity: 0.68;
 }
 
@@ -40,7 +40,7 @@
 	border: 1px solid var(--mur-border);
 }
 
-.mur-attachment-preview-item.mur-attachment-error .mur-file-preview {
+.mur-attachment-preview-item[data-attachment-state="error"] .mur-file-preview {
 	color: var(--mur-danger-text);
 	border-color: var(--mur-danger-border);
 	background: var(--mur-danger-bg);
@@ -117,4 +117,9 @@
 	font-size: 0.85rem;
 	color: var(--mur-text-muted);
 	border: 1px solid var(--mur-border);
+}
+
+.mur-attachment-remove-btn:disabled {
+	opacity: 0.45;
+	cursor: default;
 }

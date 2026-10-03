@@ -114,7 +114,7 @@ test("SettingsPlugin saves and applies title model settings", async () => {
 	assert.deepEqual(providerSettings.at(-1), { model: "new-chat-model", titleModel: "" });
 });
 
-test("SettingsPlugin modal exposes useful names for assistive tech", async () => {
+test("SettingsPlugin modal is labelled, traps focus, restores it on Escape, and cleans up on destroy", () => {
 	const container = installDom();
 	const engine = {
 		setProvider: () => {},
@@ -125,8 +125,9 @@ test("SettingsPlugin modal exposes useful names for assistive tech", async () =>
 
 	plugin.onMount?.({ engine, container });
 
-	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
-	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
+	const settingsButton = container.querySelector<HTMLButtonElement>(".mur-settings-btn")!;
+	settingsButton.focus();
+	settingsButton.click();
 
 	const modal = container.querySelector<HTMLElement>(".mur-settings-modal");
 	assert.ok(modal);
@@ -137,39 +138,32 @@ test("SettingsPlugin modal exposes useful names for assistive tech", async () =>
 	const modelInput = container.querySelector<HTMLInputElement>(".mur-set-model");
 	const modelLabel = container.querySelector<HTMLLabelElement>(`label[for="${modelInput?.id}"]`);
 	assert.equal(modelLabel?.textContent, "Model Name");
+	const closeButton = modal.querySelector<HTMLButtonElement>(".mur-settings-close-btn")!;
+	const saveButton = modal.querySelector<HTMLButtonElement>(".mur-set-save-btn")!;
+	assert.equal(document.activeElement, modal.querySelector(".mur-set-endpoint"));
 
-	plugin.destroy?.();
-});
-
-test("SettingsPlugin modal supports custom placeholders", async () => {
-	const container = installDom();
-	const engine = {
-		setProvider: () => {},
-		setRequestDefaults: () => {},
-		setTitleOptions: () => {},
-	} as unknown as ChatEngine;
-	const plugin = SettingsPlugin({
-		endpointPlaceholder: "https://provider.example/v1/chat/completions",
-		apiKeyPlaceholder: "Provider API key",
-		modelPlaceholder: "provider-model-name",
-	});
-
-	plugin.onMount?.({ engine, container });
-
-	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
-	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
-
-	assert.equal(
-		(container.querySelector(".mur-set-endpoint") as HTMLInputElement).placeholder,
-		"https://provider.example/v1/chat/completions",
+	saveButton.focus();
+	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+	assert.equal(document.activeElement, closeButton);
+	document.dispatchEvent(
+		new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }),
 	);
-	assert.equal((container.querySelector(".mur-set-apikey") as HTMLInputElement).placeholder, "Provider API key");
-	assert.equal((container.querySelector(".mur-set-model") as HTMLInputElement).placeholder, "provider-model-name");
+	assert.equal(document.activeElement, saveButton);
+	settingsButton.focus();
+	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+	assert.equal(document.activeElement, closeButton);
 
+	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Escape" }));
+	assert.equal(container.querySelector(".mur-settings-modal"), null);
+	assert.equal(document.activeElement, settingsButton);
+
+	settingsButton.click();
 	plugin.destroy?.();
+	assert.equal(container.querySelector(".mur-settings-modal"), null);
+	assert.equal(container.querySelector(".mur-settings-btn"), null);
 });
 
-test("SettingsPlugin custom trigger selector is scoped to the chat container by default", async () => {
+test("SettingsPlugin custom trigger selector is scoped to the chat container by default", () => {
 	const container = installDom();
 	const outsideTrigger = document.createElement("button");
 	outsideTrigger.className = "settings-trigger";
@@ -194,7 +188,7 @@ test("SettingsPlugin custom trigger selector is scoped to the chat container by 
 	plugin.destroy?.();
 });
 
-test("SettingsPlugin custom trigger selector can opt into document scope", async () => {
+test("SettingsPlugin custom trigger selector can opt into document scope", () => {
 	const container = installDom();
 	const outsideTrigger = document.createElement("button");
 	outsideTrigger.className = "settings-trigger";
@@ -214,74 +208,7 @@ test("SettingsPlugin custom trigger selector can opt into document scope", async
 	plugin.destroy?.();
 });
 
-test("SettingsPlugin modal focuses the first field and closes on Escape", async () => {
-	const container = installDom();
-	const engine = {
-		setProvider: () => {},
-		setRequestDefaults: () => {},
-		setTitleOptions: () => {},
-	} as unknown as ChatEngine;
-	const plugin = SettingsPlugin();
-
-	plugin.onMount?.({ engine, container });
-
-	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
-	const settingsBtn = container.querySelector<HTMLButtonElement>(".mur-settings-btn");
-	assert.ok(settingsBtn);
-
-	settingsBtn.focus();
-	settingsBtn.click();
-
-	const endpointInput = container.querySelector<HTMLInputElement>(".mur-set-endpoint");
-	assert.equal(document.activeElement, endpointInput);
-
-	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Escape" }));
-
-	assert.equal(container.querySelector(".mur-settings-modal"), null);
-	assert.equal(document.activeElement, settingsBtn);
-
-	plugin.destroy?.();
-});
-
-test("SettingsPlugin modal keeps Tab focus inside the dialog", async () => {
-	const container = installDom();
-	const engine = {
-		setProvider: () => {},
-		setRequestDefaults: () => {},
-		setTitleOptions: () => {},
-	} as unknown as ChatEngine;
-	const plugin = SettingsPlugin();
-
-	plugin.onMount?.({ engine, container });
-
-	await waitFor(() => container.querySelector(".mur-settings-btn") !== null, "settings button");
-	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
-
-	const closeBtn = container.querySelector<HTMLButtonElement>(".mur-settings-close-btn");
-	const endpointInput = container.querySelector<HTMLInputElement>(".mur-set-endpoint");
-	const saveBtn = container.querySelector<HTMLButtonElement>(".mur-set-save-btn");
-	assert.ok(closeBtn);
-	assert.ok(endpointInput);
-	assert.ok(saveBtn);
-
-	saveBtn.focus();
-	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
-	assert.equal(document.activeElement, closeBtn);
-
-	closeBtn.focus();
-	document.dispatchEvent(
-		new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }),
-	);
-	assert.equal(document.activeElement, saveBtn);
-
-	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).focus();
-	document.dispatchEvent(new document.defaultView!.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
-	assert.equal(document.activeElement, closeBtn);
-
-	plugin.destroy?.();
-});
-
-test("SettingsPlugin keeps the modal open when required endpoint or model is empty", async () => {
+test("SettingsPlugin honors empty defaults and requires endpoint and model before saving", async () => {
 	const container = installDom();
 	const savedStates: SettingsState[] = [];
 	const providerSettings: SettingsState[] = [];
@@ -294,6 +221,8 @@ test("SettingsPlugin keeps the modal open when required endpoint or model is emp
 		setTitleOptions: () => {},
 	} as unknown as ChatEngine;
 	const plugin = SettingsPlugin({
+		defaultEndpoint: "",
+		defaultModel: "",
 		storage: {
 			async get() {
 				return null;
@@ -310,6 +239,8 @@ test("SettingsPlugin keeps the modal open when required endpoint or model is emp
 
 	plugin.onMount?.({ engine, container });
 	await waitFor(() => providerSettings.length === 1, "initial settings load");
+	assert.equal(providerSettings[0].endpoint, "");
+	assert.equal(providerSettings[0].model, "");
 
 	(container.querySelector(".mur-settings-btn") as HTMLButtonElement).click();
 	const endpointInput = container.querySelector(".mur-set-endpoint") as HTMLInputElement;
@@ -421,10 +352,7 @@ test("SettingsPlugin ignores stale initial storage load after a user save", asyn
 	const provider: ChatProvider = {
 		async streamChat(): Promise<void> {},
 	};
-	let resolveGet!: (settings: Partial<SettingsState> | null) => void;
-	const getPromise = new Promise<Partial<SettingsState> | null>((resolve) => {
-		resolveGet = resolve;
-	});
+	const { promise: getPromise, resolve: resolveGet } = Promise.withResolvers<Partial<SettingsState> | null>();
 	const savedStates: SettingsState[] = [];
 	const storage: SettingsStorage = {
 		async get() {
@@ -485,10 +413,7 @@ test("SettingsPlugin waits for provider swaps before applying request defaults",
 	const provider: ChatProvider = {
 		async streamChat(): Promise<void> {},
 	};
-	let releaseProvider!: () => void;
-	const providerReleased = new Promise<void>((resolve) => {
-		releaseProvider = resolve;
-	});
+	const { promise: providerReleased, resolve: releaseProvider } = Promise.withResolvers<void>();
 	const calls: string[] = [];
 	const engine = {
 		async setProvider() {

@@ -10,37 +10,19 @@ g.NodeFilter = dom.window.NodeFilter;
 
 import { renderSafeHTML } from "./html";
 
-test("keeps safe non-code markdown HTML intact", () => {
-	const input = "<p>Hello <strong>World</strong>!</p>";
+test("preserves safe formatting while stripping unsafe attributes", () => {
+	const input = '<p id="hack" style="color:red" onclick="alert(1)" class="test">Hello <strong>World</strong>!</p>';
 	const output = document.createElement("div");
 	renderSafeHTML(output, input);
-	assert.equal(output.innerHTML, input);
+	assert.equal(output.innerHTML, "<p>Hello <strong>World</strong>!</p>");
 });
 
-test("strips unsafe attributes (XSS events, styles, ids)", () => {
-	const input = '<p id="hack" style="color:red" onclick="alert(1)" class="test">Text</p>';
+test("allows web and email links while stripping javascript URLs", () => {
+	const safe =
+		'<a href="https://example.com">HTTPS</a><a href="http://example.com">HTTP</a><a href="mailto:test@example.com">Mail</a>';
 	const output = document.createElement("div");
-	renderSafeHTML(output, input);
-	assert.equal(output.innerHTML, "<p>Text</p>");
-});
-
-test("protects against malicious links (javascript:)", () => {
-	const input1 = '<a href="https://google.com">Safe</a>';
-	const output1 = document.createElement("div");
-	renderSafeHTML(output1, input1);
-	assert.equal(output1.innerHTML, '<a href="https://google.com">Safe</a>');
-
-	const input2 = '<a href="javascript:alert(1)">Hacked</a>';
-	const output2 = document.createElement("div");
-	renderSafeHTML(output2, input2);
-	assert.equal(output2.innerHTML, "<a>Hacked</a>");
-});
-
-test("allows safe link protocols", () => {
-	const input = '<a href="http://example.com">HTTP</a><a href="mailto:test@example.com">Mail</a>';
-	const output = document.createElement("div");
-	renderSafeHTML(output, input);
-	assert.equal(output.innerHTML, input);
+	renderSafeHTML(output, `${safe}<a href="javascript:alert(1)">Hacked</a>`);
+	assert.equal(output.innerHTML, `${safe}<a>Hacked</a>`);
 });
 
 test("allows only safe image sources", () => {
@@ -61,14 +43,7 @@ test("escapes unsafe nested tags", () => {
 	assert.equal(output.innerHTML, '<p>Before &lt;span onclick="alert(1)"&gt;bad&lt;/span&gt; after</p>');
 });
 
-test("treats highlighter output as trusted for code blocks", () => {
-	const input = '<pre><code class="language-ts">const x = 1;</code></pre>';
-	const output = document.createElement("div");
-	renderSafeHTML(output, input, (code, lang) => `<span class="${lang}">${code}</span>`);
-	assert.equal(output.querySelector("pre > code > span.ts")?.textContent, "const x = 1;");
-});
-
-test("waits for async highlighter output", async () => {
+test("waits for async highlighting and adds language and copy controls", async () => {
 	const input = '<pre><code class="language-ruby">puts "hello"</code></pre>';
 	const output = document.createElement("div");
 
@@ -76,9 +51,10 @@ test("waits for async highlighter output", async () => {
 
 	assert.equal(output.querySelector(".mur-code-language")?.textContent, "ruby");
 	assert.equal(output.querySelector("pre > code > span.ruby")?.textContent, 'puts "hello"');
+	assert.equal(output.querySelector("button.mur-code-copy-btn")?.getAttribute("type"), "button");
 });
 
-test("passes an empty language to highlighter for unlabeled code blocks", () => {
+test("highlights unlabeled code with an empty language and a copy-only header", () => {
 	const input = "<pre><code>const x = 1;</code></pre>";
 	const output = document.createElement("div");
 	const calls: string[] = [];
@@ -90,6 +66,8 @@ test("passes an empty language to highlighter for unlabeled code blocks", () => 
 
 	assert.deepEqual(calls, [""]);
 	assert.equal(output.querySelector("pre > code > span.auto")?.textContent, "const x = 1;");
+	assert.equal(output.querySelector(".mur-code-language"), null);
+	assert.ok(output.querySelector("button.mur-code-copy-btn"));
 });
 
 test("leaves code block content unchanged when highlighter throws", () => {
@@ -101,41 +79,6 @@ test("leaves code block content unchanged when highlighter throws", () => {
 	});
 
 	assert.equal(output.querySelector("pre > code")?.textContent, "const x = 1;");
-});
-
-test("renders language and copy controls for labeled code blocks", () => {
-	const input = '<pre><code class="language-ts">const x = 1;</code></pre>';
-	const output = document.createElement("div");
-
-	renderSafeHTML(output, input);
-
-	const codeBlock = output.querySelector(".mur-code-block");
-	assert.ok(codeBlock);
-	assert.equal(codeBlock.querySelector(".mur-code-language")?.textContent, "ts");
-	assert.equal(codeBlock.querySelector("button.mur-code-copy-btn")?.getAttribute("type"), "button");
-	assert.equal(codeBlock.querySelector("pre > code")?.textContent, "const x = 1;");
-});
-
-test("renders code block controls after applying highlighter output", () => {
-	const input = '<pre><code class="language-ts">const x = 1;</code></pre>';
-	const output = document.createElement("div");
-
-	renderSafeHTML(output, input, (code, lang) => `<span class="${lang}">${code}</span>`);
-
-	assert.equal(output.querySelector(".mur-code-language")?.textContent, "ts");
-	assert.equal(output.querySelector("pre > code > span.ts")?.textContent, "const x = 1;");
-	assert.ok(output.querySelector("button.mur-code-copy-btn"));
-});
-
-test("renders copy-only header for unlabeled code blocks", () => {
-	const input = "<pre><code>const x = 1;</code></pre>";
-	const output = document.createElement("div");
-
-	renderSafeHTML(output, input);
-
-	assert.ok(output.querySelector(".mur-code-block"));
-	assert.equal(output.querySelector(".mur-code-language"), null);
-	assert.ok(output.querySelector("button.mur-code-copy-btn"));
 });
 
 test("escapes unsafe user markup while adding internal code block controls", () => {

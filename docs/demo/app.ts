@@ -9,20 +9,20 @@ import { ThinkingPlugin } from "../../src/plugins/thinking/thinking-plugin";
 import { ToolsPlugin } from "../../src/plugins/tools/tools-plugin";
 import { MockProvider } from "./mock-provider";
 
-const DEFAULT_API_ENDPOINT = "";
-const DEFAULT_API_MODEL = "";
 const DEMO_SETTINGS_KEY = "mur_demo_provider_settings";
-const LEGACY_DEFAULT_API_ENDPOINT = "https://api.openai.com/v1/chat/completions";
-const LEGACY_DEFAULT_API_MODEL = "gpt-4o-mini";
 
 const demoSettingsStorage: SettingsStorage = {
 	async get() {
-		const saved = readJson<Partial<SettingsState>>(DEMO_SETTINGS_KEY);
-		if (!isLegacySavedMockSettings(saved)) return saved;
-
-		const migrated = { ...saved, apiKey: "", endpoint: "", model: "" };
-		localStorage.setItem(DEMO_SETTINGS_KEY, JSON.stringify(migrated));
-		return migrated;
+		const saved = JSON.parse(localStorage.getItem(DEMO_SETTINGS_KEY) || "null") as Partial<SettingsState> | null;
+		// Earlier demos saved these defaults even when using the local provider.
+		if (
+			saved &&
+			!(saved.apiKey ?? "").trim() &&
+			saved.endpoint?.trim() === "https://api.openai.com/v1/chat/completions" &&
+			saved.model?.trim() === "gpt-4o-mini"
+		)
+			return { ...saved, endpoint: "", model: "" };
+		return saved;
 	},
 	async set(state) {
 		localStorage.setItem(DEMO_SETTINGS_KEY, JSON.stringify(state));
@@ -32,7 +32,7 @@ const demoSettingsStorage: SettingsStorage = {
 new ChatUI({
 	container: ".mur-app",
 	provider: new MockProvider(),
-	storage: new IndexedDBStorage("MurmDemoDB"), // Use a separate DB for the demo
+	storage: new IndexedDBStorage("MurmDemoDB"),
 	highlighter: highlight,
 	plugins: (chatApi) => [
 		AttachmentPlugin(),
@@ -41,49 +41,14 @@ new ChatUI({
 		CopyPlugin(),
 		EditPlugin({ onSave: (id, text) => chatApi.editAndResubmit(id, text) }),
 		SettingsPlugin({
-			defaultEndpoint: DEFAULT_API_ENDPOINT,
-			defaultModel: DEFAULT_API_MODEL,
+			defaultEndpoint: "",
+			defaultModel: "",
 			endpointPlaceholder: "https://your-provider.example/v1/chat/completions",
 			apiKeyPlaceholder: "Provider API key",
 			modelPlaceholder: "provider-model-name",
 			storage: demoSettingsStorage,
-			createProvider: createDemoProvider,
+			createProvider: ({ apiKey, endpoint, model }) =>
+				endpoint.trim() && model.trim() ? new OpenAIProvider(apiKey, endpoint, model) : new MockProvider(),
 		}),
 	],
 });
-
-function createDemoProvider(settings: SettingsState) {
-	if (shouldUseMockProvider(settings)) return new MockProvider();
-	return new OpenAIProvider(settings.apiKey, settings.endpoint, settings.model);
-}
-
-function shouldUseMockProvider(settings: SettingsState): boolean {
-	const apiKey = settings.apiKey.trim();
-	const endpoint = settings.endpoint.trim();
-	const model = settings.model.trim();
-
-	if (endpoint === "" || model === "") return true;
-	return apiKey === "" && isLegacyDefault(endpoint, model);
-}
-
-function isLegacyDefault(endpoint: string, model: string): boolean {
-	return endpoint === LEGACY_DEFAULT_API_ENDPOINT && model === LEGACY_DEFAULT_API_MODEL;
-}
-
-function isLegacySavedMockSettings(settings: Partial<SettingsState> | null): boolean {
-	if (!settings) return false;
-
-	return (
-		(settings.apiKey ?? "").trim() === "" &&
-		(settings.endpoint ?? "").trim() === LEGACY_DEFAULT_API_ENDPOINT &&
-		(settings.model ?? "").trim() === LEGACY_DEFAULT_API_MODEL
-	);
-}
-
-function readJson<T>(key: string): T | null {
-	try {
-		return JSON.parse(localStorage.getItem(key) || "null") as T | null;
-	} catch {
-		return null;
-	}
-}

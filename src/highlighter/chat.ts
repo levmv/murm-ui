@@ -12,9 +12,7 @@ import {
 } from "./core";
 import { registerBuiltInLanguages } from "./languages/index";
 
-let builtInLanguagesRegistered = false;
-
-ensureBuiltInLanguages();
+registerBuiltInLanguages(languages);
 
 export type LanguageLoadResult = LanguageDefinition | { default?: LanguageDefinition } | null | undefined;
 
@@ -28,8 +26,8 @@ export interface CreateHighlighterOptions extends CoreCreateHighlighterOptions {
 	loadLanguage?: (language: string) => Promise<LanguageLoadResult>;
 }
 
+// A local export keeps the language registration above when bundlers tree-shake this entry point.
 export function highlight(code: string, language: string): string {
-	ensureBuiltInLanguages();
 	return coreHighlight(code, language);
 }
 
@@ -118,13 +116,4 @@ function isLanguageDefinition(value: unknown): value is LanguageDefinition {
 		typeof (value as LanguageDefinition).id === "string" &&
 		!!(value as LanguageDefinition).grammar
 	);
-}
-
-function ensureBuiltInLanguages(): void {
-	if (builtInLanguagesRegistered) {
-		return;
-	}
-
-	registerBuiltInLanguages(languages);
-	builtInLanguagesRegistered = true;
 }

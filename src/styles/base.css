@@ -1,4 +1,5 @@
-.mur-app {
+:where(:root, [data-theme="light"]) {
+	--mur-color-scheme: light;
 	--mur-bg: #ffffff;
 	--mur-surface: #f9fafb;
 	--mur-surface-user: #e1e5ec;
@@ -40,7 +41,9 @@
 	--mur-sidebar-width: 260px;
 	--mur-sidebar-rail-width: 56px;
 	--mur-user-message-max-width: 85%;
+}
 
+.mur-app {
 	display: flex;
 	height: 100vh;
 	width: 100vw;
@@ -49,14 +52,10 @@
 	font-family: var(--mur-font);
 	background-color: var(--mur-bg);
 	color: var(--mur-text);
-	color-scheme: light;
+	color-scheme: var(--mur-color-scheme, light);
 }
 
-.mur-app[data-theme="light"] {
-	color-scheme: light;
-}
-
-.mur-app[data-theme="dark"] {
+:where([data-theme="dark"]) {
 	--mur-bg: #111827;
 	--mur-surface: #1f2937;
 	--mur-surface-user: #263244;
@@ -90,11 +89,11 @@
 	--mur-shadow-modal: 0 10px 25px rgba(0, 0, 0, 0.36);
 	--mur-shadow-attachment: 0 2px 4px rgba(0, 0, 0, 0.36);
 
-	color-scheme: dark;
+	--mur-color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
-	.mur-app:not([data-theme]) {
+	:where(:root:not([data-theme])) {
 		--mur-bg: #111827;
 		--mur-surface: #1f2937;
 		--mur-surface-user: #263244;
@@ -128,19 +127,20 @@
 		--mur-shadow-modal: 0 10px 25px rgba(0, 0, 0, 0.36);
 		--mur-shadow-attachment: 0 2px 4px rgba(0, 0, 0, 0.36);
 
-		color-scheme: dark;
+		--mur-color-scheme: dark;
 	}
 }
 
-:where(.mur-app, .mur-app *),
-:where(.mur-app, .mur-app *)::before,
-:where(.mur-app, .mur-app *)::after {
+:where(.mur-app, .mur-app *, .mur-composer, .mur-composer *),
+:where(.mur-app, .mur-app *, .mur-composer, .mur-composer *)::before,
+:where(.mur-app, .mur-app *, .mur-composer, .mur-composer *)::after {
 	box-sizing: border-box;
 	margin: 0;
 	padding: 0;
 }
 
-.mur-app [hidden] {
+.mur-app [hidden],
+.mur-composer [hidden] {
 	display: none;
 }
 

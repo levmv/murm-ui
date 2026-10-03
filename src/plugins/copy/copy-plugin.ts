@@ -1,19 +1,21 @@
 import { extractPlainText } from "../../core/msg-utils";
 import type { ChatPlugin } from "../../core/types";
+import { defaultLabels } from "../../labels";
 import { ICON_CHECK, ICON_COPY } from "../../utils/icons";
 
 export function CopyPlugin(): ChatPlugin {
 	return {
 		name: "copy",
-		getActionButtons: (msg) => {
+		getActionButtons: (msg, labels = defaultLabels) => {
 			if (msg.role !== "assistant") return [];
 			if (typeof navigator === "undefined" || !navigator.clipboard) return [];
-			if (!extractPlainText(msg).trim()) return [];
+			if (!msg.blocks.some((block) => block.type === "text" && /\S/.test(block.text))) return [];
 
 			return [
 				{
 					id: "copy",
-					title: "Copy message",
+					mutates: false,
+					title: labels.copyMessage,
 					iconHtml: ICON_COPY,
 					onClick: async ({ message, buttonEl }) => {
 						try {
@@ -26,7 +28,7 @@ export function CopyPlugin(): ChatPlugin {
 								}
 							}, 2000);
 						} catch {
-							// Ignore
+							// Leave the icon unchanged when clipboard access fails.
 						}
 					},
 				},

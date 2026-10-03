@@ -10,7 +10,7 @@ import { ToolsPlugin } from "../src/plugins/tools/tools-plugin";
 
 new ChatUI({
 	container: ".mur-app",
-	provider: new OpenAIProvider("", "", ""), //'https://api.deepseek.com/chat/completions', 'deepseek-reasoner'),
+	provider: new OpenAIProvider("", "", ""),
 	storage: new IndexedDBStorage(),
 	plugins: (chatApi) => [
 		AttachmentPlugin(),

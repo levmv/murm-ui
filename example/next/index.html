@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Murm UI · компоненты чата</title>
+		<link rel="stylesheet" href="bundle.css" />
+	</head>
+	<body data-theme="light">
+		<div id="demo" class="mur-app mur-app-embedded mur-sidebar-animated demo-app">
+		<div class="demo-main">
+		<header class="demo-header">
+			<button class="mur-open-sidebar-btn" type="button" aria-label="Открыть меню" title="Открыть меню"></button>
+			<div><h1>Murm UI <span>ChatView</span></h1><p>Подробное и краткое представления одной беседы. Ответы и загрузка файлов имитируются локально.</p></div>
+			<nav aria-label="Управление примером">
+				<label>Беседа <select id="conversation"><option value="research">Исследование</option><option value="notes">Заметки</option></select></label>
+				<label><input id="readonly" type="checkbox" /> Только чтение</label>
+				<button id="parallel" type="button">Два запроса сразу</button>
+				<button id="older" type="button">Загрузить прошлые сообщения</button>
+			</nav>
+		</header>
+		<main class="demo-columns">
+			<section class="demo-panel" aria-label="Подробный чат"><h2>Подробно <span>reasoning, tools, JSON</span></h2><div id="detailed" class="demo-host"></div></section>
+			<section class="demo-panel" aria-label="Краткий чат"><h2>Обобщённо <span>действия без технических деталей</span></h2><div id="summary" class="demo-host"></div></section>
+		</main>
+		</div>
+		</div>
+		<script type="module" src="bundle.js"></script>
+	</body>
+</html>

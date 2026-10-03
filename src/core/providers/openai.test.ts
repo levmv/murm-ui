@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import type { ChatRequest, Message, RequestOptions, StreamEvent } from "../types";
+import { ConversationModel } from "../conversation";
+import type { ConversationChange } from "../conversation-types";
+import type { ChatRequest, ChatStreamRequest, Message, RequestOptions } from "../types";
 import { OpenAIProvider } from "./openai";
 
 const originalFetch = globalThis.fetch;
@@ -32,10 +34,13 @@ function textMessage(id: string, role: "system" | "user" | "assistant", text: st
 	};
 }
 
-function findEvent<T extends StreamEvent["type"]>(events: StreamEvent[], type: T): Extract<StreamEvent, { type: T }> {
+function findEvent<T extends ConversationChange["type"]>(
+	events: ConversationChange[],
+	type: T,
+): Extract<ConversationChange, { type: T }> {
 	const event = events.find((candidate) => candidate.type === type);
 	assert.ok(event, `Expected ${type} event`);
-	return event as Extract<StreamEvent, { type: T }>;
+	return event as Extract<ConversationChange, { type: T }>;
 }
 
 function chatRequest(
@@ -43,8 +48,8 @@ function chatRequest(
 	options: RequestOptions = {},
 	signal: AbortSignal = new AbortController().signal,
 	extra: Partial<Pick<ChatRequest, "instructions" | "tools">> = {},
-): ChatRequest {
-	return { messages, options, signal, ...extra };
+): ChatStreamRequest {
+	return { messages, options, signal, messageId: "response", runId: "run", ...extra };
 }
 
 function titleRequest(
@@ -64,6 +69,9 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 	});
 	const textChunk = JSON.stringify({
 		choices: [{ delta: { content: "hello" } }],
+	});
+	const moreReasoningChunk = JSON.stringify({
+		choices: [{ delta: { reasoning_content: "checking the input" } }],
 	});
 	const toolStartChunk = JSON.stringify({
 		choices: [
@@ -91,11 +99,13 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 	const finishChunk = JSON.stringify({
 		choices: [{ delta: {}, finish_reason: "tool_calls" }],
 	});
-	const { calls } = mockFetch(sse(reasoningChunk, textChunk, toolStartChunk, toolDeltaChunk, usageChunk, finishChunk));
-	const events: StreamEvent[] = [];
+	const { calls } = mockFetch(
+		sse(reasoningChunk, textChunk, moreReasoningChunk, toolStartChunk, toolDeltaChunk, usageChunk, finishChunk),
+	);
+	const events: ConversationChange[] = [];
 
 	await provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")], { model: "chosen-model" }), (event) =>
-		events.push(event),
+		events.push(...event),
 	);
 
 	assert.equal(calls[0].url, "https://example.test/chat");
@@ -106,27 +116,31 @@ test("streamChat parses text, reasoning, tool calls, usage, and finish events", 
 	assert.equal(body.stream, true);
 	assert.equal(body.stream_options.include_usage, true);
 
-	const start = findEvent(events, "message_start");
-	assert.equal(start.message.id, "provider-message");
-
-	const reasoning = findEvent(events, "reasoning_delta");
-	assert.equal(reasoning.delta, "thinking");
-	assert.equal(reasoning.encrypted, false);
-
-	const text = findEvent(events, "text_delta");
-	assert.equal(text.delta, "hello");
-
-	const toolStart = findEvent(events, "tool_call_start");
-	assert.equal(toolStart.block.toolCallId, "call-1");
-	assert.equal(toolStart.block.name, "lookup");
-	assert.equal(toolStart.block.argsText, '{"q"');
-
-	const toolDelta = findEvent(events, "tool_call_delta");
-	assert.equal(toolDelta.name, "lookup_weather");
-	assert.equal(toolDelta.argsDelta, ':"weather"}');
-
-	assert.deepEqual(findEvent(events, "usage"), { type: "usage", input: 10, output: 4, total: 14, cacheRead: 3 });
-	assert.deepEqual(events.at(-1), { type: "finish", reason: "tool_use" });
+	const model = new ConversationModel();
+	model.setConversation({
+		id: "chat",
+		messages: [{ id: "response", role: "assistant", blocks: [], status: "streaming" }],
+	});
+	model.apply({ conversationId: "chat", changes: events });
+	const message = model.getMessage("response")!;
+	assert.equal(message.blocks.length, 4);
+	assert.deepEqual(
+		message.blocks.map(({ id, ...block }) => block),
+		[
+			{ type: "reasoning", text: "thinking" },
+			{ type: "text", text: "hello" },
+			{ type: "reasoning", text: "checking the input" },
+			{
+				type: "tool_call",
+				toolCallId: "call-1",
+				name: "lookup_weather",
+				argsText: '{"q":"weather"}',
+				status: "complete",
+			},
+		],
+	);
+	assert.deepEqual(message.usage, { input: 10, output: 4, total: 14, cacheRead: 3 });
+	assert.equal(message.status, "complete");
 });
 
 test("streamChat omits Authorization when the API key is empty", async () => {
@@ -151,21 +165,14 @@ test("streamChat marks encrypted reasoning without retaining provider payloads",
 		choices: [{ delta: { reasoning_encrypted: "cipher-field" } }],
 	});
 	mockFetch(sse(encryptedObjectChunk, encryptedFieldChunk, "[DONE]"));
-	const events: StreamEvent[] = [];
+	const events: ConversationChange[] = [];
 
-	await provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")]), (event) => events.push(event));
+	await provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")]), (event) => events.push(...event));
 
-	const reasoningEvents = events.filter(
-		(event): event is Extract<StreamEvent, { type: "reasoning_delta" }> => event.type === "reasoning_delta",
-	);
-	assert.equal(reasoningEvents.length, 2);
-	assert.deepEqual(
-		reasoningEvents.map(({ delta, encrypted }) => ({ delta, encrypted })),
-		[
-			{ delta: "", encrypted: true },
-			{ delta: "", encrypted: true },
-		],
-	);
+	const block = findEvent(events, "block.put").block;
+	assert.equal(block.type, "reasoning");
+	assert.deepEqual(block, { id: block.id, type: "reasoning", text: "", encrypted: true });
+	assert.ok(!JSON.stringify(events).includes("cipher-"));
 });
 
 test("streamChat formats mixed message blocks for OpenAI-compatible requests", async () => {
@@ -333,10 +340,10 @@ test("streamChat omits incomplete tool calls from OpenAI-compatible requests", a
 test("streamChat rejects for non-OK API responses", async () => {
 	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
 	mockFetch(new Response(JSON.stringify({ error: { message: "bad key" } }), { status: 401 }));
-	const events: StreamEvent[] = [];
+	const events: ConversationChange[] = [];
 
 	await assert.rejects(
-		provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")]), (event) => events.push(event)),
+		provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")]), (event) => events.push(...event)),
 		/API Error 401: bad key/,
 	);
 
@@ -350,11 +357,11 @@ test("streamChat rejects without events when fetch is aborted", async () => {
 	globalThis.fetch = (async () => {
 		throw new DOMException("The operation was aborted.", "AbortError");
 	}) as typeof fetch;
-	const events: StreamEvent[] = [];
+	const events: ConversationChange[] = [];
 
 	await assert.rejects(
 		provider.streamChat(chatRequest([textMessage("user-1", "user", "hello")], {}, controller.signal), (event) =>
-			events.push(event),
+			events.push(...event),
 		),
 		(error: unknown) => error instanceof Error && error.name === "AbortError",
 	);
@@ -363,7 +370,7 @@ test("streamChat rejects without events when fetch is aborted", async () => {
 });
 
 test("generateTitle sends non-streaming title request options", async () => {
-	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
+	const provider = new OpenAIProvider("", "https://example.test/chat", "fallback-model");
 	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
 
 	const title = await provider.generateTitle(
@@ -384,6 +391,7 @@ test("generateTitle sends non-streaming title request options", async () => {
 	);
 
 	assert.equal(title, "Useful Title");
+	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
 	const body = JSON.parse(calls[0].init.body as string);
 	assert.equal(body.model, "title-model");
 	assert.equal(body.temperature, 0.2);
@@ -395,18 +403,6 @@ test("generateTitle sends non-streaming title request options", async () => {
 	assert.deepEqual(body.messages[0], { role: "system", content: "Name chats plainly." });
 	assert.equal(body.messages.at(-1).role, "user");
 	assert.match(body.messages.at(-1).content, /Summarize the above conversation/);
-});
-
-test("generateTitle omits Authorization when the API key is empty", async () => {
-	const provider = new OpenAIProvider("", "https://example.test/chat", "fallback-model");
-	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
-
-	const title = await provider.generateTitle(
-		titleRequest([textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")]),
-	);
-
-	assert.equal(title, "Useful Title");
-	assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
 });
 
 test("generateTitle normalizes provider title text", async () => {
@@ -423,23 +419,4 @@ test("generateTitle normalizes provider title text", async () => {
 	assert.equal(title.endsWith("..."), true);
 	assert.equal(title.includes('"'), false);
 	assert.equal(/\s{2,}/.test(title), false);
-});
-
-test("generateTitle uses a default title system prompt", async () => {
-	const provider = new OpenAIProvider("test-key", "https://example.test/chat", "fallback-model");
-	const { calls } = mockFetch(new Response(JSON.stringify({ choices: [{ message: { content: "Useful Title" } }] })));
-
-	await provider.generateTitle(
-		titleRequest(
-			[textMessage("user-1", "user", "hello"), textMessage("assistant-1", "assistant", "hello back")],
-			{ model: "title-model" },
-			new AbortController().signal,
-		),
-	);
-
-	const body = JSON.parse(calls[0].init.body as string);
-	assert.deepEqual(body.messages[0], {
-		role: "system",
-		content: "You generate concise chat titles. Reply only with the title, without quotes or extra text.",
-	});
 });

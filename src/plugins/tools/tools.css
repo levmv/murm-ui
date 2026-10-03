@@ -35,6 +35,15 @@
 	transition: opacity 0.15s ease;
 }
 
+.mur-tool-summary-only .mur-tool-chevron {
+	display: none;
+}
+
+.mur-tool-summary-only .mur-tool-summary {
+	cursor: default;
+	opacity: 1;
+}
+
 .mur-tool-summary:hover .mur-tool-chevron,
 .mur-tool-summary:focus-visible .mur-tool-chevron,
 .mur-tool-summary[aria-expanded="true"] .mur-tool-chevron {

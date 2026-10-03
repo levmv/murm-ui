@@ -1,24 +1,31 @@
-import { Feed } from "./components/feed";
-import { Header } from "./components/header";
-import { Input } from "./components/input";
-import { type DeleteConfirmation, Sidebar, type SidebarMenuBuilder } from "./components/sidebar";
+import { Composer } from "./components/composer";
+import { Sidebar, type SidebarMenuItem } from "./components/sidebar";
 import { ChatEngine } from "./core/chat-engine";
 import type {
 	AgentRunCollapse,
 	ChatPlugin,
 	ChatProvider,
+	ChatSessionMeta,
 	ChatStorage,
 	CodeHighlighter,
 	RequestOptions,
 } from "./core/types";
+import { MAX_PINNED_SESSIONS } from "./core/types";
+import type { ChatLabels } from "./labels";
 import { AppRouter, type RouterConfig } from "./router";
 import { el, queryOrThrow } from "./utils/dom";
+import { ChatView } from "./view/chat-view";
 
-const PAGE_SCROLL_CLASS = "mur-chat-page-scroll";
-let pageScrollAttachCount = 0;
+export type SidebarMenuContext = { type: "session"; session: ChatSessionMeta; engine: ChatEngine };
+export type SidebarMenuBuilder = (
+	defaults: readonly SidebarMenuItem[],
+	ctx: SidebarMenuContext,
+) => readonly SidebarMenuItem[];
+export type DeleteConfirmation = (session: ChatSessionMeta) => boolean | Promise<boolean>;
 
 export interface ChatUIConfig {
 	container: HTMLElement | string;
+	labels?: Partial<ChatLabels>;
 	provider: ChatProvider;
 	storage: ChatStorage;
 	routing?: RouterConfig | boolean;
@@ -58,25 +65,19 @@ export class ChatUI {
 	private config: ChatUIConfig;
 	private router: AppRouter;
 
-	private inputComponent!: Input;
-	private feedComponent!: Feed;
-	private headerComponent!: Header;
-	private sidebarComponent?: Sidebar;
+	private composer!: Composer;
+	private view!: ChatView;
+	private sidebar?: Sidebar<ChatSessionMeta>;
 	private plugins: ChatPlugin[] = [];
-	private inputDrafts = new Map<string, string>();
-	private unsubscribeWindowTitle: () => void = () => {};
-	private usesFullscreenLayout = false;
+	private destroyPromise?: Promise<void>;
 
 	private elements!: {
 		mainArea: HTMLElement;
-		sidebarEl: HTMLElement;
 		globalError: HTMLElement;
 		globalErrorText: HTMLElement;
 		globalErrorCloseBtn: HTMLButtonElement;
 	};
 
-	private onMainAreaClickBound = () => this.closeSidebar(true);
-	private onSidebarRailClickBound = (event: MouseEvent) => this.handleSidebarRailClick(event);
 	private onGlobalErrorCloseBound = (e: MouseEvent) => {
 		e.stopPropagation();
 		this.engine.clearError();
@@ -84,7 +85,6 @@ export class ChatUI {
 
 	constructor(config: ChatUIConfig) {
 		this.config = { enableSidebar: true, ...config };
-		this.usesFullscreenLayout = this.config.fullscreen !== false;
 
 		let routerConfig: RouterConfig = { type: "hash" };
 		if (this.config.routing === false) {
@@ -95,14 +95,11 @@ export class ChatUI {
 
 		this.router = new AppRouter(routerConfig);
 
-		const el =
+		const container =
 			typeof this.config.container === "string" ? document.querySelector(this.config.container) : this.config.container;
 
-		if (!el) throw new Error(`Chat container not found: ${this.config.container}`);
-		this.container = el as HTMLElement;
-		if (this.usesFullscreenLayout) {
-			attachPageScrollClass();
-		}
+		if (!container) throw new Error(`Chat container not found: ${this.config.container}`);
+		this.container = container as HTMLElement;
 
 		const initialSessionId = this.config.initialSessionId || this.router.getId() || null;
 
@@ -118,35 +115,27 @@ export class ChatUI {
 		this.bindEvents();
 	}
 
-	public async destroy() {
+	public destroy(): Promise<void> {
+		if (this.destroyPromise) return this.destroyPromise;
 		this.router.destroy();
-		this.unsubscribeWindowTitle();
-		this.headerComponent.destroy();
-		await this.engine.destroy();
+		// The engine detaches state listeners synchronously. Release UI resources
+		// now, even if flushing storage takes time or closing it rejects.
+		this.destroyPromise = this.engine.destroy();
 
 		this.elements.globalErrorCloseBtn.removeEventListener("click", this.onGlobalErrorCloseBound);
+		this.elements.globalError.remove();
 
-		if (this.config.enableSidebar) {
-			this.elements.mainArea.removeEventListener("click", this.onMainAreaClickBound);
-			this.elements.sidebarEl.removeEventListener("click", this.onSidebarRailClickBound);
-		}
-
+		this.sidebar?.destroy();
+		this.view.destroy();
+		this.composer.destroy();
 		for (const plugin of this.plugins) {
-			if (!plugin.destroy) continue;
 			try {
-				plugin.destroy();
+				plugin.destroy?.();
 			} catch (error) {
 				console.error(`Plugin "${plugin.name}" failed during destroy`, error);
 			}
 		}
-
-		this.sidebarComponent?.destroy();
-		this.feedComponent.destroy();
-		this.inputComponent.destroy();
-		if (this.usesFullscreenLayout) {
-			detachPageScrollClass();
-			this.usesFullscreenLayout = false;
-		}
+		return this.destroyPromise;
 	}
 
 	private initComponents() {
@@ -155,12 +144,6 @@ export class ChatUI {
 
 		this.elements = {} as typeof this.elements;
 		this.elements.mainArea = queryOrThrow<HTMLElement>(this.container, ".mur-main-area");
-		this.headerComponent = new Header({
-			container: this.container,
-			engine: this.engine,
-			enableSidebar: Boolean(this.config.enableSidebar),
-			onOpenSidebar: () => this.openSidebar(),
-		});
 		this.elements.globalErrorText = el("span", "mur-global-error-text");
 		this.elements.globalErrorCloseBtn = el("button", "mur-global-error-close", {
 			type: "button",
@@ -193,82 +176,57 @@ export class ChatUI {
 			}
 		}
 
-		this.inputComponent = new Input(
-			{
-				container: this.container,
-				onSubmit: (text) => this.engine.sendMessage(text),
-				onStop: () => {
-					void this.engine.stopGeneration();
-				},
-			},
-			this.plugins,
-		);
-
-		this.feedComponent = new Feed(this.container, {
+		this.view = new ChatView({
+			container: this.container,
+			conversation: this.engine.conversation,
+			reuseMarkup: true,
+			fullscreen: this.config.fullscreen !== false,
+			labels: this.config.labels,
 			highlighter: this.config.highlighter,
-			plugins: this.plugins,
-			fullscreen: this.usesFullscreenLayout,
+			plugins: this.plugins.map(({ name, renderers, getActionButtons }) => ({ name, renderers, getActionButtons })),
 			agentRunCollapse: this.config.agentRunCollapse,
 			minAgentRunSteps: this.config.minAgentRunSteps,
-			onReachTop: () => {
-				void this.engine.sessions.loadOlderMessages();
+			onReachTop: () => this.engine.sessions.loadOlderMessages(),
+		});
+		this.composer = new Composer({
+			container: this.container,
+			form: queryOrThrow<HTMLFormElement>(this.container, ".mur-chat-form"),
+			plugins: this.plugins,
+			labels: this.config.labels,
+			onSubmit: ({ conversationId, text, blocks }) => {
+				if (conversationId !== this.engine.state.currentSessionId) return false;
+				return this.engine.sendMessage(text, blocks);
 			},
+			onStop: () => this.engine.stopGeneration(),
 		});
 
 		if (this.config.enableSidebar) {
-			this.elements.sidebarEl = queryOrThrow<HTMLElement>(this.container, ".mur-sidebar");
-			this.restoreSidebarState();
-
-			this.sidebarComponent = new Sidebar({
+			this.sidebar = new Sidebar<ChatSessionMeta>({
 				container: this.container,
-				engine: this.engine,
-				onNewChat: () => {
-					void this.engine.sessions.create();
-					this.closeSidebar(true);
+				reuseMarkup: true,
+				collapsed: lsGetItem("mur_sidebar_closed") === "true",
+				onCollapse: (closed) => lsSetItem("mur_sidebar_closed", String(closed)),
+				onNew: async () => {
+					await this.engine.sessions.create();
 				},
-				onSelectSession: (id) => {
-					void this.engine.sessions.switch(id);
-					this.closeSidebar(true);
-				},
-				onLoadMore: () => {
-					void this.engine.sessions.loadMore();
-				},
-				onClose: () => {
-					this.closeSidebar(false);
-				},
-				getSessionHref: (id) => this.router.hrefFor(id),
-				sidebarMenu: this.config.sidebarMenu,
+				onSelect: (id) => this.engine.sessions.switch(id),
+				onRename: (id, title) => this.engine.sessions.updateTitle(id, title),
+				onPin: (id, pinned) => this.engine.sessions.updatePinned(id, pinned),
+				onDelete: (id) => this.engine.sessions.delete(id),
+				onLoadMore: () => this.engine.sessions.loadMore(),
+				getHref: (id) => this.router.hrefFor(id),
+				pinLimit: MAX_PINNED_SESSIONS,
+				menu: this.config.sidebarMenu
+					? (defaults, session) => this.config.sidebarMenu!(defaults, { type: "session", session, engine: this.engine })
+					: undefined,
 				confirmDelete: this.config.confirmDelete,
 			});
 			void this.engine.sessions.loadHistory();
 		}
 	}
 
-	private restoreSidebarState() {
-		const isDesktopClosed = lsGetItem("mur_sidebar_closed") === "true";
-		if (!isDesktopClosed || window.innerWidth <= 768) return;
-
-		const hadAnimatedSidebar = this.container.classList.contains("mur-sidebar-animated");
-		if (hadAnimatedSidebar) {
-			this.container.classList.remove("mur-sidebar-animated");
-		}
-
-		this.container.classList.add("mur-sidebar-closed");
-
-		if (hadAnimatedSidebar) {
-			// Commit the restored state before re-enabling sidebar transitions.
-			this.elements.sidebarEl.getBoundingClientRect();
-			this.container.classList.add("mur-sidebar-animated");
-		}
-	}
-
 	private bindEvents() {
 		this.elements.globalErrorCloseBtn.addEventListener("click", this.onGlobalErrorCloseBound);
-
-		if (this.config.enableSidebar) {
-			this.elements.mainArea.addEventListener("click", this.onMainAreaClickBound);
-			this.elements.sidebarEl.addEventListener("click", this.onSidebarRailClickBound);
-		}
 
 		this.router.listen((id) => {
 			if (id) {
@@ -278,51 +236,52 @@ export class ChatUI {
 			}
 		});
 
-		if (this.config.updateWindowTitle) {
-			this.unsubscribeWindowTitle = this.engine.subscribe(
+		const titleEl = this.container.querySelector<HTMLElement>(".mur-header-title");
+		const windowTitle = this.config.updateWindowTitle;
+		if (titleEl || windowTitle) {
+			this.engine.subscribe(
 				(state) => state.sessions.find((session) => session.id === state.currentSessionId)?.title ?? "New Chat",
-				(title) => this.syncWindowTitle(title),
+				(title) => {
+					if (titleEl) titleEl.textContent = title;
+					if (windowTitle) document.title = typeof windowTitle === "function" ? windowTitle(title) : title;
+				},
 			);
 		}
 
-		this.engine.subscribe(
-			(state) => state.sessions,
-			(sessions) => {
-				const state = this.engine.state;
-				if (this.config.enableSidebar && this.sidebarComponent) {
-					this.sidebarComponent.renderSessions(
-						sessions,
-						state.currentSessionId,
-						state.hasMoreSessions,
-						state.isLoadingSessions,
-					);
-				}
-			},
-		);
+		const inputCapabilities = () => {
+			const state = this.engine.state;
+			return {
+				canSubmit: !state.isLoadingSession && !state.generatingMessageId,
+				canEdit: true,
+				canStop: Boolean(state.generatingMessageId),
+			};
+		};
 
-		this.engine.subscribe(
-			(state) => (state.hasMoreSessions ? 1 : 0) | (state.isLoadingSessions ? 2 : 0),
-			() => {
-				const state = this.engine.state;
-				if (this.config.enableSidebar && this.sidebarComponent) {
-					this.sidebarComponent.renderSessions(
-						state.sessions,
-						state.currentSessionId,
-						state.hasMoreSessions,
-						state.isLoadingSessions,
-					);
-				}
-			},
-		);
+		const syncSidebar = () => {
+			const state = this.engine.state;
+			this.sidebar?.update({
+				sessions: state.sessions,
+				activeId: state.currentSessionId,
+				hasMore: state.hasMoreSessions,
+				loading: state.isLoadingSessions,
+			});
+		};
+		this.engine.subscribe((state) => state.sessions, syncSidebar);
+		this.engine.subscribe((state) => (state.hasMoreSessions ? 1 : 0) | (state.isLoadingSessions ? 2 : 0), syncSidebar);
 
 		this.engine.subscribe(
 			(state) => state.currentSessionId,
 			(currentSessionId) => {
-				if (this.config.enableSidebar && this.sidebarComponent) {
-					this.sidebarComponent.setActiveSession(currentSessionId);
+				if (this.config.enableSidebar && this.sidebar) {
+					this.sidebar.setActive(currentSessionId);
 				}
 				this.syncRouterToState();
+				this.composer.setConversation(currentSessionId, inputCapabilities());
 			},
+		);
+		this.engine.onChange(
+			(state) => state.currentSessionId,
+			() => this.composer.focus(),
 		);
 
 		this.engine.subscribe(
@@ -340,57 +299,20 @@ export class ChatUI {
 			},
 		);
 
-		let prevIsGenerating = false;
-
-		// Feed subscribes to the hot lane because stream chunks are applied via
-		// in-place mutation and should not run every normal selector per token.
-		this.engine.subscribeHot((state) => {
-			const isGenerating = state.generatingMessageId !== null;
-			const generationStarted = !prevIsGenerating && isGenerating;
-
-			this.feedComponent.update(
-				state.messages,
-				state.generatingMessageId,
-				state.isLoadingSession,
-				generationStarted,
-				state.error,
-			);
-			prevIsGenerating = isGenerating;
-		});
-
-		// Older-messages affordance (parallel to the sidebar's load-more state).
+		this.engine.subscribe(
+			(state) => (state.isLoadingSession ? 1 : 0) | (state.generatingMessageId ? 2 : 0),
+			() => {
+				const state = this.engine.state;
+				this.composer.setCapabilities(inputCapabilities());
+				this.view.setLoading(state.isLoadingSession);
+				if (state.generatingMessageId) this.view.scrollToLatest();
+			},
+		);
 		this.engine.subscribe(
 			(state) => (state.hasMoreMessages ? 1 : 0) | (state.isLoadingMessages ? 2 : 0),
 			() => {
 				const state = this.engine.state;
-				this.feedComponent.setOlderMessagesState(state.hasMoreMessages, state.isLoadingMessages);
-			},
-		);
-
-		let inputSessionId = this.engine.state.currentSessionId;
-		this.engine.onChange(
-			(state) => state.currentSessionId,
-			(currentSessionId) => {
-				const draft = this.inputComponent.getText();
-				if (draft.length > 0) {
-					this.inputDrafts.set(inputSessionId, draft);
-				} else {
-					this.inputDrafts.delete(inputSessionId);
-				}
-
-				inputSessionId = currentSessionId;
-				this.inputComponent.setText(this.inputDrafts.get(currentSessionId) ?? "");
-				this.inputComponent.focus();
-			},
-		);
-
-		this.engine.subscribe(
-			(state) => (state.generatingMessageId ? 2 : 0) | (state.isLoadingSession ? 1 : 0),
-			(bits) => {
-				const isGenerating = !!(bits & 2);
-				const isLoadingSession = !!(bits & 1);
-
-				this.inputComponent.setGeneratingState(isGenerating, isLoadingSession);
+				this.view.setOlderMessagesState(state.hasMoreMessages, state.isLoadingMessages);
 			},
 		);
 
@@ -398,13 +320,6 @@ export class ChatUI {
 			(state) => state.error,
 			(error) => this.renderGlobalError(error),
 		);
-		this.renderGlobalError(this.engine.state.error);
-	}
-
-	private syncWindowTitle(title: string) {
-		if (!this.config.updateWindowTitle) return;
-
-		document.title = typeof this.config.updateWindowTitle === "function" ? this.config.updateWindowTitle(title) : title;
 	}
 
 	private renderGlobalError(error: { message: string; id?: string } | null) {
@@ -437,42 +352,6 @@ export class ChatUI {
 		const isErrorFallback = !shouldHaveUrlId && state.error !== null;
 		this.router.setUrl(targetId, isErrorFallback);
 	}
-
-	private openSidebar() {
-		const isMobile = window.innerWidth <= 768;
-
-		if (isMobile) {
-			this.elements.sidebarEl.classList.add("mur-mobile-open");
-		} else {
-			this.container.classList.remove("mur-sidebar-closed");
-			lsSetItem("mur_sidebar_closed", "false");
-		}
-	}
-
-	private closeSidebar(isNavigation = false) {
-		const isMobile = window.innerWidth <= 768;
-
-		if (isMobile) {
-			this.elements.sidebarEl.classList.remove("mur-mobile-open");
-			return;
-		}
-
-		if (isNavigation) return;
-
-		this.container.classList.add("mur-sidebar-closed");
-		lsSetItem("mur_sidebar_closed", "true");
-	}
-
-	private handleSidebarRailClick(event: MouseEvent) {
-		if (window.innerWidth <= 768) return;
-		if (!this.container.classList.contains("mur-sidebar-closed")) return;
-
-		const target = event.target;
-		if (!(target instanceof Element)) return;
-		if (target.closest("button, a, input, textarea, select, [role='button']")) return;
-
-		this.openSidebar();
-	}
 }
 
 function lsGetItem(key: string): string | null {
@@ -487,18 +366,6 @@ function lsSetItem(key: string, value: string): void {
 	try {
 		localStorage.setItem(key, value);
 	} catch {
-		// Ignore
-	}
-}
-
-function attachPageScrollClass(): void {
-	pageScrollAttachCount++;
-	document.documentElement.classList.add(PAGE_SCROLL_CLASS);
-}
-
-function detachPageScrollClass(): void {
-	pageScrollAttachCount = Math.max(0, pageScrollAttachCount - 1);
-	if (pageScrollAttachCount === 0) {
-		document.documentElement.classList.remove(PAGE_SCROLL_CLASS);
+		// A storage failure should not prevent toggling the sidebar.
 	}
 }

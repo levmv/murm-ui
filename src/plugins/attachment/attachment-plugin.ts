@@ -1,5 +1,7 @@
 import "./attachment.css";
-import type { ChatPlugin, ContentBlock, PluginInputContext } from "../../core/types";
+import type { ComposerContext, ComposerExtension, ComposerPlugin } from "../../core/composer-types";
+import { cloneBlock } from "../../core/msg-utils";
+import type { ContentBlock, DeepReadonly } from "../../core/types";
 import { el } from "../../utils/dom";
 import { ICON_PAPERCLIP } from "../../utils/icons";
 import { uuidv7 } from "../../utils/uuid";
@@ -7,382 +9,310 @@ import { uuidv7 } from "../../utils/uuid";
 const DEFAULT_ACCEPTED_TYPES = "image/*,text/*,.csv,.json,.md";
 const TEXT_FILE_EXTENSIONS = new Set(["csv", "json", "md"]);
 
-type AttachmentState = "processing" | "ready" | "error";
-
-interface AttachmentQueueItem {
-	id: string;
-	fileName: string;
-	mimeType: string;
-	state: AttachmentState;
-	statusText?: string;
-	block?: ContentBlock;
-	error?: string;
-}
-
-export interface FileHandler {
-	accepts: (file: File) => boolean;
-	process: (file: File) => Promise<ContentBlock>;
-}
+export type DraftAttachment = { id: string; name: string } & (
+	| { status: "uploading" }
+	| { status: "ready"; value: ContentBlock }
+	| { status: "error"; error: string }
+);
 
 export interface AttachmentPluginConfig {
-	/** Maximum file size in bytes. Default: 20MB */
+	/** Maximum file size in bytes. Default: 20 MiB. */
 	maxFileSize?: number;
-	/** Controls the hidden file input accept attribute. */
+	/** File-picker hint; onAttach validates application-specific formats. */
 	acceptedTypes?: string;
-	/** Uploads files remotely instead of using built-in local processing. */
-	uploadFile?: (file: File) => Promise<{ type: string; data: string; name?: string }>;
-	/** Custom parsers for specific file types. First matching handler wins. */
-	fileHandlers?: FileHandler[];
-	/** Callback when a file exceeds the limit. Native error UI is still shown. */
-	onSizeExceeded?: (file: File, maxSize: number) => void;
-	/** Callback when a file type is rejected. Native error UI is still shown. */
-	onUnsupportedFile?: (file: File) => void;
-
-	/**
-	 * A CSS selector defining where the image preview tray should be mounted.
-	 * The selector is scoped to the chat container unless previewMountSelectorScope is "document".
-	 * If omitted, it will be inserted just before the chat form.
-	 */
-	previewMountSelector?: string;
-	previewMountSelectorScope?: "container" | "document";
+	/** Upload or process a file into a message block. Defaults to local images and text files. */
+	onAttach?: (request: {
+		conversationId: string;
+		file: File;
+		signal: AbortSignal;
+	}) => ContentBlock | Promise<ContentBlock>;
+	/** Defaults to the area before the form. */
+	previewContainer?: HTMLElement;
 }
 
-export function AttachmentPlugin(config?: AttachmentPluginConfig): ChatPlugin {
-	const maxSize = config?.maxFileSize ?? 20 * 1024 * 1024;
-	const acceptedTypes = config?.acceptedTypes ?? DEFAULT_ACCEPTED_TYPES;
+export interface AttachmentExtension extends ComposerPlugin {
+	getDraft(conversationId?: string): DeepReadonly<DraftAttachment[]>;
+	setDraft(blocks: readonly ContentBlock[], conversationId?: string): void;
+	attachFiles(files: Iterable<File>): Promise<void>;
+	removeAttachment(id: string): void;
+}
 
-	let queue: AttachmentQueueItem[] = [];
+interface Preview {
+	el: HTMLElement;
+	content: HTMLElement;
+	remove: HTMLButtonElement;
+	item?: DraftAttachment;
+}
 
-	let fileInput: HTMLInputElement;
-	let previewContainer: HTMLElement;
-	let attachBtn: HTMLButtonElement;
-	let inputContext: PluginInputContext | null = null;
-	let dragDepth = 0;
+export function AttachmentPlugin(config: AttachmentPluginConfig = {}): AttachmentExtension {
+	const drafts = new Map<string, DraftAttachment[]>();
+	const uploads = new Map<string, AbortController>();
+	const previews = new Map<string, Preview>();
+	let context: ComposerContext;
+	let tray: HTMLElement;
+	let button: HTMLButtonElement;
 	let destroyed = false;
 
-	const syncSubmitState = () => inputContext?.requestSubmitStateSync();
-
-	const renderPreviews = () => {
-		if (!previewContainer) return;
-		previewContainer.innerHTML = "";
-		previewContainer.hidden = queue.length === 0;
-
-		queue.forEach((item) => {
-			const previewItem = el("div", `mur-attachment-preview-item mur-attachment-${item.state}`);
-			previewItem.setAttribute("data-attachment-state", item.state);
-
-			if (item.state === "processing") {
-				previewItem.appendChild(
-					el("div", "mur-file-preview", null, [
-						el("span", "mur-attachment-spinner"),
-						el("span", "", { textContent: item.statusText ?? "Processing..." }),
-					]),
-				);
-			} else if (item.state === "error") {
-				previewItem.appendChild(el("div", "mur-file-preview", { textContent: item.error ?? "Unsupported type" }));
-			} else {
-				renderReadyPreview(item, previewItem);
+	const draft = (id = context.conversationId): DraftAttachment[] => {
+		let items = drafts.get(id);
+		if (!items) {
+			items = [];
+			drafts.set(id, items);
+		}
+		return items;
+	};
+	const abort = (id: string) => {
+		uploads.get(id)?.abort();
+		uploads.delete(id);
+	};
+	const changed = (id: string) => {
+		if (destroyed) return;
+		context.changed(id);
+		if (id === context.conversationId) render();
+	};
+	const render = () => {
+		button.disabled = !context.canEdit;
+		const items = draft();
+		const ids = new Set(items.map((item) => item.id));
+		for (const [id, node] of previews) {
+			if (ids.has(id)) continue;
+			node.el.remove();
+			previews.delete(id);
+		}
+		for (const [index, item] of items.entries()) {
+			let node = previews.get(item.id);
+			if (!node) {
+				const content = el("div", "mur-file-preview");
+				const remove = el("button", "mur-attachment-remove-btn", { type: "button", textContent: "×" });
+				remove.addEventListener("click", () => plugin.removeAttachment(item.id));
+				node = { el: el("div", "mur-attachment-preview-item", null, [content, remove]), content, remove };
+				previews.set(item.id, node);
 			}
-
-			const removeBtn = el("button", "mur-attachment-remove-btn", {
-				innerHTML: "×",
-				type: "button",
-				onclick: () => {
-					queue = queue.filter((queuedItem) => queuedItem.id !== item.id);
-					renderPreviews();
-					syncSubmitState();
-				},
-			});
-			removeBtn.setAttribute("aria-label", `Remove ${item.fileName}`);
-
-			previewItem.appendChild(removeBtn);
-			previewContainer.appendChild(previewItem);
-		});
-	};
-
-	const queueFiles = (files: Iterable<File>) => {
-		for (const file of files) {
-			void queueFile(file);
-		}
-	};
-
-	const queueFile = async (file: File) => {
-		const item: AttachmentQueueItem = {
-			id: uuidv7(),
-			fileName: file.name || "Untitled file",
-			mimeType: file.type || "application/octet-stream",
-			state: "processing",
-			statusText: config?.uploadFile ? "Uploading..." : "Processing...",
-		};
-
-		queue.push(item);
-		renderPreviews();
-		syncSubmitState();
-
-		if (file.size > maxSize) {
-			updateItemError(item.id, "File too large");
-			config?.onSizeExceeded?.(file, maxSize);
-			return;
-		}
-
-		try {
-			const block = await processFile(file);
-			updateItemReady(item.id, block);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "Unsupported type";
-			updateItemError(item.id, message);
-
-			if (message === "Unsupported type") {
-				config?.onUnsupportedFile?.(file);
+			if (node.item !== item) {
+				node.item = item;
+				node.el.dataset.attachmentState = item.status;
+				const block = item.status === "ready" ? item.value : undefined;
+				if (block?.type === "file" && block.mimeType.startsWith("image/")) {
+					node.content.replaceChildren(el("img", "", { src: block.data, alt: item.name }));
+				} else
+					node.content.textContent =
+						item.status === "uploading"
+							? `${item.name} · ${context.labels.uploading}`
+							: item.status === "error"
+								? `${item.name} · ${item.error}`
+								: item.name;
+				node.remove.setAttribute("aria-label", context.labels.removeAttachment(item.name));
 			}
+			node.remove.disabled = !context.canEdit;
+			if (tray.children[index] !== node.el) tray.insertBefore(node.el, tray.children[index]);
 		}
+		tray.hidden = items.length === 0;
 	};
 
-	const updateItemReady = (id: string, block: ContentBlock) => {
-		const item = queue.find((queuedItem) => queuedItem.id === id);
-		if (!item || destroyed) return;
-
-		item.state = "ready";
-		item.block = block;
-		item.mimeType = getBlockMimeType(block, item.mimeType);
-		item.statusText = undefined;
-		item.error = undefined;
-		renderPreviews();
-		syncSubmitState();
-	};
-
-	const updateItemError = (id: string, error: string) => {
-		const item = queue.find((queuedItem) => queuedItem.id === id);
-		if (!item || destroyed) return;
-
-		item.state = "error";
-		item.error = error;
-		item.statusText = undefined;
-		renderPreviews();
-		syncSubmitState();
-	};
-
-	const processFile = async (file: File): Promise<ContentBlock> => {
-		const handler = config?.fileHandlers?.find((candidate) => candidate.accepts(file));
-		if (handler) {
-			return handler.process(file);
-		}
-
-		if (config?.uploadFile) {
-			const uploaded = await config.uploadFile(file);
-			return {
-				id: uuidv7(),
-				type: "file",
-				mimeType: uploaded.type,
-				name: uploaded.name ?? file.name,
-				data: uploaded.data,
-			};
-		}
-
-		if (file.type.startsWith("image/")) {
-			return {
-				id: uuidv7(),
-				type: "file",
-				mimeType: file.type,
-				name: file.name,
-				data: await readFile(file, "data-url"),
-			};
-		}
-
-		if (isTextLikeFile(file)) {
-			return {
-				id: uuidv7(),
-				type: "file",
-				mimeType: file.type || mimeTypeFromName(file.name),
-				name: file.name,
-				data: await readFile(file, "text"),
-			};
-		}
-
-		throw new Error("Unsupported type");
-	};
-
-	const onFileInputChange = () => {
-		queueFiles(Array.from(fileInput.files || []));
-		fileInput.value = "";
-	};
-
-	const onDragEnter = (event: DragEvent) => {
-		if (!hasDraggedFiles(event)) return;
-		event.preventDefault();
-		dragDepth++;
-		inputContext?.container.classList.add("mur-attachment-drag-active");
-	};
-
-	const onDragOver = (event: DragEvent) => {
-		if (!hasDraggedFiles(event)) return;
-		event.preventDefault();
-	};
-
-	const onDragLeave = (event: DragEvent) => {
-		if (!hasDraggedFiles(event)) return;
-		event.preventDefault();
-		dragDepth = Math.max(0, dragDepth - 1);
-		if (dragDepth === 0) {
-			inputContext?.container.classList.remove("mur-attachment-drag-active");
-		}
-	};
-
-	const onDrop = (event: DragEvent) => {
-		if (!hasDraggedFiles(event)) return;
-		event.preventDefault();
-		dragDepth = 0;
-		inputContext?.container.classList.remove("mur-attachment-drag-active");
-		queueFiles(Array.from(event.dataTransfer?.files || []));
-	};
-
-	const onPaste = (event: ClipboardEvent) => {
-		const files = Array.from(event.clipboardData?.files || []);
-		if (files.length === 0) return;
-
-		if (!hasClipboardText(event)) {
-			event.preventDefault();
-		}
-		queueFiles(files);
-	};
-
-	return {
+	const plugin: AttachmentExtension = {
 		name: "attachments",
-
-		onInputMount: (ctx: PluginInputContext) => {
-			inputContext = ctx;
-			destroyed = false;
-			previewContainer = el("div", "mur-attachment-previews");
-			previewContainer.hidden = true;
-
-			fileInput = el("input", "", { type: "file", hidden: true, multiple: true, accept: acceptedTypes });
-
-			attachBtn = el("button", "mur-form-icon-btn", {
+		getDraft: (id) => draft(id),
+		setDraft(blocks, id = context.conversationId) {
+			for (const item of draft(id)) abort(item.id);
+			drafts.set(
+				id,
+				blocks.map((block) => ({
+					id: uuidv7(),
+					name:
+						block.type === "file" ? (block.name ?? "File") : block.type === "custom" ? block.fallbackText : block.id,
+					status: "ready",
+					value: cloneBlock(block),
+				})),
+			);
+			changed(id);
+		},
+		async attachFiles(files) {
+			if (destroyed || !context.canEdit) return;
+			const conversationId = context.conversationId;
+			const pending = Array.from(files, (file) => {
+				const id = uuidv7();
+				const controller = new AbortController();
+				draft().push({ id, name: file.name, status: "uploading" });
+				uploads.set(id, controller);
+				return { id, file, controller };
+			});
+			changed(conversationId);
+			await Promise.all(
+				pending.map(async ({ id, file, controller }) => {
+					let result: DraftAttachment;
+					try {
+						if (file.size > (config.maxFileSize ?? 20 * 1024 * 1024)) throw new Error("File too large");
+						const block = await (config.onAttach ?? processFile)({ conversationId, file, signal: controller.signal });
+						result = {
+							id,
+							name: block.type === "file" ? (block.name ?? file.name) : file.name,
+							status: "ready",
+							value: cloneBlock(block),
+						};
+					} catch (error) {
+						result = {
+							id,
+							name: file.name,
+							status: "error",
+							error: error instanceof Error ? error.message : String(error),
+						};
+					} finally {
+						uploads.delete(id);
+					}
+					if (destroyed || controller.signal.aborted) return;
+					const items = draft(conversationId);
+					const index = items.findIndex((item) => item.id === id);
+					if (index >= 0) items[index] = result;
+					changed(conversationId);
+				}),
+			);
+		},
+		removeAttachment(id) {
+			if (destroyed || !context.canEdit) return;
+			abort(id);
+			drafts.set(
+				context.conversationId,
+				draft().filter((item) => item.id !== id),
+			);
+			changed(context.conversationId);
+		},
+		mountComposer(ctx): ComposerExtension {
+			context = ctx;
+			tray = el("div", "mur-attachment-previews", { hidden: true });
+			tray.setAttribute("aria-label", ctx.labels.attachments);
+			tray.setAttribute("aria-live", "polite");
+			if (config.previewContainer) config.previewContainer.appendChild(tray);
+			else ctx.form.before(tray);
+			const picker = el("input", "", {
+				type: "file",
+				hidden: true,
+				multiple: true,
+				accept: config.acceptedTypes ?? DEFAULT_ACCEPTED_TYPES,
+			});
+			button = el("button", "mur-attach-btn mur-form-icon-btn", {
 				type: "button",
 				innerHTML: ICON_PAPERCLIP,
-				onclick: () => fileInput.click(),
+				title: ctx.labels.attach,
 			});
-			attachBtn.setAttribute("aria-label", "Attach files");
-			attachBtn.title = "Attach files";
-
-			ctx.form.prepend(attachBtn);
-			if (config?.previewMountSelector) {
-				const selectorRoot = config.previewMountSelectorScope === "document" ? document : ctx.container;
-				const customTarget = selectorRoot.querySelector(config.previewMountSelector);
-				if (customTarget) {
-					customTarget.appendChild(previewContainer);
-				} else {
-					console.error(
-						`AttachmentPlugin: Could not find element matching previewMountSelector "${config.previewMountSelector}". Image previews will not be visible.`,
-					);
-				}
-			} else {
-				ctx.form.before(previewContainer);
-			}
-			ctx.form.appendChild(fileInput);
-
-			fileInput.addEventListener("change", onFileInputChange);
+			button.setAttribute("aria-label", ctx.labels.attach);
+			button.addEventListener("click", () => picker.click());
+			picker.addEventListener("change", () => {
+				if (picker.files) void plugin.attachFiles(picker.files);
+				picker.value = "";
+			});
+			ctx.form.prepend(button, picker);
+			let dragDepth = 0;
+			const hasFiles = (event: DragEvent) => ctx.canEdit && event.dataTransfer?.types.includes("Files");
+			const onDragEnter = (event: DragEvent) => {
+				if (!hasFiles(event)) return;
+				event.preventDefault();
+				dragDepth++;
+				ctx.container.classList.add("mur-attachment-drag-active");
+			};
+			const onDragOver = (event: DragEvent) => {
+				if (hasFiles(event)) event.preventDefault();
+			};
+			const onDragLeave = () => {
+				dragDepth = Math.max(0, dragDepth - 1);
+				if (dragDepth === 0) ctx.container.classList.remove("mur-attachment-drag-active");
+			};
+			const onDrop = (event: DragEvent) => {
+				if (!hasFiles(event)) return;
+				event.preventDefault();
+				dragDepth = 0;
+				ctx.container.classList.remove("mur-attachment-drag-active");
+				void plugin.attachFiles(event.dataTransfer!.files);
+			};
+			const onPaste = (event: ClipboardEvent) => {
+				if (!ctx.canEdit || !event.clipboardData?.files.length) return;
+				const { types, files } = event.clipboardData;
+				if (!types.includes("text/plain") && !types.includes("text/html")) event.preventDefault();
+				void plugin.attachFiles(files);
+			};
 			ctx.container.addEventListener("dragenter", onDragEnter);
 			ctx.container.addEventListener("dragover", onDragOver);
 			ctx.container.addEventListener("dragleave", onDragLeave);
 			ctx.container.addEventListener("drop", onDrop);
 			ctx.input.addEventListener("paste", onPaste);
-		},
-
-		hasPendingData: () => queue.some((item) => item.state === "ready" && item.block),
-
-		isSubmitBlocked: () => queue.some((item) => item.state === "processing"),
-
-		onUserSubmit: (msg) => {
-			const readyBlocks = queue.flatMap((item) => (item.state === "ready" && item.block ? [item.block] : []));
-			if (readyBlocks.length > 0) {
-				msg.blocks.unshift(...readyBlocks);
-				queue = queue.filter((item) => item.state !== "ready");
-				renderPreviews();
-				syncSubmitState();
-			}
-		},
-
-		destroy: () => {
-			destroyed = true;
-			fileInput?.removeEventListener("change", onFileInputChange);
-			inputContext?.container.removeEventListener("dragenter", onDragEnter);
-			inputContext?.container.removeEventListener("dragover", onDragOver);
-			inputContext?.container.removeEventListener("dragleave", onDragLeave);
-			inputContext?.container.removeEventListener("drop", onDrop);
-			inputContext?.input.removeEventListener("paste", onPaste);
-			inputContext?.container.classList.remove("mur-attachment-drag-active");
-			fileInput?.remove();
-			attachBtn?.remove();
-			previewContainer?.remove();
-			queue = [];
-			inputContext = null;
-			dragDepth = 0;
+			return {
+				update: render,
+				hasContent: () => draft().length > 0,
+				isBlocked: () => draft().some((item) => item.status !== "ready"),
+				collect() {
+					const conversationId = ctx.conversationId;
+					const items = draft();
+					const ids = new Set(items.map((item) => item.id));
+					return {
+						blocks: items.flatMap((item) => (item.status === "ready" ? [cloneBlock(item.value)] : [])),
+						accept() {
+							drafts.set(
+								conversationId,
+								draft(conversationId).filter((item) => !ids.has(item.id)),
+							);
+							changed(conversationId);
+						},
+					};
+				},
+				destroy() {
+					destroyed = true;
+					for (const controller of uploads.values()) controller.abort();
+					uploads.clear();
+					drafts.clear();
+					previews.clear();
+					ctx.container.removeEventListener("dragenter", onDragEnter);
+					ctx.container.removeEventListener("dragover", onDragOver);
+					ctx.container.removeEventListener("dragleave", onDragLeave);
+					ctx.container.removeEventListener("drop", onDrop);
+					ctx.input.removeEventListener("paste", onPaste);
+					ctx.container.classList.remove("mur-attachment-drag-active");
+					picker.remove();
+					button.remove();
+					tray.remove();
+				},
+			};
 		},
 	};
+	return plugin;
 }
 
-function renderReadyPreview(item: AttachmentQueueItem, previewItem: HTMLElement): void {
-	const block = item.block;
-
-	if (block?.type === "file" && block.mimeType.startsWith("image/")) {
-		previewItem.appendChild(el("img", "", { src: block.data, alt: block.name ?? item.fileName }));
-		return;
-	}
-
-	const label = block?.type === "file" ? (block.name ?? item.fileName) : item.fileName;
-	previewItem.appendChild(el("div", "mur-file-preview", { textContent: `📄 ${label}` }));
-}
-
-function getBlockMimeType(block: ContentBlock, fallback: string): string {
-	return block.type === "file" ? block.mimeType : fallback;
-}
-
-function hasDraggedFiles(event: DragEvent): boolean {
-	const types = event.dataTransfer?.types;
-	if (!types) return false;
-	return Array.from(types).includes("Files");
-}
-
-function hasClipboardText(event: ClipboardEvent): boolean {
-	const data = event.clipboardData;
-	if (!data) return false;
-
-	const types = Array.from(data.types || []);
-	return (
-		types.includes("text/plain") ||
-		types.includes("text/html") ||
-		(typeof data.getData === "function" && data.getData("text/plain").length > 0)
-	);
-}
-
-function isTextLikeFile(file: File): boolean {
-	if (file.type.startsWith("text/") || file.type === "application/json") return true;
-
-	const extension = getFileExtension(file.name);
-	return extension !== "" && TEXT_FILE_EXTENSIONS.has(extension);
-}
-
-function mimeTypeFromName(fileName: string): string {
-	return getFileExtension(fileName) === "json" ? "application/json" : "text/plain";
-}
-
-function getFileExtension(fileName: string): string {
-	const index = fileName.lastIndexOf(".");
-	return index === -1 ? "" : fileName.slice(index + 1).toLowerCase();
-}
-
-function readFile(file: File, mode: "data-url" | "text"): Promise<string> {
-	return new Promise((resolve, reject) => {
+async function processFile({ file, signal }: { file: File; signal: AbortSignal }): Promise<ContentBlock> {
+	const image = file.type.startsWith("image/");
+	const dot = file.name.lastIndexOf(".");
+	const extension = dot < 0 ? "" : file.name.slice(dot + 1).toLowerCase();
+	if (
+		!image &&
+		!file.type.startsWith("text/") &&
+		file.type !== "application/json" &&
+		!TEXT_FILE_EXTENSIONS.has(extension)
+	)
+		throw new Error("Unsupported type");
+	const data = await new Promise<string>((resolve, reject) => {
 		const reader = new FileReader();
-
-		reader.onload = () => resolve(String(reader.result ?? ""));
-		reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
-
-		if (mode === "data-url") {
-			reader.readAsDataURL(file);
-		} else {
-			reader.readAsText(file);
+		const abort = () => {
+			reader.abort();
+			reject(new Error("File reading cancelled"));
+		};
+		reader.onload = () => {
+			signal.removeEventListener("abort", abort);
+			resolve(String(reader.result ?? ""));
+		};
+		reader.onerror = () => {
+			signal.removeEventListener("abort", abort);
+			reject(reader.error ?? new Error("Failed to read file"));
+		};
+		if (signal.aborted) {
+			abort();
+			return;
 		}
+		signal.addEventListener("abort", abort, { once: true });
+		if (image) reader.readAsDataURL(file);
+		else reader.readAsText(file);
 	});
+	return {
+		id: uuidv7(),
+		type: "file",
+		name: file.name,
+		mimeType: file.type || (extension === "json" ? "application/json" : "text/plain"),
+		data,
+	};
 }

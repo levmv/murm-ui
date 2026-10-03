@@ -1,17 +1,18 @@
 # Murm UI Documentation
 
-Murm UI is a zero-framework TypeScript chat interface for LLM apps. It handles the browser UI, streaming rendering, chat history, and common controls. Your app brings the provider, storage, and optional plugins.
+Use `ChatUI` for a ready-made chat, or use `ChatView`, `Composer` and `Sidebar` independently with your own backend.
 
 ## Contents
 
 - [Install](#install)
-- [HTML Shell](#html-shell)
-- [CSS](#css)
-- [Create The UI](#create-the-ui)
-- [Syntax Highlighting](#syntax-highlighting)
-- [Providers](#providers)
+- [ChatUI](#chatui)
+- [ChatView and Composer](#chatview-and-composer)
+- [Sidebar](#sidebar)
 - [Plugins](#plugins)
+- [Appearance](#appearance)
+- [Providers](#providers)
 - [Storage](#storage)
+- [Migration from 0.2.0](#migration-from-020)
 - [Browser Support](#browser-support)
 
 ## Install
@@ -20,287 +21,250 @@ Murm UI is a zero-framework TypeScript chat interface for LLM apps. It handles t
 npm install murm-ui
 ```
 
-## HTML Shell
+The examples use `murm-ui/with-css`, which includes the core styles. See [Appearance](#appearance) for individual imports.
 
-`ChatUI` expects a small set of class names so it can attach the sidebar, feed, and input behavior.
-Add `mur-sidebar-animated` to `.mur-app` if you want the desktop sidebar rail transition; omit it for instant desktop layout changes.
-By default, `.mur-app` is a full-viewport app shell. For contained panels, sidebars, docs pages, or app sections, add `mur-app-embedded` to the root and pass `fullscreen: false` to `ChatUI`.
-For a complete copy-paste shell, see [`chat-shell.html`](chat-shell.html).
+## ChatUI
 
-```html
-<div class="mur-app mur-sidebar-animated">
-  <aside class="mur-sidebar">
-    <div class="mur-sidebar-header">...</div>
-    <div class="mur-sidebar-actions">...</div>
-    <div class="mur-sidebar-content"></div>
-  </aside>
-
-  <main class="mur-main-area">
-    <header class="mur-main-header">
-      <button class="mur-open-sidebar-btn" type="button">Menu</button>
-      <h2 class="mur-header-title">New Chat</h2>
-    </header>
-
-    <div class="mur-chat-layout-wrapper">
-      <div class="mur-chat-scroll-area">
-        <div class="mur-chat-history" role="log" aria-live="polite"></div>
-      </div>
-
-      <div class="mur-chat-form-container">
-        <form class="mur-chat-form">
-          <textarea class="mur-chat-input" rows="1"></textarea>
-          <button class="mur-send-btn mur-form-icon-btn mur-action-btn" type="submit">Send</button>
-        </form>
-      </div>
-    </div>
-  </main>
-</div>
-```
-
-The `.mur-header-title` element is optional. Omit it when your app does not want a visible in-app chat title; `updateWindowTitle` can still sync the browser title.
-Button contents and icons are replaceable. Keep the class hooks that Murm UI queries: `.mur-sidebar`, `.mur-sidebar-content`, `.mur-main-area`, `.mur-open-sidebar-btn`, `.mur-chat-history`, `.mur-chat-form`, `.mur-chat-input`, and `.mur-send-btn`. The stock CSS also toggles `.mur-send-icon` and `.mur-stop-icon` inside the send button while a response is generating.
-
-## CSS
-
-The root `murm-ui` entry does not import CSS. For bundlers that support CSS imports, use `murm-ui/with-css` to include the core styles automatically. You can also import CSS explicitly.
+`ChatUI` manages requests, history, input and navigation. Start with the [HTML shell](chat-shell.html); its class names connect the library to your markup. Button contents, icons and the optional chat title can be changed.
 
 ```ts
-import "murm-ui/styles/base.css";
-import "murm-ui/styles/sidebar.css";
-import "murm-ui/styles/input.css";
-import "murm-ui/styles/feed.css";
-import "murm-ui/styles/dropdown.css";
-import "murm-ui/plugins/agent-thinking/agent-thinking.css";
-import "murm-ui/plugins/attachment/attachment.css";
-import "murm-ui/plugins/edit/edit.css";
-import "murm-ui/plugins/settings/settings.css";
-import "murm-ui/plugins/thinking/thinking.css";
-import "murm-ui/plugins/tools/tools.css";
-import "murm-ui/highlighter/theme.css";
-```
-
-Theme tokens are scoped to `.mur-app` and use the `--mur-*` prefix. Set `data-theme="light"` or `data-theme="dark"` on `.mur-app`, or omit `data-theme` to follow `prefers-color-scheme`.
-
-## Create The UI
-
-```ts
-import {
-  ChatUI,
-  IndexedDBStorage,
-  OpenAIProvider,
-} from "murm-ui/with-css";
-import { highlight } from "murm-ui/highlighter";
-import { AttachmentPlugin } from "murm-ui/plugins/attachment";
+import { ChatUI, IndexedDBStorage, OpenAIProvider } from "murm-ui/with-css";
 import { CopyPlugin } from "murm-ui/plugins/copy";
 import { EditPlugin } from "murm-ui/plugins/edit";
-import { ThinkingPlugin } from "murm-ui/plugins/thinking";
-import { ToolsPlugin } from "murm-ui/plugins/tools";
 
-new ChatUI({
+const ui = new ChatUI({
   container: ".mur-app",
-  provider: new OpenAIProvider(apiKey, endpoint, model),
+  provider: new OpenAIProvider("", "/api/chat/completions", "your-model"),
   storage: new IndexedDBStorage(),
-  highlighter: highlight,
-  agentRunCollapse: "machinery",
-  plugins: (chatApi) => [
-    AttachmentPlugin(),
-    ThinkingPlugin(),
-    ToolsPlugin(),
+  plugins: (engine) => [
     CopyPlugin(),
-    EditPlugin({ onSave: (id, text) => chatApi.editAndResubmit(id, text) }),
+    EditPlugin({ onSave: (id, text) => engine.editAndResubmit(id, text) }),
   ],
 });
 ```
 
-Agent runs default to `agentRunCollapse: "machinery"`, which folds tool calls, tool results, and reasoning blocks under "Worked" at their position in the run while keeping assistant prose visible in order. Use `agentRunCollapse: "full"` when you prefer dense agentic feeds that show only the final assistant prose outside the fold.
+`ui.engine` exposes message submission, cancellation and session management. Use `ui.destroy()` when removing the chat.
 
-For agent-oriented interfaces, use `AgentThinkingPlugin()` from `murm-ui/plugins/agent-thinking` instead of `ThinkingPlugin()` when you want reasoning to appear as muted inline preview text while the run is active. Once the run finishes, that preview collapses with the rest of the agent work.
+| Option | Purpose |
+| --- | --- |
+| `fullscreen: false` | Embed the chat in a container with a bounded height |
+| `enableSidebar: false` | Use your own conversation navigation |
+| `routing: false` | Disable URL routing |
+| `updateWindowTitle` | Update the browser title; accepts `true` or a title formatter |
+| `sidebarMenu(defaults, context)` | Filter or extend session menu actions |
+| `highlighter` | Add syntax highlighting to code blocks |
 
-You can customize sidebar menus without replacing Murm UI's defaults:
+## ChatView and Composer
+
+`ChatView` displays application-owned conversations. `Composer` handles input and drafts. Give each a container; they create their own markup. The transcript host needs a bounded height, such as `height: 70vh`.
 
 ```ts
-new ChatUI({
-  // ...
-  sidebarMenu: (defaults, ctx) => [
-    ...defaults,
-    {
-      id: "archive",
-      label: "Archive",
-      onClick: () => archiveChat(ctx.session.id),
+import { ChatView, Composer } from "murm-ui/with-css";
+
+const view = new ChatView({ container: "#transcript" });
+const composer = new Composer({
+  container: "#input",
+  onSubmit: (command) => backend.send(command),
+  onStop: ({ conversationId }) => backend.stop(conversationId),
+});
+
+view.setConversation({ id: "chat-1", messages: [] });
+composer.setConversation("chat-1");
+```
+
+Here `backend` is your application's API adapter. `onSubmit` receives `{ conversationId, clientRequestId, text, blocks, signal }`. Resolve when input is accepted, throw to show an error, or return `false` to keep the draft. The application supplies accepted messages through `setConversation` or `apply`.
+
+### Messages and streaming
+
+`setConversation({ id, messages })` replaces the displayed history without saving or submitting it. Use `apply` for incremental updates:
+
+```ts
+view.apply({
+  conversationId: "chat-1",
+  changes: [{
+    type: "message.put",
+    message: {
+      id: "answer", role: "assistant", status: "streaming",
+      blocks: [{ id: "body", type: "text", text: "" }],
     },
-  ],
+  }],
+});
+
+// As text arrives:
+view.apply({
+  conversationId: "chat-1",
+  changes: [{ type: "text.append", messageId: "answer", blockId: "body", delta: "Hello" }],
 });
 ```
 
-The `sidebarMenu` builder should stay pure. Return the final item list from the defaults and context, and put side effects inside item `onClick` handlers.
+| Change | Effect |
+| --- | --- |
+| `message.put` / `message.remove` | Insert, replace or remove a message; `beforeId` controls insertion order |
+| `block.put` / `block.remove` | Insert, replace or remove a block within a message |
+| `text.append` | Append to an existing text or reasoning block |
+| `tool.update` | Append tool arguments with `argsDelta`, or update its name/status |
+| `message.state` | Set status, error, usage or timestamp; use `status: "complete"` when a response ends |
 
-## Syntax Highlighting
+Message IDs are unique within a conversation; block IDs are unique within a message. Updates for another conversation return `false`; invalid batches throw without partially applying changes. Your adapter handles event ordering and reconnects: applying a text delta twice appends it twice.
 
-Syntax highlighting is optional. If you omit `highlighter`, Murm UI still renders safe code blocks with language labels and copy buttons; it just leaves the code text uncolored.
+`view.state` exposes the current read-only state. To share state between views, pass a `ConversationModel` as the `conversation` option.
 
-The package includes a built-in highlighter with common languages already registered. Import the highlighter function and its theme when you want first-party highlighting without adding another runtime dependency.
+For older history, load a page in `onReachTop`, update the indicator with `setOlderMessagesState(hasMore, loading)`, and add messages with `prependMessages(conversationId, messages)`. Discard stale page responses after switching conversations. `setLoading` controls the transcript loading state; `setError(message)` shows an error and `setError(null)` clears it.
+
+### Input and drafts
+
+Switch both components when changing conversations. Composer keeps text and attachment drafts per conversation; successful submission clears the submitted draft while preserving later edits.
+
+Use `composer.setCapabilities({ canSubmit, canEdit, canStop })` to control input. `canEdit` defaults to `canSubmit`; set it to `true` to allow drafting while submission is unavailable. `canStop` enables Stop when an `onStop` callback is supplied. Enter submits; the Stop button requests cancellation.
+
+`composer.getDraft(id?)` and `setDraft(text)` read and restore text. `view.scrollToLatest()` scrolls to the latest message; `composer.focus()` focuses input. `view.setCanAct(false)` disables mutating message actions.
+
+Destroy components when removing them. Composer cancels pending uploads and stops waiting for submission acceptance; this does not stop server work.
+
+## Sidebar
+
+`Sidebar` displays an application-owned conversation list inside a `.mur-app` shell. Pass actions as callbacks and refresh the list with `update` after server changes:
+
+```ts
+import { Sidebar } from "murm-ui/with-css";
+
+const sidebar = new Sidebar({
+  container: "#app",
+  header: "Chats",
+  onSelect: selectConversation,
+  onNew: createConversation,
+  onRename: renameConversation,
+  onDelete: deleteConversation,
+});
+sidebar.update({
+  sessions: [{ id: "chat-1", title: "Research" }],
+  activeId: "chat-1",
+  hasMore: false,
+  loading: false,
+});
+```
+
+The callbacks belong to your application. Actions appear when their callbacks are supplied. `onPin` enables pinning; supply pinned sessions first. `onLoadMore` handles pagination, and `getHref` adds conversation links. `menu` customizes actions; `confirmDelete` replaces browser confirmation.
+
+Use `header`, `footer` and `links` for additional panel content. `open()`, `close()` and `setActive(id)` control the panel; `destroy()` removes it. `reuseMarkup: true` adopts an existing sidebar from the [HTML shell](chat-shell.html).
+
+## Plugins
+
+Pass an array to `ChatView.plugins` or `Composer.plugins`, or an `(engine) => plugins` factory to `ChatUI.plugins`. Each plugin is imported from `murm-ui/plugins/<name>` and includes its own CSS.
+
+| Import | Plugin | Purpose |
+| --- | --- | --- |
+| `attachment` | `AttachmentPlugin` | File picking, paste/drop, uploads and previews |
+| `tools` | `ToolsPlugin` | Tool calls and their results |
+| `thinking` | `ThinkingPlugin` | Expandable reasoning |
+| `agent-thinking` | `AgentThinkingPlugin` | Inline reasoning preview; an alternative to `ThinkingPlugin` |
+| `copy` | `CopyPlugin` | Copy message text |
+| `edit` | `EditPlugin` | Edit user messages through an `onSave` callback |
+| `settings` | `SettingsPlugin` | Provider settings for `ChatUI` |
+
+`tools()`, `thinking()` and `agentThinking()` are aliases for their named plugin factories. `EditPlugin.onSave` resolves when the edit is accepted; `false` or rejection keeps the editor open.
+
+Agent runs default to `agentRunCollapse: "machinery"`: technical steps fold under “Worked” while assistant prose stays visible. `"full"` keeps only the final reply outside the fold. For a compact tool view, use `ToolsPlugin({ details: false })` and application-supplied tool summaries; `showReasoning: false` hides reasoning in `ChatView`.
+
+### Attachments
+
+`AttachmentPlugin()` works with `Composer` and `ChatUI`. By default it reads local images as data URLs and text files as text. For uploads, supply `onAttach({ conversationId, file, signal })`, returning a `ContentBlock`. `maxFileSize` defaults to 20 MiB; `previewContainer` can host previews elsewhere in your layout.
+
+Pending uploads and failed attachments block submission until resolved or removed. `attachFiles(files)`, `removeAttachment(id)`, `getDraft(id?)` and `setDraft(blocks, id?)` let the application manage the queue.
+
+### Custom plugins
+
+A display plugin provides `renderers: [{ matches, mount }]`. `mount(container)` creates the block's controls and returns `update(block, context)` and `destroy()`. Update existing controls in place; release listeners, timers and pending asynchronous output on destruction. See the [card example](https://github.com/levmv/murm-ui/blob/main/example/next/card.ts).
+
+The first matching renderer owns a block. Text uses built-in Markdown when no plugin claims it. The context includes the message, transcript, labels, generating state and `canAct`. `context.dispatch(action, payload)` sends an addressed action to `ChatView.onAction`; this route is not exposed by `ChatUI`.
+
+`getActionButtons(message, labels)` adds message actions. Keep action IDs stable and derive buttons from the current message; definitions refresh for completed-message changes and when streaming finishes. Set `mutates: false` for actions such as copying that remain available in read-only views.
+
+Input plugins implement `mountComposer(context)`. The returned extension can provide `hasContent`, `isBlocked` and `collect()`, plus `destroy()`. `collect` returns `{ blocks, accept }`; clear the captured draft in `accept`. Call `context.changed()` when plugin input changes. Create a separate plugin instance for each composer.
+
+`ChatUI` also runs `onMount` and `beforeSubmit` hooks for engine integration and request preparation. Standalone components only run their relevant display/input hooks.
+
+## Appearance
+
+`murm-ui/with-css` includes all core styles. The root `murm-ui` import and component entrypoints do not import CSS; for selective imports use:
+
+| Component | Styles under `murm-ui/styles/` |
+| --- | --- |
+| `ChatView` | `base.css`, `feed.css`, `view.css` |
+| `Composer` | `base.css`, `input.css`, `composer.css` |
+| `Sidebar` | `base.css`, `sidebar.css`, `dropdown.css` |
+
+Set `data-theme="light"` or `data-theme="dark"` on the host, or omit it to follow the system theme. Override inherited `--mur-*` variables to customize colors and sizing. `labels` customizes component text and accessible labels.
+
+`ChatView` is embedded by default; `ChatUI` is fullscreen by default. Set `fullscreen` explicitly to change this. `ChatView.emptyState` accepts text or an element. To adopt existing markup, use `ChatView.reuseMarkup` or `Composer.form`.
+
+### Syntax highlighting
+
+Both `ChatView` and `ChatUI` accept an optional `highlighter`:
 
 ```ts
 import { highlight } from "murm-ui/highlighter";
 import "murm-ui/highlighter/theme.css";
 
-new ChatUI({
-  // ...
-  highlighter: highlight,
-});
+const view = new ChatView({ container: "#transcript", highlighter: highlight });
 ```
 
-The built-in set includes JavaScript, TypeScript, JSON, YAML, CSS, HTML/XML, JSX, TSX, Python, Bash, SQL, Diff, Markdown, Go, Rust, Java, C, C++, C#, PHP, Ruby, Kotlin, Swift, Dockerfile, TOML, and GraphQL. Unknown languages and plain code blocks are escaped safely.
+Without it, code blocks still have language labels and copy buttons. A custom `(code, language) => html` function may return a string or promise; its output must escape user code and contain only trusted markup.
 
-You can replace it with any trusted highlighter. The function receives raw code text and the language id from the Markdown fence, then returns the HTML fragment that should go inside the `<code>` element.
-
-```ts
-new ChatUI({
-  // ...
-  highlighter: (code, language) => myHighlighter.renderCodeInnerHtml(code, language),
-});
-```
-
-Custom highlighter output is injected directly for streaming performance, so escape any user code you interpolate and do not return untrusted HTML.
-
-For larger apps, `murm-ui/highlighter/chat` exposes an async highlighter that can lazy-load extra grammars. Built-in languages are available immediately; `loadLanguage` is called only for missing languages.
-
-```ts
-import { createHighlighter } from "murm-ui/highlighter/chat";
-import "murm-ui/highlighter/theme.css";
-
-const highlighter = createHighlighter({
-  async loadLanguage(language) {
-    return import(`./grammars/${language}.js`);
-  },
-});
-
-new ChatUI({
-  // ...
-  highlighter: highlighter.highlight,
-});
-```
-
-Grammar definitions use the Prism-style grammar shape (`pattern`, `inside`, `lookbehind`, `greedy`, `alias`, `rest`), so Prism-compatible grammars can be registered directly. If a lazy module exports a raw grammar object, wrap it as a language definition:
-
-```ts
-const highlighter = createHighlighter({
-  async loadLanguage(language) {
-    const module = await import(`./prism-grammars/${language}.js`);
-    return { id: language, grammar: module.default };
-  },
-});
-```
+For custom grammars, `createHighlighter` from `murm-ui/highlighter/chat` accepts a `loadLanguage` callback returning a language definition. `murm-ui/highlighter/core` provides an empty registry; the bundled grammars use the Prism-compatible format.
 
 ## Providers
 
-Providers are the boundary between Murm UI and the model. A provider receives a normalized chat request and streams normalized events back into the engine.
+`OpenAIProvider(apiKey, endpoint, model)` works with OpenAI-compatible chat completion endpoints. Point it at your backend proxy or local model server; user-supplied keys can also be passed directly.
+
+A custom provider implements:
 
 ```ts
-interface ChatRequest {
-  messages: Message[];
-  instructions?: string;
-  tools?: Record<string, unknown>[];
-  options: RequestOptions;
-  signal: AbortSignal;
-}
-
 interface ChatProvider {
   streamChat(
-    request: ChatRequest,
-    onEvent: (event: StreamEvent) => void,
+    request: ChatStreamRequest,
+    onChange: (changes: ConversationChange[]) => void,
   ): Promise<void>;
-
   generateTitle?(request: ChatRequest): Promise<string>;
 }
 ```
 
-Provider adapters should hide provider-specific streaming quirks. Emit stable Murm message ids, synthesizing them when the upstream provider does not provide ids. Prefer `message_start` before deltas; a single `streamChat` call may emit multiple assistant `message_start` events with different ids, and Murm UI will append them as separate assistant messages. Deltas should be ordered by message rather than interleaved after switching to another message id.
+The request contains `messages`, `instructions`, `tools`, generation `options` and an abort `signal`. For streaming, the engine creates an empty assistant message with `request.messageId`. Add blocks with `block.put`, then send deltas. Additional messages use their own IDs and `request.runId`.
 
-Use `OpenAIProvider` for OpenAI-compatible chat completion endpoints.
-
-```ts
-import { OpenAIProvider } from "murm-ui";
-
-const provider = new OpenAIProvider(
-  apiKey,
-  "https://api.openai.com/v1/chat/completions",
-  "gpt-4o-mini",
-);
-```
-
-For browser apps, a backend proxy is usually the production boundary. BYOK and local tools can pass user-provided keys directly and keep them on that user's device.
-
-`instructions` and `tools` are first-class model inputs on `ChatRequest`. Provider adapters decide how to serialize them for a specific API, such as OpenAI-compatible `system` messages and `tools`, Anthropic top-level `system`, or another provider-native shape.
-
-`RequestOptions` is intentionally open-ended for generation controls and provider-specific passthrough fields. Common options include `model`, `temperature`, `top_p`, `max_tokens`, `stream_options`, and provider-specific flags.
-
-The hosted demo uses a mock provider so visitors can try streaming without an API key or backend.
-
-## Plugins
-
-Plugins add behavior around input, rendering, request preparation, and message actions.
-
-- `AttachmentPlugin()` adds file attachment handling and previews.
-- `ThinkingPlugin()` renders reasoning blocks behind an expandable control.
-- `AgentThinkingPlugin()` is an alternative reasoning renderer for agent-oriented UIs: muted inline preview text, expandable by clicking the text.
-- `ToolsPlugin()` renders tool calls and matching tool results as compact expandable blocks.
-- `CopyPlugin()` adds message copy actions.
-- `EditPlugin()` lets users edit a prior user message and resubmit from that point.
-- `SettingsPlugin()` adds browser-side provider settings for apps that want user-configurable endpoints. Its default storage keeps settings in this browser; shared deployments usually pair it with custom storage or a backend proxy.
-
-```ts
-import { AttachmentPlugin } from "murm-ui/plugins/attachment";
-import { CopyPlugin } from "murm-ui/plugins/copy";
-import { EditPlugin } from "murm-ui/plugins/edit";
-import { ThinkingPlugin } from "murm-ui/plugins/thinking";
-
-new ChatUI({
-  container: ".mur-app",
-  provider,
-  storage,
-  plugins: (chatApi) => [
-    AttachmentPlugin(),
-    ThinkingPlugin(),
-    ToolsPlugin(),
-    CopyPlugin(),
-    EditPlugin({
-      onSave: (id, text) => chatApi.editAndResubmit(id, text),
-    }),
-  ],
-});
-```
-
-Plugin entrypoints import their own CSS. If you do not import a plugin entrypoint, its code and styles stay out of the app bundle. Plugin CSS files are also exported separately for apps that manage styles explicitly.
+Use `message.state` for individual completion and usage. Resolving `streamChat` completes remaining streamed messages; rejecting it reports failure. Honor `request.signal` for cancellation. Providers translate instructions, tools and generation options to their model API's format.
 
 ## Storage
 
-Storage adapters persist chat sessions and metadata. Murm UI ships with browser-local IndexedDB storage and a REST-oriented remote storage adapter.
+`IndexedDBStorage` persists chats in the browser. `RemoteStorage("/api", getToken)` uses the endpoints below and sends a bearer token when `getToken` returns one. Custom adapters implement `ChatStorage`.
 
-```ts
-import { IndexedDBStorage, RemoteStorage } from "murm-ui";
+| Request | Response / behavior |
+| --- | --- |
+| `GET /api/chats?limit=20` | `{ items: ChatSessionMeta[], hasMore: boolean }` |
+| `GET /api/chats/:id` | `ChatSession`; 404 for a missing chat |
+| `GET /api/chats/:id?before=<cursor>&limit=<n>` | `{ messages, hasMore, nextOlderMessagesCursor? }` |
+| `PUT /api/chats/:id` | Save a `ChatSession` request body |
+| `POST /api/chats/:id/meta` | Apply metadata such as `title` or `isPinned` |
+| `DELETE /api/chats/:id` | Delete the chat |
 
-const localStorage = new IndexedDBStorage();
-const remoteStorage = new RemoteStorage("/api", getToken);
-```
+Write requests accept any successful HTTP status. A `ChatSession` contains `id`, `title`, `updatedAt`, `messages`, optional `isPinned` and history pagination fields.
 
-When `getToken` returns a token, `RemoteStorage` sends `Authorization: Bearer <token>`.
+For paginated history, return `hasMoreMessages` and `nextOlderMessagesCursor` with the chat. Older pages are ordered oldest-first and require a next cursor while `hasMore` is true. Cursors are independent of message IDs.
 
-Remote storage endpoints:
+Sort the chat list by pinned first, then `updatedAt` descending, then ID descending. The next list request supplies `cursorPinned`, `cursor` and `cursorId` from the previous page's last item.
 
-- `GET /api/chats` lists chat metadata.
-- `GET /api/chats/:id` loads one chat with messages.
-- `GET /api/chats/:id?before=<cursor>&limit=<n>` optionally loads messages older than an opaque cursor.
-- `PUT /api/chats/:id` saves a chat document.
-- `POST /api/chats/:id/meta` updates metadata such as generated titles.
-- `DELETE /api/chats/:id` deletes a chat.
+**Partial saves:** requests include `X-Murm-Save-Mode: partial` while older messages remain unloaded or `{ saveLimit }` truncates the payload. Preserve the stored prefix before the first incoming message, then replace the tail, removing omitted messages from that tail. Determine this boundary by stored transcript order, never by comparing IDs. If the first ID is unknown, the backend must establish the boundary explicitly. Without the header, replace the complete chat. Custom storage must likewise preserve an unloaded prefix when `hasMoreMessages` is true.
 
-For backend-paginated transcripts, return `hasMoreMessages: true` and `nextOlderMessagesCursor` from `GET /api/chats/:id`. `RemoteStorage` passes that cursor back as `before` and expects each older page to return `{ messages, hasMore, nextOlderMessagesCursor? }`. The cursor is independent from `Message.id`.
+## Migration from 0.2.0
 
-Chat metadata may include `isPinned?: boolean`. If your app exposes the built-in Pin menu item, custom storage should preserve that field, return pinned chats first, and use `isPinned`, `updatedAt`, and `id` as the pagination cursor. `RemoteStorage` sends `cursorPinned=true|false` with cursor requests.
+`ChatUI` keeps its HTML shell and saved message format. The main API changes are:
 
-For long chats, pass `{ saveLimit: 20 }` to send only the most recent messages. Partial saves include `X-Murm-Save-Mode: partial`; backends should merge those messages instead of replacing the full stored chat.
+- Individual CSS imports now also need `view.css` and `composer.css`; `murm-ui/with-css` includes them.
+- Providers emit `ConversationChange` batches instead of `StreamEvent`. Use the supplied response ID, create blocks explicitly and resolve the promise to finish. `engine.conversation` replaces `subscribeHot` for message updates.
+- Block plugins replace `onBlockRender` with `renderers` and their `mount`/`update`/`destroy` lifecycle.
+- Input plugins replace the old input hooks with `mountComposer` and `collect`; clear submitted blocks in `accept`. Request transformations still use `beforeSubmit`.
+- Attachments replace `uploadFile`/`fileHandlers` with `onAttach`, and preview selectors with `previewContainer`.
+- Action definitions refresh when messages change; retain stable action IDs. Enter submits; stopping uses the Stop button.
 
 ## Browser Support
 
-Murm UI emits ES2018 JavaScript. Runtime support depends on streaming and storage APIs: `fetch`, `ReadableStream`, `TextDecoder`, `AbortController`, `crypto.getRandomValues`, and IndexedDB or custom storage.
+The package emits ES2018 JavaScript and uses modern browser APIs, including fetch streaming, `AbortController`, `Object.hasOwn` and `Element.replaceChildren`. Clipboard, resize observation and automatic sidebar pagination are used when available. IndexedDB is required only for `IndexedDBStorage`.

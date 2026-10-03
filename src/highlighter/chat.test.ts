@@ -2,17 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import vm from "node:vm";
 import { build } from "esbuild";
-import { highlight } from "./index";
 
 const TYPESCRIPT_SNIPPET = 'const x: string = "hi";';
-
-test("built-in highlight includes TypeScript syntax tokens", () => {
-	const html = highlight(TYPESCRIPT_SNIPPET, "ts");
-
-	assert.match(html, /class="token keyword"/);
-	assert.match(html, /class="token builtin"/);
-	assert.match(html, /class="token string"/);
-});
 
 test("bundled built-in highlight keeps language registration", async () => {
 	const source = [

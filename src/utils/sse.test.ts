@@ -2,6 +2,28 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseSSE } from "./sse";
 
+test("limits individual events, not a read containing many events", async () => {
+	const payload = "x".repeat(1024);
+	const response = new Response(`data: ${payload}\n\ndata: ${payload}\r\n\r\n`.repeat(550));
+	let count = 0;
+	await parseSSE(response, (data) => {
+		assert.equal(data, payload);
+		count++;
+		return undefined;
+	});
+	assert.equal(count, 1100);
+});
+
+for (const ending of ["", "\n\n", "\r\n\r\n"]) {
+	test(`rejects an oversized event with ending ${JSON.stringify(ending)}`, async () => {
+		const response = new Response(`data: ${"x".repeat(1024 * 1024)}${ending}`);
+		await assert.rejects(
+			parseSSE(response, () => assert.fail("oversized event delivered")),
+			/1MB limit/,
+		);
+	});
+}
+
 test("flushes a buffered TextDecoder sequence at stream end", async () => {
 	const bytes = new TextEncoder().encode("data: hi ");
 	const stream = new ReadableStream<Uint8Array>({

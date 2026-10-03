@@ -1,384 +1,115 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, type TestContext, test } from "node:test";
 import { JSDOM } from "jsdom";
-import { Input } from "../../components/input";
-import type { ChatPlugin, Message } from "../../core/types";
-import { AttachmentPlugin } from "./attachment-plugin";
+import { Composer } from "../../components/composer";
+import type { SubmitCommand } from "../../core/composer-types";
+import { AttachmentPlugin, type AttachmentPluginConfig } from "./attachment-plugin";
 
-function setGlobal(name: string, value: unknown): void {
-	Object.defineProperty(globalThis, name, {
-		configurable: true,
-		value,
-		writable: true,
-	});
-}
+const dom = new JSDOM();
+after(() => dom.window.close());
 
-function installDom(): HTMLElement {
-	const dom = new JSDOM(`
-		<div class="mur-app">
-			<form class="mur-chat-form">
-				<textarea class="mur-chat-input" rows="1"></textarea>
-				<button type="submit" class="mur-send-btn">Send</button>
-			</form>
-		</div>
-	`);
-
-	Object.defineProperty(dom.window, "matchMedia", {
-		configurable: true,
-		value: () => ({ matches: false }),
-	});
-
-	setGlobal("window", dom.window);
-	setGlobal("document", dom.window.document);
-	setGlobal("navigator", dom.window.navigator);
-	setGlobal("HTMLElement", dom.window.HTMLElement);
-	setGlobal("File", dom.window.File);
-	setGlobal("FileReader", dom.window.FileReader);
-	setGlobal("Event", dom.window.Event);
-	setGlobal("CSS", { supports: () => false });
-
-	return dom.window.document.querySelector(".mur-app") as HTMLElement;
-}
-
-function mountAttachment(plugin: ChatPlugin): {
-	container: HTMLElement;
-	fileInput: HTMLInputElement;
-	form: HTMLFormElement;
-	input: HTMLTextAreaElement;
-	sendBtn: HTMLButtonElement;
-	submissions: string[];
-	destroy: () => void;
-} {
-	const container = installDom();
-	const submissions: string[] = [];
-	const inputComponent = new Input(
-		{
-			container,
-			onSubmit: (text) => {
-				submissions.push(text);
-				return true;
-			},
-			onStop: () => {},
-		},
-		[plugin],
-	);
-
-	const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
-	assert.ok(fileInput);
-
-	return {
-		container,
-		fileInput,
-		form: container.querySelector(".mur-chat-form") as HTMLFormElement,
-		input: container.querySelector(".mur-chat-input") as HTMLTextAreaElement,
-		sendBtn: container.querySelector(".mur-send-btn") as HTMLButtonElement,
-		submissions,
-		destroy: () => {
-			plugin.destroy?.();
-			inputComponent.destroy();
-		},
-	};
-}
-
-function dispatchFileInput(fileInput: HTMLInputElement, files: File[]): void {
-	Object.defineProperty(fileInput, "files", {
-		configurable: true,
-		value: files,
-	});
-	fileInput.dispatchEvent(new window.Event("change", { bubbles: true }));
-}
-
-function dispatchDrop(container: HTMLElement, files: File[]): boolean {
-	const event = new window.Event("drop", { bubbles: true, cancelable: true });
-	Object.defineProperty(event, "dataTransfer", {
-		configurable: true,
-		value: { types: ["Files"], files },
-	});
-	return container.dispatchEvent(event);
-}
-
-function dispatchDrag(container: HTMLElement, type: string): void {
-	const event = new window.Event(type, { bubbles: true, cancelable: true });
-	Object.defineProperty(event, "dataTransfer", {
-		configurable: true,
-		value: { types: ["Files"], files: [] },
-	});
-	container.dispatchEvent(event);
-}
-
-function dispatchPaste(
-	input: HTMLTextAreaElement,
-	files: File[],
-	options: { types?: string[]; text?: string } = {},
-): boolean {
-	const event = new window.Event("paste", { bubbles: true, cancelable: true });
-	Object.defineProperty(event, "clipboardData", {
-		configurable: true,
-		value: {
-			files,
-			types: options.types ?? [],
-			getData: (type: string) => (type === "text/plain" ? (options.text ?? "") : ""),
+function setup(t: TestContext, config: AttachmentPluginConfig = {}) {
+	const globals = { window: dom.window, document: dom.window.document, FileReader: dom.window.FileReader };
+	const old = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+	for (const [key, value] of Object.entries(globals))
+		Object.defineProperty(globalThis, key, { value, writable: true, configurable: true });
+	const host = document.createElement("div");
+	document.body.replaceChildren(host);
+	const plugin = AttachmentPlugin(config);
+	const sent: SubmitCommand[] = [];
+	const composer = new Composer({
+		container: host,
+		plugins: [plugin],
+		onSubmit: (command) => {
+			sent.push(command);
 		},
 	});
-	return input.dispatchEvent(event);
+	composer.setConversation("a");
+	t.after(() => {
+		composer.destroy();
+		for (const [key, descriptor] of old) {
+			if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+			else Reflect.deleteProperty(globalThis, key);
+		}
+	});
+	return { host, plugin, composer, sent };
 }
 
-async function waitFor(assertion: () => boolean, label: string): Promise<void> {
-	for (let i = 0; i < 30; i++) {
-		if (assertion()) return;
-		await new Promise((resolve) => setTimeout(resolve, 0));
-	}
+const file = (name: string, type: string, text = "hello") => new dom.window.File([text], name, { type });
 
-	assert.fail(`Timed out waiting for ${label}`);
-}
-
-function file(name: string, type: string, content = "hello"): File {
-	return new File([content], name, { type });
-}
-
-function message(): Message {
-	return { id: "message-1", role: "user", blocks: [] };
-}
-
-test("file input uses default and custom accepted types", () => {
-	const defaultPlugin = AttachmentPlugin();
-	const defaultHarness = mountAttachment(defaultPlugin);
-	assert.equal(defaultHarness.fileInput.accept, "image/*,text/*,.csv,.json,.md");
-	const attachBtn = defaultHarness.container.querySelector<HTMLButtonElement>(".mur-form-icon-btn");
-	assert.equal(attachBtn?.getAttribute("aria-label"), "Attach files");
-	assert.equal(attachBtn?.title, "Attach files");
-	defaultHarness.destroy();
-
-	const customPlugin = AttachmentPlugin({ acceptedTypes: ".pdf" });
-	const customHarness = mountAttachment(customPlugin);
-	assert.equal(customHarness.fileInput.accept, ".pdf");
-	customHarness.destroy();
-});
-
-test("custom preview mount selector is scoped to the chat container by default", () => {
-	const plugin = AttachmentPlugin({ previewMountSelector: ".preview-slot" });
-	const container = installDom();
-	const outsideSlot = document.createElement("div");
-	outsideSlot.className = "preview-slot";
-	document.body.prepend(outsideSlot);
-	const insideSlot = document.createElement("div");
-	insideSlot.className = "preview-slot";
-	container.prepend(insideSlot);
-
-	const inputComponent = new Input(
-		{
-			container,
-			onSubmit: () => true,
-			onStop: () => {},
-		},
-		[plugin],
-	);
-
-	assert.ok(insideSlot.querySelector(".mur-attachment-previews"));
-	assert.equal(outsideSlot.querySelector(".mur-attachment-previews"), null);
-
-	plugin.destroy?.();
-	inputComponent.destroy();
-});
-
-test("custom preview mount selector can opt into document scope", () => {
-	const plugin = AttachmentPlugin({ previewMountSelector: ".preview-slot", previewMountSelectorScope: "document" });
-	const container = installDom();
-	const outsideSlot = document.createElement("div");
-	outsideSlot.className = "preview-slot";
-	document.body.prepend(outsideSlot);
-
-	const inputComponent = new Input(
-		{
-			container,
-			onSubmit: () => true,
-			onStop: () => {},
-		},
-		[plugin],
-	);
-
-	assert.ok(outsideSlot.querySelector(".mur-attachment-previews"));
-	assert.equal(container.querySelector(".mur-attachment-previews"), null);
-
-	plugin.destroy?.();
-	inputComponent.destroy();
-});
-
-test("local image and text fallback succeed while unsupported binaries render errors", async () => {
-	const plugin = AttachmentPlugin();
-	const harness = mountAttachment(plugin);
-
-	dispatchFileInput(harness.fileInput, [
-		file("image.png", "image/png", "image-data"),
-		file("notes.md", "text/markdown", "# Notes"),
-		file("archive.zip", "application/zip", "zip"),
+test("local attachments preview images, read text, and retain errors until removed", async (t) => {
+	const { host, plugin, composer, sent } = setup(t);
+	assert.equal(host.querySelector<HTMLInputElement>('input[type="file"]')!.accept, "image/*,text/*,.csv,.json,.md");
+	await plugin.attachFiles([
+		file("image.png", "image/png"),
+		file("notes.md", "", "# Notes"),
+		file("archive.zip", "application/zip"),
 	]);
-
-	await waitFor(() => harness.container.querySelectorAll(".mur-attachment-ready").length === 2, "ready files");
-	await waitFor(() => harness.container.querySelectorAll(".mur-attachment-error").length === 1, "error file");
-
-	const msg = message();
-	plugin.onUserSubmit?.(msg);
-
-	assert.equal(msg.blocks.length, 2);
-	assert.equal(msg.blocks[0].type, "file");
-	assert.equal(msg.blocks[1].type, "file");
-	assert.match(harness.container.textContent ?? "", /Unsupported type/);
-
-	harness.destroy();
+	assert.equal(plugin.getDraft()[2].status, "error");
+	assert.match(host.textContent!, /Unsupported type/);
+	assert.match(host.querySelector("img")!.src, /^data:image\/png;base64,/);
+	await composer.submit();
+	assert.equal(sent.length, 0);
+	const preview = host.querySelector("img");
+	plugin.removeAttachment(plugin.getDraft()[2].id);
+	assert.equal(host.querySelector("img"), preview);
+	await composer.submit();
+	assert.equal(sent[0].blocks.length, 2);
+	const text = sent[0].blocks[1];
+	assert.equal(text.type, "file");
+	if (text.type === "file") {
+		assert.equal(text.data, "# Notes");
+		assert.equal(text.mimeType, "text/plain");
+	}
+	assert.equal(plugin.getDraft().length, 0);
 });
 
-test("size exceeded renders an error and calls the size hook", async () => {
-	const oversized = file("large.txt", "text/plain", "too large");
-	const calls: string[] = [];
-	const plugin = AttachmentPlugin({
+test("size validation runs before application processing and custom previews are cleaned up", async (t) => {
+	const preview = dom.window.document.createElement("div");
+	let processed = 0;
+	const { host, plugin, composer } = setup(t, {
+		acceptedTypes: ".pdf",
 		maxFileSize: 2,
-		onSizeExceeded: (selectedFile, maxSize) => calls.push(`${selectedFile.name}:${maxSize}`),
-	});
-	const harness = mountAttachment(plugin);
-
-	dispatchFileInput(harness.fileInput, [oversized]);
-
-	await waitFor(() => harness.container.querySelector(".mur-attachment-error") !== null, "size error");
-	assert.deepEqual(calls, ["large.txt:2"]);
-	assert.match(harness.container.textContent ?? "", /File too large/);
-
-	harness.destroy();
-});
-
-test("custom handlers run before upload fallback", async () => {
-	const calls: string[] = [];
-	const plugin = AttachmentPlugin({
-		uploadFile: async (selectedFile) => {
-			calls.push(`upload:${selectedFile.name}`);
-			return { type: "text/plain", data: "uploaded", name: selectedFile.name };
+		previewContainer: preview,
+		onAttach: () => {
+			processed++;
+			throw new Error("Should not run");
 		},
-		fileHandlers: [
-			{
-				accepts: (selectedFile) => selectedFile.name.endsWith(".pdf"),
-				process: async (selectedFile) => {
-					calls.push(`handler:${selectedFile.name}`);
-					return {
-						id: "pdf-block",
-						type: "file",
-						mimeType: "application/pdf",
-						name: selectedFile.name,
-						data: "parsed-pdf",
-					};
-				},
-			},
-		],
 	});
-	const harness = mountAttachment(plugin);
-
-	dispatchFileInput(harness.fileInput, [file("doc.pdf", "application/pdf", "%PDF")]);
-	await waitFor(() => plugin.hasPendingData?.() === true, "handler file ready");
-
-	const msg = message();
-	plugin.onUserSubmit?.(msg);
-
-	assert.deepEqual(calls, ["handler:doc.pdf"]);
-	assert.equal(msg.blocks[0].type, "file");
-	assert.equal(msg.blocks[0].data, "parsed-pdf");
-
-	harness.destroy();
+	assert.equal(host.querySelector<HTMLInputElement>('input[type="file"]')!.accept, ".pdf");
+	await plugin.attachFiles([file("large.pdf", "application/pdf")]);
+	assert.equal(processed, 0);
+	assert.match(preview.textContent!, /File too large/);
+	composer.destroy();
+	assert.equal(preview.childElementCount, 0);
 });
 
-test("upload fallback creates file content blocks", async () => {
-	const plugin = AttachmentPlugin({
-		uploadFile: async (selectedFile) => ({
-			type: "application/octet-stream",
-			data: `remote:${selectedFile.name}`,
-			name: "remote.bin",
+test("drop respects editing permissions and detaches its listeners on destroy", async (t) => {
+	const { host, plugin, composer } = setup(t, {
+		onAttach: ({ file }) => ({
+			id: file.name,
+			type: "custom",
+			kind: "file",
+			data: { ref: file.name },
+			fallbackText: file.name,
 		}),
 	});
-	const harness = mountAttachment(plugin);
-
-	dispatchFileInput(harness.fileInput, [file("local.bin", "application/octet-stream", "binary")]);
-	await waitFor(() => plugin.hasPendingData?.() === true, "uploaded file ready");
-
-	const msg = message();
-	plugin.onUserSubmit?.(msg);
-
-	assert.equal(msg.blocks.length, 1);
-	assert.equal(msg.blocks[0].type, "file");
-	assert.equal(msg.blocks[0].mimeType, "application/octet-stream");
-	assert.equal(msg.blocks[0].name, "remote.bin");
-	assert.equal(msg.blocks[0].data, "remote:local.bin");
-
-	harness.destroy();
-});
-
-test("submission is blocked while processing and enabled after resolution", async () => {
-	let resolveUpload!: (value: { type: string; data: string; name?: string }) => void;
-	const plugin = AttachmentPlugin({
-		uploadFile: async () =>
-			new Promise((resolve) => {
-				resolveUpload = resolve;
-			}),
-	});
-	const harness = mountAttachment(plugin);
-
-	dispatchFileInput(harness.fileInput, [file("slow.bin", "application/octet-stream", "binary")]);
-	assert.equal(plugin.isSubmitBlocked?.(), true);
-	assert.equal(harness.sendBtn.disabled, true);
-
-	harness.input.value = "hello";
-	harness.form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
-	assert.deepEqual(harness.submissions, []);
-
-	resolveUpload({ type: "application/octet-stream", data: "done", name: "slow.bin" });
-	await waitFor(() => plugin.isSubmitBlocked?.() === false, "upload resolved");
-
-	assert.equal(harness.sendBtn.disabled, false);
-	harness.form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
-	assert.deepEqual(harness.submissions, ["hello"]);
-
-	harness.destroy();
-});
-
-test("drop and paste queue files", async () => {
-	const plugin = AttachmentPlugin();
-	const harness = mountAttachment(plugin);
-
-	dispatchDrag(harness.container, "dragenter");
-	assert.equal(harness.container.classList.contains("mur-attachment-drag-active"), true);
-
-	const dropAllowed = dispatchDrop(harness.container, [file("drop.txt", "text/plain", "drop")]);
-	assert.equal(dropAllowed, false);
-	assert.equal(harness.container.classList.contains("mur-attachment-drag-active"), false);
-
-	const pasteAllowed = dispatchPaste(harness.input, [file("paste.txt", "text/plain", "paste")]);
-	assert.equal(pasteAllowed, false);
-
-	await waitFor(() => harness.container.querySelectorAll(".mur-attachment-ready").length === 2, "drop and paste ready");
-
-	harness.destroy();
-});
-
-test("mixed text and file paste keeps default text insertion while queueing files", async () => {
-	const plugin = AttachmentPlugin();
-	const harness = mountAttachment(plugin);
-
-	const pasteAllowed = dispatchPaste(harness.input, [file("paste.txt", "text/plain", "paste")], {
-		types: ["text/plain", "Files"],
-		text: "pasted text",
-	});
-
-	assert.equal(pasteAllowed, true);
-	await waitFor(() => harness.container.querySelectorAll(".mur-attachment-ready").length === 1, "mixed paste ready");
-
-	harness.destroy();
-});
-
-test("destroy removes attachment listeners and nodes", () => {
-	const plugin = AttachmentPlugin();
-	const harness = mountAttachment(plugin);
-
-	harness.destroy();
-	dispatchDrop(harness.container, [file("drop.txt", "text/plain", "drop")]);
-	dispatchPaste(harness.input, [file("paste.txt", "text/plain", "paste")]);
-
-	assert.equal(harness.container.querySelector(".mur-attachment-previews"), null);
-	assert.equal(harness.container.classList.contains("mur-attachment-drag-active"), false);
+	const drop = () => {
+		const event = new dom.window.Event("drop", { cancelable: true });
+		Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"], files: [file("a", "text/plain")] } });
+		host.firstElementChild!.dispatchEvent(event);
+		return event;
+	};
+	assert.equal(drop().defaultPrevented, true);
+	await Promise.resolve();
+	assert.equal(plugin.getDraft()[0].status, "ready");
+	composer.setCapabilities({ canSubmit: false });
+	assert.equal(drop().defaultPrevented, false);
+	assert.equal(plugin.getDraft().length, 1);
+	const element = host.firstElementChild!;
+	composer.destroy();
+	const event = new dom.window.Event("drop", { cancelable: true });
+	Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"], files: [file("b", "text/plain")] } });
+	element.dispatchEvent(event);
+	assert.equal(event.defaultPrevented, false);
 });
