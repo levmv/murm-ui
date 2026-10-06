@@ -41,6 +41,6 @@ For an application that already manages conversations and requests, see [ChatVie
 
 Run `npm ci`, then:
 
-- `npm run dev:next` — component demo at `http://localhost:8000`.
+- `npm run dev:next` — local component example at `http://localhost:8000`.
 - `npm run build:demo` — documentation and chat demo in `docs/dist`.
 - `npm run verify` — lint, types, tests, build and package checks.

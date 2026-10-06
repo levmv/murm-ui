@@ -996,7 +996,7 @@ test("built-in reasoning renderers release handlers and scheduled measurement on
 	assert.equal(frameCount(), 0);
 });
 
-test("labels reach transcript, actions and Markdown; optional empty content follows snapshots", async (t) => {
+test("labels reach transcript, actions and Markdown; optional empty content follows snapshots and loading", async (t) => {
 	const { view, host, flush } = setup(t, {
 		emptyState: "Пусто <script>",
 		labels: {
@@ -1011,15 +1011,23 @@ test("labels reach transcript, actions and Markdown; optional empty content foll
 	view.setConversation({ id: "c", messages: [] });
 	view.setOlderMessagesState(true, false);
 	flush();
-	assert.equal(host.querySelector<HTMLElement>(".mur-view-empty")!.hidden, false);
+	const empty = host.querySelector<HTMLElement>(".mur-view-empty")!;
+	assert.equal(empty.hidden, false);
 	assert.equal(host.querySelector("script"), null);
+	view.setLoading(true);
+	flush();
+	assert.equal(empty.hidden, true);
+	assert.equal(host.querySelector<HTMLElement>(".mur-feed-spinner:not(.mur-feed-spinner-top)")!.hidden, false);
+	view.setLoading(false);
+	flush();
+	assert.equal(empty.hidden, false);
 	view.setConversation({
 		id: "c",
 		messages: [message("a", "```ts\nx\n```")],
 	});
 	flush();
 	await setImmediate();
-	assert.equal(host.querySelector<HTMLElement>(".mur-view-empty")!.hidden, true);
+	assert.equal(empty.hidden, true);
 	assert.equal(host.querySelector("[role=article]")!.getAttribute("aria-label"), "Ассистент");
 	assert.equal(host.querySelector(".mur-code-copy-btn")!.getAttribute("aria-label"), "Код");
 	assert.equal(host.querySelector<HTMLButtonElement>('[data-action-id="copy"]')!.title, "Сообщение");

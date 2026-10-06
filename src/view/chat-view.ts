@@ -235,7 +235,8 @@ export class ChatView {
 					loading: this.loading,
 				});
 			}
-			if (pending.structural && this.emptyState) this.emptyState.hidden = this.model.state.messages.length > 0;
+			if (pending.structural && this.emptyState)
+				this.emptyState.hidden = this.loading || this.model.state.messages.length > 0;
 		});
 	}
 

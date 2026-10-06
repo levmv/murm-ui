@@ -20,5 +20,5 @@
 
 	"postCreateCommand": "npm ci",
 
-	"forwardPorts": [8000]
+	"appPort": "127.0.0.1:8000:8000"
 }

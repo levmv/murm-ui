@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 - 2026-10-06
+
+- Add standalone `ChatView`, `Composer` and `Sidebar` components with a shared `ConversationModel`; retain `ChatUI` as the integrated option.
+- Update provider and plugin APIs for addressed conversation updates, block renderers and composer extensions. See the [migration guide](docs/guide.md#migration-from-020).
+- Preserve focus and drafts during streaming and history updates; improve navigation, persistence and cleanup, and hide the empty state while loading a conversation.
+
 ## 0.2.0 - 2026-06-28
 
 ### Changed
