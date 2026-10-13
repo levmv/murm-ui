@@ -25,7 +25,7 @@ The examples use `murm-ui/with-css`, which includes the core styles. See [Appear
 
 ## ChatUI
 
-`ChatUI` manages requests, history, input and navigation. Start with the [HTML shell](chat-shell.html); its class names connect the library to your markup. Button contents, icons and the optional chat title can be changed.
+`ChatUI` manages requests, history, input and navigation. Start with the [HTML shell](chat-shell.html), keeping its class names when customizing the markup.
 
 ```ts
 import { ChatUI, IndexedDBStorage, OpenAIProvider } from "murm-ui/with-css";
@@ -53,6 +53,7 @@ const ui = new ChatUI({
 | `updateWindowTitle` | Update the browser title; accepts `true` or a title formatter |
 | `sidebarMenu(defaults, context)` | Filter or extend session menu actions |
 | `highlighter` | Add syntax highlighting to code blocks |
+| `markdown` | Customize text parsing and trusted decoration after sanitizing |
 
 ## ChatView and Composer
 
@@ -72,7 +73,7 @@ view.setConversation({ id: "chat-1", messages: [] });
 composer.setConversation("chat-1");
 ```
 
-Here `backend` is your application's API adapter. `onSubmit` receives `{ conversationId, clientRequestId, text, blocks, signal }`. Resolve when input is accepted, throw to show an error, or return `false` to keep the draft. The application supplies accepted messages through `setConversation` or `apply`.
+`backend` is your API adapter. `onSubmit` receives `{ conversationId, clientRequestId, text, blocks, signal }`. Resolve when input is accepted, throw to show an error, or return `false` to keep the draft. Supply accepted messages through `setConversation` or `apply`.
 
 ### Messages and streaming
 
@@ -144,7 +145,7 @@ sidebar.update({
 });
 ```
 
-The callbacks belong to your application. Actions appear when their callbacks are supplied. `onPin` enables pinning; supply pinned sessions first. `onLoadMore` handles pagination, and `getHref` adds conversation links. `menu` customizes actions; `confirmDelete` replaces browser confirmation.
+Actions appear when their callbacks are supplied. `onPin` enables pinning; supply pinned sessions first. `onLoadMore` handles pagination, and `getHref` adds conversation links. `menu` customizes actions; `confirmDelete` replaces browser confirmation.
 
 Use `header`, `footer` and `links` for additional panel content. `open()`, `close()` and `setActive(id)` control the panel; `destroy()` removes it. `reuseMarkup: true` adopts an existing sidebar from the [HTML shell](chat-shell.html).
 
@@ -174,9 +175,9 @@ Pending uploads and failed attachments block submission until resolved or remove
 
 ### Custom plugins
 
-A display plugin provides `renderers: [{ matches, mount }]`. `mount(container)` creates the block's controls and returns `update(block, context)` and `destroy()`. Update existing controls in place; release listeners, timers and pending asynchronous output on destruction. See the [card example](https://github.com/levmv/murm-ui/blob/main/example/next/card.ts).
+A display plugin provides `renderers: [{ matches, mount }]`. The first `matches(block, message)` returning `true` owns the block. `mount(container)` returns `update(block, context)` and `destroy()`: update controls in place and release resources on destruction. See the [card example](https://github.com/levmv/murm-ui/blob/main/example/next/card.ts). Plugin, renderer and action types are exported from `murm-ui/view`.
 
-The first matching renderer owns a block. Text uses built-in Markdown when no plugin claims it. The context includes the message, transcript, labels, generating state and `canAct`. `context.dispatch(action, payload)` sends an addressed action to `ChatView.onAction`; this route is not exposed by `ChatUI`.
+Unclaimed text uses built-in Markdown. Renderer context includes the message, transcript, labels, generating state and `canAct`. In `ChatView`, `context.dispatch(action, payload)` sends an addressed action to `onAction`.
 
 `getActionButtons(message, labels)` adds message actions. Keep action IDs stable and derive buttons from the current message; definitions refresh for completed-message changes and when streaming finishes. Set `mutates: false` for actions such as copying that remain available in read-only views.
 
@@ -212,6 +213,36 @@ const view = new ChatView({ container: "#transcript", highlighter: highlight });
 Without it, code blocks still have language labels and copy buttons. A custom `(code, language) => html` function may return a string or promise; its output must escape user code and contain only trusted markup.
 
 For custom grammars, `createHighlighter` from `murm-ui/highlighter/chat` accepts a `loadLanguage` callback returning a language definition. `murm-ui/highlighter/core` provides an empty registry; the bundled grammars use the Prism-compatible format.
+
+### Markdown customization
+
+`ChatView` and `ChatUI` accept two optional `markdown` hooks, synchronous or asynchronous:
+
+- `parse(text, message)` returns HTML, which is then sanitized. The default parser is `marked`.
+- `decorate(root, { message, streaming })` transforms sanitized, highlighted content, for example to add formulas or diagrams. `streaming` refers to the whole message.
+
+For example, preserve line breaks in user questions:
+
+```ts
+import { Marked } from "marked";
+import { ChatView } from "murm-ui/view";
+
+const parser = new Marked();
+const view = new ChatView({
+  container: "#transcript",
+  markdown: {
+    parse: (text, message) => parser.parse(text, { async: false, breaks: message.role === "user" }),
+  },
+});
+```
+
+Decoration output is **not sanitized again**; insert only trusted markup. Only the temporary root's children are reconciled into the view. Delegate events from `view.element`; use a block renderer for widgets needing mounting or cleanup.
+
+Hooks rerun on text or role changes and, with `decorate`, on streaming state changes. This includes a final pass when streaming ends. Errors fall back to source text.
+
+`await renderMarkdown(text, { message, markdown, highlighter, labels })` from `murm-ui/view` returns a detached `div` for copying or export. It requires a DOM and defaults to `streaming: false`.
+
+`await view.whenRendered()` waits for mounted Markdown to catch up with received updates, including highlighting and hooks. For printing, wait for generation to finish first; handle fonts, images and custom renderers separately.
 
 ## Providers
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, type TestContext, test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { JSDOM } from "jsdom";
+import { marked } from "marked";
 import { ConversationModel } from "../core/conversation";
 import type {
 	ActionButtonDef,
@@ -86,6 +87,7 @@ function setup(t: TestContext, config: Omit<ChatViewConfig, "container"> = {}) {
 }
 
 test("standalone view needs only a host; Markdown and unknown cards stay safe", async (t) => {
+	const parse = t.mock.method(marked, "parse");
 	const { view, host, flush } = setup(t);
 	view.setConversation({
 		id: "c",
@@ -98,12 +100,16 @@ test("standalone view needs only a host; Markdown and unknown cards stay safe", 
 			},
 		],
 	});
-	flush();
-	await setImmediate();
+	await view.whenRendered();
 	assert.equal(host.querySelector("textarea"), null);
 	assert.equal(host.querySelector("script, img"), null);
 	assert.equal(host.querySelector("strong")?.textContent, "formatted");
 	assert.match(host.textContent!, /<img/);
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "streaming" }] });
+	flush();
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "complete" }] });
+	await view.whenRendered();
+	assert.equal(parse.mock.callCount(), 1, "default Markdown does not reparse unchanged text on completion");
 	view.destroy();
 	assert.equal(host.childElementCount, 0);
 });
@@ -183,6 +189,7 @@ test("a shared model can outlive its view and switch through snapshots", async (
 });
 
 test("streaming past blocks without a renderer allocates no DOM nodes", async (t) => {
+	const parse = t.mock.method(marked, "parse");
 	const { view, host, flush } = setup(t);
 	view.setConversation({
 		id: "c",
@@ -196,6 +203,7 @@ test("streaming past blocks without a renderer allocates no DOM nodes", async (t
 					{ id: "result", type: "tool_result", toolCallId: "call", outputText: "Hidden" },
 					{ id: "artifact", type: "artifact", artifactId: "file", mime: "text/plain", content: "Hidden" },
 					{ id: "text", type: "text", text: "Visible" },
+					{ id: "progress", type: "custom", kind: "progress", data: null, fallbackText: "Working" },
 				],
 			},
 		],
@@ -210,10 +218,12 @@ test("streaming past blocks without a renderer allocates no DOM nodes", async (t
 		flush();
 	}
 	assert.equal(create.mock.callCount(), 0);
-	assert.equal(host.querySelectorAll(".mur-content-block").length, 1);
+	assert.equal(parse.mock.callCount(), 0, "a trailing progress block must not bypass the Markdown throttle");
+	assert.equal(host.querySelectorAll(".mur-content-block").length, 2);
 	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "complete" }] });
 	flush();
 	await setImmediate();
+	assert.equal(parse.mock.callCount(), 1);
 	assert.equal(host.querySelector(".mur-block-text")!.textContent?.trim(), "Visible..........");
 });
 
@@ -626,22 +636,181 @@ test("detailed tools show replaced results, including after an earlier result wa
 
 test("late Markdown highlighting cannot replace newer text", async (t) => {
 	const oldHighlight = Promise.withResolvers<string>();
+	const decorated: string[] = [];
 	const { view, host, flush } = setup(t, {
 		highlighter: () => oldHighlight.promise,
+		markdown: {
+			decorate: (root) => {
+				decorated.push(root.textContent!.trim());
+			},
+		},
 	});
 	view.setConversation({ id: "c", messages: [message("a", "```ts\nold\n```")] });
 	flush();
 	await setImmediate();
+	const rendered = Promise.all([view.whenRendered(), view.whenRendered()]);
 	view.apply({
 		conversationId: "c",
 		changes: [{ type: "block.put", messageId: "a", block: { id: "a-text", type: "text", text: "**new**" } }],
 	});
 	flush();
-	await setImmediate();
+	await rendered;
 	oldHighlight.resolve("stale result");
 	await setImmediate();
+	assert.deepEqual(decorated, ["new"], "superseded highlighting must not start expensive decoration");
 	assert.equal(host.querySelector("strong")?.textContent, "new");
 	assert.doesNotMatch(host.querySelector(".mur-chat-history")!.textContent!, /old|stale/);
+});
+
+test("Markdown decoration follows whole-message streaming and waits for the final pass only", async (t) => {
+	const streamed = Promise.withResolvers<void>();
+	const completed = Promise.withResolvers<void>();
+	const parses: string[] = [];
+	const phases: boolean[] = [];
+	const { view, host, flush } = setup(t, {
+		markdown: {
+			parse(text, message) {
+				parses.push(message.id);
+				return `<p>${text}</p>`;
+			},
+			async decorate(root, { message, streaming }) {
+				if (message.id !== "a") return;
+				phases.push(streaming);
+				await (streaming ? streamed.promise : completed.promise);
+				root.querySelector("p")!.setAttribute("data-phase", streaming ? "streaming" : "complete");
+			},
+		},
+	});
+	view.setConversation({
+		id: "c",
+		messages: [
+			message("history"),
+			{
+				...message("a", "Answer"),
+				status: "streaming",
+				blocks: [
+					{ id: "a-text", type: "text", text: "Answer" },
+					{ id: "progress", type: "custom", kind: "progress", data: null, fallbackText: "Working" },
+				],
+			},
+		],
+	});
+	let ready = false;
+	const rendered = view.whenRendered().then(() => {
+		ready = true;
+	});
+	await setImmediate();
+	assert.equal(ready, false);
+	assert.deepEqual(phases, [true], "a trailing progress block does not finish the message");
+	const history = host.querySelector('[data-block-id="history-text"] p');
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "complete" }] });
+	flush();
+	await setImmediate();
+	assert.equal(ready, false);
+	assert.deepEqual(phases, [true, false]);
+	completed.resolve();
+	await rendered;
+	assert.equal(host.querySelector('[data-block-id="a-text"] p')?.getAttribute("data-phase"), "complete");
+	streamed.resolve();
+	await setImmediate();
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "message.state", messageId: "a", status: "complete", usage: { input: 1, output: 2, total: 3 } }],
+	});
+	await view.whenRendered();
+	assert.deepEqual(parses, ["history", "a", "a"]);
+	assert.deepEqual(phases, [true, false]);
+	assert.equal(host.querySelector('[data-block-id="history-text"] p'), history);
+	assert.equal(host.querySelector('[data-block-id="a-text"] p')?.getAttribute("data-phase"), "complete");
+});
+
+test("late Markdown hooks cannot revive replaced or removed content, or hold rendering waits", async (t) => {
+	for (const stage of ["parse", "decorate"] as const) {
+		await t.test(stage, async (t) => {
+			const gates = new Map(["old", "removed", "destroyed"].map((text) => [text, Promise.withResolvers<void>()]));
+			const { view, host, flush } = setup(t, {
+				markdown: {
+					async parse(text) {
+						if (stage === "parse") await gates.get(text)?.promise;
+						return `<p>${text}</p>`;
+					},
+					async decorate(root) {
+						if (stage === "decorate") await gates.get(root.textContent!)?.promise;
+						root.append(" decorated");
+					},
+				},
+			});
+			view.setConversation({ id: "c", messages: [message("a", "old")] });
+			const waiting = view.whenRendered();
+			await setImmediate();
+			view.apply({
+				conversationId: "c",
+				changes: [{ type: "block.put", messageId: "a", block: { id: "a-text", type: "text", text: "new" } }],
+			});
+			flush();
+			await waiting;
+			gates.get("old")!.resolve();
+			await setImmediate();
+			assert.equal(host.querySelector(".mur-block-text")?.textContent, "new decorated");
+			for (const text of ["removed", "destroyed"]) {
+				view.apply({
+					conversationId: "c",
+					changes: [{ type: "block.put", messageId: "a", block: { id: "a-text", type: "text", text } }],
+				});
+				const pending = view.whenRendered();
+				await setImmediate();
+				const detached = host.querySelector(".mur-block-text")!;
+				const before = detached.innerHTML;
+				if (text === "destroyed") view.destroy();
+				else {
+					view.apply({ conversationId: "c", changes: [{ type: "block.remove", messageId: "a", blockId: "a-text" }] });
+					flush();
+				}
+				await pending;
+				gates.get(text)!.resolve();
+				await setImmediate();
+				assert.equal(host.querySelector(".mur-block-text"), null);
+				assert.equal(detached.innerHTML, before);
+			}
+		});
+	}
+});
+
+test("rendering waits include grouped text and release work when its segment is collapsed", async (t) => {
+	const answer = Promise.withResolvers<void>();
+	const hidden = Promise.withResolvers<void>();
+	const rendered: string[] = [];
+	const { view, host } = setup(t, {
+		agentRunCollapse: "full",
+		markdown: {
+			async decorate(_root, { message }) {
+				rendered.push(message.id);
+				if (message.id === "answer") await answer.promise;
+				if (message.id === "step") await hidden.promise;
+			},
+		},
+	});
+	view.setConversation({
+		id: "c",
+		messages: [{ ...message("question"), role: "user" }, message("step"), message("answer")],
+	});
+	const initial = view.whenRendered();
+	await setImmediate();
+	assert.deepEqual(rendered, ["question", "answer"]);
+	assert.equal(host.querySelector('[data-block-id="answer-text"]')?.textContent, "");
+	answer.resolve();
+	await initial;
+	assert.equal(host.querySelector('[data-block-id="answer-text"]')?.textContent?.trim(), "answer");
+	const toggle = host.querySelector<HTMLButtonElement>(".mur-agent-run-summary")!;
+	toggle.click();
+	const expanded = view.whenRendered();
+	await setImmediate();
+	assert.deepEqual(rendered, ["question", "answer", "step"]);
+	toggle.click();
+	await expanded;
+	hidden.resolve();
+	await setImmediate();
+	assert.equal(host.querySelector('[data-block-id="step-text"]'), null);
 });
 
 test("block replacements update only their message", (t) => {
@@ -878,7 +1047,6 @@ test("text switches between built-in Markdown and a custom renderer without stal
 	const highlighting = Promise.withResolvers<string>();
 	let highlightCalls = 0;
 	let destroyCalls = 0;
-	let takeover = false;
 	const { view, host, flush } = setup(t, {
 		highlighter: () => {
 			highlightCalls++;
@@ -889,7 +1057,7 @@ test("text switches between built-in Markdown and a custom renderer without stal
 				name: "takeover",
 				renderers: [
 					{
-						matches: () => takeover,
+						matches: (block, message) => block.type === "text" && message.role === "user",
 						mount: (container) => ({
 							update() {
 								container.textContent = "Plugin owns this block";
@@ -908,10 +1076,9 @@ test("text switches between built-in Markdown and a custom renderer without stal
 	flush();
 	await setImmediate();
 	assert.equal(highlightCalls, 1);
-	takeover = true;
 	view.apply({
 		conversationId: "c",
-		changes: [{ type: "text.append", messageId: "a", blockId: "a-text", delta: "\n" }],
+		changes: [{ type: "message.put", message: { ...message("a", "```ts\nold\n```"), role: "user" } }],
 	});
 	flush();
 	highlighting.resolve("old highlighting");
@@ -919,10 +1086,9 @@ test("text switches between built-in Markdown and a custom renderer without stal
 	assert.equal(host.querySelector(".mur-block-text")?.textContent, "Plugin owns this block");
 	assert.equal(highlightCalls, 1);
 
-	takeover = false;
 	view.apply({
 		conversationId: "c",
-		changes: [{ type: "block.put", messageId: "a", block: { id: "a-text", type: "text", text: "**Back**" } }],
+		changes: [{ type: "message.put", message: message("a", "**Back**") }],
 	});
 	flush();
 	await setImmediate();

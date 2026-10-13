@@ -12,6 +12,7 @@ import type {
 	ChatPlugin,
 	CodeHighlighter,
 	DeepReadonly,
+	MarkdownOptions,
 	Message,
 	MessagePlugin,
 } from "../core/types";
@@ -24,6 +25,8 @@ let pageScrollAttachCount = 0;
 export interface ChatViewConfig {
 	/** Optional syntax highlighting for built-in Markdown code blocks. */
 	highlighter?: CodeHighlighter;
+	/** Customize parsing and trusted decoration of built-in Markdown text blocks. */
+	markdown?: MarkdownOptions;
 	labels?: Partial<ChatLabels>;
 	container: HTMLElement | string;
 	/** Share an existing conversation, e.g. engine.conversation. The view does not own its lifecycle. */
@@ -110,6 +113,7 @@ export class ChatView {
 
 		this.feed = new Feed(this.element, {
 			highlighter: config.highlighter,
+			markdown: config.markdown,
 			plugins: config.plugins ?? [],
 			labels: this.labels,
 			fullscreen: config.fullscreen ?? false,
@@ -162,6 +166,24 @@ export class ChatView {
 	scrollToLatest(): void {
 		this.assertAlive();
 		this.feed.scrollToLatest();
+	}
+
+	/**
+	 * Flushes queued updates and waits for current mounted built-in Markdown blocks.
+	 * Includes highlighting and decoration, but not custom renderers, images, fonts
+	 * or future streaming events. Incoming updates can prolong the wait; it can also
+	 * resolve between deltas while a message is still streaming. Removed or superseded
+	 * work does not hold the wait.
+	 */
+	async whenRendered(): Promise<void> {
+		this.assertAlive();
+		while (!this.destroyed) {
+			this.flush();
+			const pending: Promise<void>[] = [];
+			this.feed.collectPendingMarkdown(pending);
+			if (!pending.length) return;
+			await Promise.all(pending);
+		}
 	}
 
 	/** Update the indicator when onReachTop delegates pagination to an external controller. */
@@ -223,21 +245,24 @@ export class ChatView {
 		for (const id of change.messageIds) this.pendingChange.messageIds.add(id);
 		this.pendingChange.structural ||= change.structural;
 		if (this.pendingFrame !== null) return;
-		this.pendingFrame = requestAnimationFrame(() => {
-			this.pendingFrame = null;
-			const pending = this.pendingChange!;
-			this.pendingChange = null;
-			if (this.destroyed) return;
-			if (pending.structural || pending.messageIds.size) {
-				this.feed.update(this.model.state.messages, {
-					streamingMessageIds: this.model.streamingMessageIds,
-					dirtyMessageIds: pending.structural ? undefined : pending.messageIds,
-					loading: this.loading,
-				});
-			}
-			if (pending.structural && this.emptyState)
-				this.emptyState.hidden = this.loading || this.model.state.messages.length > 0;
-		});
+		this.pendingFrame = requestAnimationFrame(() => this.flush());
+	}
+
+	private flush(): void {
+		if (this.pendingFrame !== null) cancelAnimationFrame(this.pendingFrame);
+		this.pendingFrame = null;
+		const pending = this.pendingChange;
+		this.pendingChange = null;
+		if (!pending || this.destroyed) return;
+		if (pending.structural || pending.messageIds.size) {
+			this.feed.update(this.model.state.messages, {
+				streamingMessageIds: this.model.streamingMessageIds,
+				dirtyMessageIds: pending.structural ? undefined : pending.messageIds,
+				loading: this.loading,
+			});
+		}
+		if (pending.structural && this.emptyState)
+			this.emptyState.hidden = this.loading || this.model.state.messages.length > 0;
 	}
 
 	private async dispatch(command: BlockAction): Promise<void> {

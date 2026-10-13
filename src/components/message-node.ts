@@ -1,4 +1,3 @@
-import { marked } from "marked";
 import type {
 	ActionButtonDef,
 	BlockRenderer,
@@ -9,17 +8,22 @@ import type {
 	RendererContext,
 } from "../core/types";
 import { defaultLabels } from "../labels";
+import { renderMarkdownContent } from "../markdown";
 import { el, syncDOMChildren } from "../utils/dom";
-import { renderSafeHTML } from "../utils/html";
 
 const MARKDOWN_THROTTLE_MS = 70;
 
 interface MarkdownState {
 	latest: string;
+	role: Message["role"];
+	streaming: boolean;
 	revision: number;
-	rendered?: string;
-	pending?: string;
+	rendered?: number;
+	pending?: number;
 	timer?: ReturnType<typeof setTimeout>;
+	/** Allocated only by an explicit whenRendered request. */
+	waiting?: Promise<void>;
+	resolveWaiting?: () => void;
 }
 
 interface BlockState {
@@ -109,6 +113,18 @@ export class MessageNode {
 		this.el.remove();
 	}
 
+	public collectPendingMarkdown(pending: Promise<void>[]): void {
+		for (const state of this.activeBlocks.values()) {
+			const markdown = state.markdown;
+			if (!markdown || markdown.rendered === markdown.revision) continue;
+			markdown.waiting ??= new Promise<void>((resolve) => {
+				markdown.resolveWaiting = resolve;
+			});
+			pending.push(markdown.waiting);
+			if (markdown.pending !== markdown.revision) void this.applyMarkdown(state, markdown);
+		}
+	}
+
 	private renderLoading(msg: Message, isGenerating: boolean, error: string | null) {
 		const hasVisibleBlocks = this.activeBlocks.size > 0;
 		const isLoading = isGenerating && !error && msg.role === "assistant" && !hasVisibleBlocks;
@@ -136,7 +152,7 @@ export class MessageNode {
 			let definition: BlockRenderer | undefined;
 			try {
 				if (this.config.renderers?.length)
-					definition = this.config.renderers.find((renderer) => renderer.matches(block));
+					definition = this.config.renderers.find((renderer) => renderer.matches(block, msg));
 			} catch (error) {
 				console.error("Block renderer failed", error);
 			}
@@ -172,7 +188,7 @@ export class MessageNode {
 					case "artifact":
 						continue;
 					case "text":
-						this.renderTextBlock(block.text, state, isGeneratingBlock);
+						this.renderTextBlock(block.text, state, msg, isGenerating);
 						break;
 					case "file":
 						this.renderFileBlock(block, container);
@@ -249,6 +265,7 @@ export class MessageNode {
 
 	private destroyBlock(state: BlockState): void {
 		if (state.markdown?.timer !== undefined) clearTimeout(state.markdown.timer);
+		if (state.markdown) this.resolveMarkdownWait(state.markdown);
 		state.markdown = undefined;
 		const renderer = state.renderer;
 		state.renderer = undefined;
@@ -259,16 +276,22 @@ export class MessageNode {
 		}
 	}
 
-	private renderTextBlock(text: string, state: BlockState, isGenerating: boolean): void {
-		state.markdown ??= { latest: "", revision: 0 };
+	private renderTextBlock(text: string, state: BlockState, message: Message, streaming: boolean): void {
+		state.markdown ??= { latest: text, role: message.role, streaming, revision: 0 };
 		const markdown = state.markdown;
-		if (markdown.latest !== text) {
+		if (
+			markdown.latest !== text ||
+			markdown.role !== message.role ||
+			(this.config.markdown?.decorate && markdown.streaming !== streaming)
+		) {
 			markdown.latest = text;
 			markdown.revision++;
+			this.resolveMarkdownWait(markdown);
 		}
-		if (markdown.rendered === text || markdown.pending === text) return;
-		if (!isGenerating) {
-			if (markdown.timer !== undefined) clearTimeout(markdown.timer);
+		markdown.role = message.role;
+		markdown.streaming = streaming;
+		if (markdown.rendered === markdown.revision || markdown.pending === markdown.revision) return;
+		if (!streaming) {
 			void this.applyMarkdown(state, markdown);
 		} else if (markdown.timer === undefined) {
 			markdown.timer = setTimeout(() => void this.applyMarkdown(state, markdown), MARKDOWN_THROTTLE_MS);
@@ -276,23 +299,43 @@ export class MessageNode {
 	}
 
 	private async applyMarkdown(state: BlockState, markdown: MarkdownState): Promise<void> {
+		if (markdown.timer !== undefined) clearTimeout(markdown.timer);
 		markdown.timer = undefined;
 		const text = markdown.latest;
 		const revision = markdown.revision;
-		markdown.pending = text;
+		const isCurrent = () => state.markdown === markdown && revision === markdown.revision;
+		markdown.pending = revision;
 		try {
-			const html = await marked.parse(text);
-			if (state.markdown !== markdown || revision !== markdown.revision) return;
-			const next = document.createElement("div");
-			await renderSafeHTML(next, html, this.config.highlighter, this.config.labels ?? defaultLabels);
-			if (state.markdown !== markdown || revision !== markdown.revision) return;
+			const next = await renderMarkdownContent(
+				text,
+				{
+					message: this.currentMessage!,
+					streaming: markdown.streaming,
+					markdown: this.config.markdown,
+					highlighter: this.config.highlighter,
+					labels: this.config.labels,
+				},
+				isCurrent,
+			);
+			if (!isCurrent()) return;
 			syncDOMChildren(state.container, next);
-			markdown.rendered = text;
 		} catch (error) {
 			console.error("Failed to render markdown", error);
+			if (isCurrent()) state.container.textContent = text;
 		} finally {
-			if (markdown.pending === text) markdown.pending = undefined;
+			if (markdown.pending === revision) markdown.pending = undefined;
+			if (isCurrent()) {
+				markdown.rendered = revision;
+				this.resolveMarkdownWait(markdown);
+			}
 		}
+	}
+
+	private resolveMarkdownWait(markdown: MarkdownState): void {
+		if (!markdown.resolveWaiting) return;
+		markdown.resolveWaiting();
+		markdown.waiting = undefined;
+		markdown.resolveWaiting = undefined;
 	}
 
 	private renderFileBlock(block: Extract<ContentBlock, { type: "file" }>, container: HTMLElement) {

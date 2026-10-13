@@ -8,6 +8,7 @@ import type {
 	ChatSessionMeta,
 	ChatStorage,
 	CodeHighlighter,
+	MarkdownOptions,
 	RequestOptions,
 } from "./core/types";
 import { MAX_PINNED_SESSIONS } from "./core/types";
@@ -41,6 +42,7 @@ export interface ChatUIConfig {
 	initialSessionId?: string;
 
 	highlighter?: CodeHighlighter;
+	markdown?: MarkdownOptions;
 	plugins?: (chatApi: ChatEngine) => ChatPlugin[];
 	agentRunCollapse?: AgentRunCollapse;
 	minAgentRunSteps?: number;
@@ -183,6 +185,7 @@ export class ChatUI {
 			fullscreen: this.config.fullscreen !== false,
 			labels: this.config.labels,
 			highlighter: this.config.highlighter,
+			markdown: this.config.markdown,
 			plugins: this.plugins.map(({ name, renderers, getActionButtons }) => ({ name, renderers, getActionButtons })),
 			agentRunCollapse: this.config.agentRunCollapse,
 			minAgentRunSteps: this.config.minAgentRunSteps,

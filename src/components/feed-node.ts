@@ -17,6 +17,7 @@ export interface FeedNode {
 	type: "message" | "agent_run";
 	el: HTMLElement;
 	update(item: FeedItem, ctx: FeedContext): void;
+	collectPendingMarkdown(pending: Promise<void>[]): void;
 	destroy(): void;
 }
 
@@ -41,6 +42,10 @@ class MessageFeedNode implements FeedNode {
 
 	public destroy(): void {
 		this.messageNode.destroy();
+	}
+
+	public collectPendingMarkdown(pending: Promise<void>[]): void {
+		this.messageNode.collectPendingMarkdown(pending);
 	}
 }
 
@@ -80,6 +85,11 @@ class RunNode implements FeedNode {
 		}
 		this.segmentNodes.clear();
 		this.el.remove();
+	}
+
+	public collectPendingMarkdown(pending: Promise<void>[]): void {
+		this.userNode?.collectPendingMarkdown(pending);
+		for (const node of this.segmentNodes.values()) node.collectPendingMarkdown(pending);
 	}
 
 	private renderUserMessage(message: Message, ctx: FeedContext): void {
@@ -131,6 +141,7 @@ interface SegmentNode {
 	type: RunSegment["type"];
 	el: HTMLElement;
 	update(segment: RunSegment, ctx: FeedContext): void;
+	collectPendingMarkdown(pending: Promise<void>[]): void;
 	destroy(): void;
 }
 
@@ -161,6 +172,10 @@ class MessagesNode implements SegmentNode {
 	public destroy(): void {
 		clearMessageNodes(this.messageNodes);
 		this.el.remove();
+	}
+
+	public collectPendingMarkdown(pending: Promise<void>[]): void {
+		for (const node of this.messageNodes.values()) node.collectPendingMarkdown(pending);
 	}
 }
 
@@ -216,6 +231,10 @@ class WorkNode implements SegmentNode {
 	public destroy(): void {
 		clearMessageNodes(this.stepNodes);
 		this.el.remove();
+	}
+
+	public collectPendingMarkdown(pending: Promise<void>[]): void {
+		for (const node of this.stepNodes.values()) node.collectPendingMarkdown(pending);
 	}
 
 	private renderSummary(segment: WorkSegment): void {

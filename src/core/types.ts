@@ -196,10 +196,30 @@ export interface ChatProvider {
  */
 export type CodeHighlighter = (code: string, lang: string) => string | Promise<string>;
 
+export interface MarkdownContext {
+	message: DeepReadonly<Message>;
+	/** Whether the whole message is streaming, including text followed by other blocks. */
+	streaming: boolean;
+}
+
+/** Hooks read message context; text/role changes and decoration's streaming state trigger rendering. */
+export interface MarkdownOptions {
+	/** Converts text to HTML before sanitizing. Defaults to the bundled marked parser. */
+	parse?(text: string, message: DeepReadonly<Message>): string | Promise<string>;
+	/**
+	 * Trusted transformation of sanitized, highlighted content in a detached div.
+	 * Only its children are reconciled into the view. Delegate events from a stable
+	 * ancestor; listeners and DOM properties on temporary nodes are not reconciled.
+	 * Runs again when streaming ends, even if the text is unchanged.
+	 */
+	decorate?(root: HTMLElement, context: MarkdownContext): void | Promise<void>;
+}
+
 export type AgentRunCollapse = "full" | "machinery";
 
 export interface RenderConfig {
 	highlighter?: CodeHighlighter;
+	markdown?: MarkdownOptions;
 	labels?: Readonly<ChatLabels>;
 	plugins: MessagePlugin[];
 	renderers?: BlockRenderer[];
@@ -289,7 +309,7 @@ export interface RendererContext extends BlockRenderContext {
 
 /** A renderer owns the contents of one block container until destroy. */
 export interface BlockRenderer {
-	matches(block: ContentBlock): boolean;
+	matches(block: ContentBlock, message: Message): boolean;
 	mount(container: HTMLElement): BlockRendererInstance;
 }
 

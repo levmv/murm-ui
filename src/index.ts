@@ -37,6 +37,8 @@ export type {
 	CodeHighlighter,
 	ContentBlock,
 	JsonValue,
+	MarkdownContext,
+	MarkdownOptions,
 	Message,
 	MessageActionContext,
 	MessagePlugin,
@@ -57,6 +59,7 @@ export {
 	type SidebarMenuBuilder,
 	type SidebarMenuContext,
 } from "./main";
+export { type MarkdownRenderOptions, renderMarkdown } from "./markdown";
 export type { RouterConfig, RouterType } from "./router";
 export * from "./sidebar";
 export { ChatView, type ChatViewConfig } from "./view/chat-view";

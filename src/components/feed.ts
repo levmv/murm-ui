@@ -262,6 +262,10 @@ export class Feed {
 		this.requestBottomScroll("smooth", true);
 	}
 
+	public collectPendingMarkdown(pending: Promise<void>[]): void {
+		for (const node of this.nodes.values()) node.collectPendingMarkdown(pending);
+	}
+
 	private clearAllNodes(): void {
 		for (const node of this.nodes.values()) {
 			node.destroy();

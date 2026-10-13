@@ -37,11 +37,16 @@ try {
 	await writeFile(
 		consumerFile,
 		`import { ChatView, type Message } from "murm-ui";
+import { renderMarkdown, type ActionButtonDef, type MessageActionContext, type MarkdownOptions } from "murm-ui/view";
 import { Composer } from "murm-ui/composer";
 import { highlight } from "murm-ui/highlighter";
 const message: Message = { id: "reply", role: "assistant", blocks: [] };
-const view = new ChatView({ container: "#chat", highlighter: highlight });
+const markdown: MarkdownOptions = { parse: (text) => text, decorate: (root, context) => { root.querySelector("code")?.setAttribute("data-message", context.message.id); } };
+const action: ActionButtonDef = { id: "copy", title: "Copy", iconHtml: "", onClick: (context: MessageActionContext) => { console.log(context.message); } };
+const view = new ChatView({ container: "#chat", highlighter: highlight, markdown, plugins: [{ name: "actions", getActionButtons: () => [action] }] });
 view.setConversation({ id: "chat", messages: [message] });
+await view.whenRendered();
+await renderMarkdown("Text", { message: view.state.messages[0], markdown, highlighter: highlight });
 new Composer({ container: "#input", onSubmit: command => { console.log(command.text); } });`,
 	);
 	const program = ts.createProgram([consumerFile], {
@@ -99,6 +104,8 @@ exclude(
 	/chat-engine|session-manager|components\/composer|plugins\/attachment|core\/providers\/|core\/storage\/|\.css$/,
 	"standalone view",
 );
+const markdown = await bundle('export { renderMarkdown } from "murm-ui/view";');
+exclude(markdown, /components\/|view\/chat-view|core\/|\.css$/, "offscreen Markdown");
 const composer = await bundle('export { Composer } from "murm-ui/composer";');
 exclude(
 	composer,
