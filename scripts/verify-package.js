@@ -43,8 +43,9 @@ import { highlight } from "murm-ui/highlighter";
 const message: Message = { id: "reply", role: "assistant", blocks: [] };
 const markdown: MarkdownOptions = { parse: (text) => text, decorate: (root, context) => { root.querySelector("code")?.setAttribute("data-message", context.message.id); } };
 const action: ActionButtonDef = { id: "copy", title: "Copy", iconHtml: "", onClick: (context: MessageActionContext) => { console.log(context.message); } };
-const view = new ChatView({ container: "#chat", highlighter: highlight, markdown, plugins: [{ name: "actions", getActionButtons: () => [action] }] });
+const view = new ChatView({ container: "#chat", highlighter: highlight, markdown, stallDelay: 2000, plugins: [{ name: "actions", getActionButtons: () => [action] }] });
 view.setConversation({ id: "chat", messages: [message] });
+view.apply({ conversationId: "chat", changes: [{ type: "message.state", messageId: "reply", activity: "Searching…" }] });
 await view.whenRendered();
 await renderMarkdown("Text", { message: view.state.messages[0], markdown, highlighter: highlight });
 new Composer({ container: "#input", onSubmit: command => { console.log(command.text); } });`,

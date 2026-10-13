@@ -104,7 +104,11 @@ view.apply({
 | `block.put` / `block.remove` | Insert, replace or remove a block within a message |
 | `text.append` | Append to an existing text or reasoning block |
 | `tool.update` | Append tool arguments with `argsDelta`, or update its name/status |
-| `message.state` | Set status, error, usage or timestamp; use `status: "complete"` when a response ends |
+| `message.state` | Set status, activity, error, usage or timestamp; use `status: "complete"` when a response ends |
+
+`stallDelay: 2000` in `ChatView` or `ChatUI` shows loading dots after a two-second pause in content updates; new content hides them. Disabled by default. `labels.responding` sets their accessible label.
+
+Send `message.state` with `activity: "Searching…"` to show a status instead of dots. Clear it with `activity: ""`; completion or error status also clears it.
 
 Message IDs are unique within a conversation; block IDs are unique within a message. Updates for another conversation return `false`; invalid batches throw without partially applying changes. Your adapter handles event ordering and reconnects: applying a text delta twice appends it twice.
 

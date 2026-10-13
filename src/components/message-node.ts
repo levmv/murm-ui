@@ -10,6 +10,7 @@ import type {
 import { defaultLabels } from "../labels";
 import { renderMarkdownContent } from "../markdown";
 import { el, syncDOMChildren } from "../utils/dom";
+import type { MessageStall } from "./message-stall";
 
 const MARKDOWN_THROTTLE_MS = 70;
 
@@ -41,6 +42,12 @@ interface ActionState {
 	iconHtml: string;
 }
 
+/** Shared by the mounted chunks of one streaming message. */
+export interface MessageProgress {
+	lastChunk: Message;
+	hasVisibleBlocks: boolean;
+}
+
 export class MessageNode {
 	public readonly el: HTMLElement;
 
@@ -58,6 +65,7 @@ export class MessageNode {
 	private lastCanAct = true;
 	private lastHasActionContent = false;
 	private currentMessage: Message | null = null;
+	private stall?: MessageStall;
 	private isDestroyed = false;
 
 	constructor(
@@ -76,9 +84,16 @@ export class MessageNode {
 		this.el.appendChild(this.blocksContainer);
 	}
 
-	public update(msg: Message, isGenerating: boolean, error: string | null, messages: readonly Message[]) {
+	public update(
+		msg: Message,
+		isGenerating: boolean,
+		messages: readonly Message[],
+		progress?: MessageProgress,
+		stall?: MessageStall,
+	) {
 		if (this.isDestroyed) return;
 		this.currentMessage = msg;
+		this.stall = stall;
 		if (this.lastRole !== msg.role) {
 			this.el.classList.remove(`mur-message-${this.lastRole}`);
 			this.el.classList.add(`mur-message-${msg.role}`);
@@ -96,14 +111,20 @@ export class MessageNode {
 			this.lastIsGenerating = isGenerating;
 		}
 
-		this.renderBlocks(msg, isGenerating, messages);
-		this.renderLoading(msg, isGenerating, error);
+		const hasVisibleBlocks =
+			this.renderBlocks(msg, isGenerating, messages, stall) || progress?.hasVisibleBlocks === true;
+		if (progress) progress.hasVisibleBlocks = hasVisibleBlocks;
+		const showProgress = !progress || progress.lastChunk.blocks === msg.blocks;
+		if (stall && showProgress)
+			stall.render = (stalled) => this.renderLoading(msg, isGenerating, hasVisibleBlocks, stalled);
+		else this.renderLoading(msg, isGenerating && showProgress, hasVisibleBlocks);
 		this.renderActions(msg, isGenerating);
-		this.renderError(error);
+		this.renderError(msg.error ?? null);
 	}
 
 	public destroy() {
 		this.isDestroyed = true;
+		this.stall = undefined;
 		for (const state of this.activeBlocks.values()) {
 			this.destroyBlock(state);
 		}
@@ -125,26 +146,33 @@ export class MessageNode {
 		}
 	}
 
-	private renderLoading(msg: Message, isGenerating: boolean, error: string | null) {
-		const hasVisibleBlocks = this.activeBlocks.size > 0;
-		const isLoading = isGenerating && !error && msg.role === "assistant" && !hasVisibleBlocks;
+	private renderLoading(msg: Message, isGenerating: boolean, hasVisibleBlocks: boolean, stalled = false) {
+		const activity = msg.activity;
+		const isLoading =
+			isGenerating && !msg.error && msg.role === "assistant" && (activity || !hasVisibleBlocks || stalled);
 
 		if (isLoading) {
 			if (!this.loadingEl) {
 				this.loadingEl = el("div", "mur-message-loading", {
-					innerHTML: `<span class="mur-loading-dot"></span><span class="mur-loading-dot"></span><span class="mur-loading-dot"></span>`,
+					innerHTML: `<span class="mur-loading-dot" aria-hidden="true"></span><span class="mur-loading-dot" aria-hidden="true"></span><span class="mur-loading-dot" aria-hidden="true"></span><span class="mur-loading-label"></span>`,
 				});
-				this.el.appendChild(this.loadingEl);
+				this.loadingEl.setAttribute("role", "status");
+				this.blocksContainer.after(this.loadingEl);
 			}
+			this.loadingEl.classList.toggle("mur-loading-activity", Boolean(activity));
+			const label = this.loadingEl.lastElementChild!;
+			const text = activity || (this.config.labels ?? defaultLabels).responding;
+			if (label.textContent !== text) label.textContent = text;
 		} else if (this.loadingEl) {
 			this.loadingEl.remove();
 			this.loadingEl = undefined;
 		}
 	}
 
-	private renderBlocks(msg: Message, isGenerating: boolean, messages: readonly Message[]) {
+	private renderBlocks(msg: Message, isGenerating: boolean, messages: readonly Message[], stall?: MessageStall) {
 		const visibleBlockIds = new Set<string>();
 		let displayIndex = 0;
+		let hasVisibleBlocks = false;
 
 		for (let i = 0; i < msg.blocks.length; i++) {
 			const block = msg.blocks[i];
@@ -180,6 +208,8 @@ export class MessageNode {
 			const handledByPlugin =
 				(definition !== undefined || state.definition !== undefined) &&
 				this.renderWithRenderer(definition, block, state, msg, messages, i, isGeneratingBlock);
+			// Built-in fallbacks expose only their displayed value; plugins use their block data.
+			let progressValue: string | ContentBlock = block.type === "text" ? block.text : block;
 
 			if (!handledByPlugin) {
 				switch (block.type) {
@@ -191,18 +221,27 @@ export class MessageNode {
 						this.renderTextBlock(block.text, state, msg, isGenerating);
 						break;
 					case "file":
-						this.renderFileBlock(block, container);
+						progressValue = this.renderFileBlock(block, container);
 						break;
 					case "tool_call":
-						this.renderToolFallback(block, container);
+						progressValue = this.renderToolFallback(block, container);
 						break;
 					case "custom":
 						if (container.textContent !== block.fallbackText) container.textContent = block.fallbackText;
+						progressValue = block.fallbackText;
 						break;
 				}
 			}
 
 			visibleBlockIds.add(block.id);
+			if (!container.hidden) {
+				hasVisibleBlocks = true;
+				stall?.observe(
+					block.id,
+					progressValue,
+					state.markdown !== undefined && state.markdown.rendered !== state.markdown.revision,
+				);
+			}
 
 			if (this.blocksContainer.children[displayIndex] !== container) {
 				this.blocksContainer.insertBefore(container, this.blocksContainer.children[displayIndex]);
@@ -218,6 +257,7 @@ export class MessageNode {
 				this.activeBlocks.delete(id);
 			}
 		}
+		return hasVisibleBlocks;
 	}
 
 	private renderWithRenderer(
@@ -326,6 +366,7 @@ export class MessageNode {
 			if (markdown.pending === revision) markdown.pending = undefined;
 			if (isCurrent()) {
 				markdown.rendered = revision;
+				this.stall?.rendered(state.container.dataset.blockId!, text);
 				this.resolveMarkdownWait(markdown);
 			}
 		}
@@ -347,6 +388,7 @@ export class MessageNode {
 			}
 			if (img.getAttribute("src") !== block.data) img.src = block.data;
 			if (img.alt !== (block.name ?? "")) img.alt = block.name ?? "";
+			return block;
 		} else {
 			let pill = container.querySelector(".mur-attachment-file-pill");
 			if (!pill) {
@@ -355,15 +397,17 @@ export class MessageNode {
 			}
 			const label = `📄 ${block.name || (this.config.labels ?? defaultLabels).file}`;
 			if (pill.textContent !== label) pill.textContent = label;
+			return label;
 		}
 	}
 
-	private renderToolFallback(block: Extract<ContentBlock, { type: "tool_call" }>, container: HTMLElement): void {
+	private renderToolFallback(block: Extract<ContentBlock, { type: "tool_call" }>, container: HTMLElement): string {
 		const labels = this.config.labels ?? defaultLabels;
 		const text = `🛠 ${labels.toolCall(block.name, labels.toolStatus(block.status))}`;
 		const className = `mur-content-block mur-block-tool mur-tool-${block.status}`;
 		if (container.textContent !== text) container.textContent = text;
 		if (container.className !== className) container.className = className;
+		return text;
 	}
 
 	private renderError(error: string | null) {

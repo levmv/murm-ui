@@ -85,6 +85,8 @@ export interface Message {
 	/** Display state for addressed updates. */
 	status?: "streaming" | "complete" | "error";
 	error?: string;
+	/** Plain-text activity shown while streaming. The application clears it when work changes. */
+	activity?: string;
 }
 
 export interface ChatSessionMeta {
@@ -220,6 +222,7 @@ export type AgentRunCollapse = "full" | "machinery";
 export interface RenderConfig {
 	highlighter?: CodeHighlighter;
 	markdown?: MarkdownOptions;
+	stallDelay?: number;
 	labels?: Readonly<ChatLabels>;
 	plugins: MessagePlugin[];
 	renderers?: BlockRenderer[];

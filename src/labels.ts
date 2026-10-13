@@ -10,6 +10,7 @@ export interface ChatLabels {
 	removeAttachment: (name: string) => string;
 	loadingOlder: string;
 	assistant: string;
+	responding: string;
 	copyMessage: string;
 	copyCode: string;
 	file: string;
@@ -40,6 +41,7 @@ export const defaultLabels: Readonly<ChatLabels> = {
 	removeAttachment: (name) => `Remove ${name}`,
 	loadingOlder: "Loading older messages...",
 	assistant: "AI response",
+	responding: "Preparing response…",
 	copyMessage: "Copy message",
 	copyCode: "Copy code",
 	file: "File",

@@ -93,6 +93,11 @@ export class ConversationModel {
 						invalidation.structural ||= message.error !== change.error;
 						message.error = change.error;
 					}
+					if (change.activity !== undefined) {
+						if (change.activity) message.activity = change.activity;
+						else delete message.activity;
+					}
+					if (change.status !== undefined && change.status !== "streaming") delete message.activity;
 					if (change.usage) message.usage = cloneUsage(change.usage);
 					touch(message, change.updatedAt);
 					invalidation.messageIds.add(message.id);

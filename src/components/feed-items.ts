@@ -220,7 +220,7 @@ function buildMachinerySegments(
 	};
 
 	const append = (kind: "messages" | "work", message: Message, blocks: ContentBlock[]) => {
-		if (blocks.length === 0) return;
+		if (blocks.length === 0 && message.status !== "streaming" && !message.error) return;
 		if (pendingKind !== kind) flush();
 		pendingKind = kind;
 		pendingMessages.push({ ...message, blocks });
@@ -247,10 +247,12 @@ function appendMessageChunks(
 
 	let currentKind: "messages" | "work" | null = null;
 	let currentBlocks: ContentBlock[] = [];
+	let hasChunks = false;
 
 	const flush = () => {
 		if (!currentKind || currentBlocks.length === 0) return;
 		append(currentKind, message, currentBlocks);
+		hasChunks = true;
 		currentKind = null;
 		currentBlocks = [];
 	};
@@ -264,6 +266,8 @@ function appendMessageChunks(
 	}
 
 	flush();
+	// Keep a place for activity/errors before the first content block arrives.
+	if (!hasChunks && (message.status === "streaming" || message.error)) append("messages", message, []);
 }
 
 function blockKind(block: ContentBlock): "messages" | "work" | null {

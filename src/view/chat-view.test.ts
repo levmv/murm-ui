@@ -190,7 +190,7 @@ test("a shared model can outlive its view and switch through snapshots", async (
 
 test("streaming past blocks without a renderer allocates no DOM nodes", async (t) => {
 	const parse = t.mock.method(marked, "parse");
-	const { view, host, flush } = setup(t);
+	const { view, host, flush } = setup(t, { stallDelay: 1000 });
 	view.setConversation({
 		id: "c",
 		messages: [
@@ -225,6 +225,246 @@ test("streaming past blocks without a renderer allocates no DOM nodes", async (t
 	await setImmediate();
 	assert.equal(parse.mock.callCount(), 1);
 	assert.equal(host.querySelector(".mur-block-text")!.textContent?.trim(), "Visible..........");
+});
+
+test("streaming activity replaces accessible dots without changing content or restarting Markdown", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const parse = t.mock.method(marked, "parse");
+	const { view, host, flush } = setup(t, { labels: { responding: "Ответ готовится" } });
+	view.setConversation({ id: "c", messages: [{ id: "a", role: "assistant", status: "streaming", blocks: [] }] });
+	flush();
+	const indicator = host.querySelector<HTMLElement>(".mur-message-loading[role=status]")!;
+	assert.ok(indicator);
+	assert.equal(indicator.textContent, "Ответ готовится");
+	assert.equal(indicator.classList.contains("mur-loading-activity"), false);
+	assert.ok(indicator.querySelector('.mur-loading-dot[aria-hidden="true"]'));
+	view.apply({
+		conversationId: "c",
+		changes: [
+			{ type: "block.put", messageId: "a", block: { id: "text", type: "text", text: "**Answer**" } },
+			{ type: "message.state", messageId: "a", activity: "Reading <img src=x>" },
+		],
+	});
+	await view.whenRendered();
+	const content = host.querySelector("strong")!;
+	assert.equal(content.textContent, "Answer");
+	assert.equal(indicator.classList.contains("mur-loading-activity"), true);
+	assert.equal(indicator.textContent, "Reading <img src=x>");
+	assert.equal(indicator.querySelector("img"), null);
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "message.state", messageId: "a", activity: "Searching", updatedAt: 100 }],
+	});
+	await view.whenRendered();
+	assert.equal(indicator.textContent, "Searching");
+	assert.equal(parse.mock.callCount(), 1);
+	assert.equal(host.querySelector("strong"), content);
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", activity: "" }] });
+	flush();
+	t.mock.timers.tick(60_000);
+	// Clearing activity during streaming must not enable stall detection by default.
+	assert.equal(host.querySelector(".mur-message-loading[role=status]"), null);
+});
+
+test("grouped runs retain empty streaming replies and their errors", (t) => {
+	const { view, host, flush } = setup(t);
+	view.setConversation({
+		id: "c",
+		messages: [
+			{ ...message("u"), role: "user" },
+			{
+				id: "a",
+				role: "assistant",
+				blocks: [
+					{ id: "call", type: "tool_call", toolCallId: "call", name: "search", argsText: "{}", status: "complete" },
+					{ id: "last", type: "text", text: "Last" },
+				],
+			},
+			{ id: "b", role: "assistant", status: "streaming", activity: "Thinking", blocks: [] },
+		],
+	});
+	flush();
+	assert.ok(host.querySelector(".mur-agent-run"));
+	assert.equal(host.querySelectorAll(".mur-message-loading[role=status]").length, 1);
+	assert.equal(host.querySelector(".mur-message-loading[role=status]")?.textContent, "Thinking");
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "message.state", messageId: "b", status: "error", error: "Disconnected" }],
+	});
+	flush();
+	assert.ok(host.querySelector(".mur-agent-run"));
+	assert.equal(host.querySelector(".mur-message-loading[role=status]"), null);
+	assert.match(host.querySelector(".mur-message-error")!.textContent!, /Disconnected/);
+});
+
+test("stall indicators follow visible output, ignore hidden reasoning and metadata, and yield to activity", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const { view, host } = setup(t, { stallDelay: 1000, showReasoning: false, plugins: [ThinkingPlugin()] });
+	const indicator = () => host.querySelector(".mur-message-loading[role=status]");
+	view.setConversation({
+		id: "c",
+		messages: [
+			{
+				...message("a", "First"),
+				status: "streaming",
+				blocks: [
+					{ id: "text", type: "text", text: "First" },
+					{ id: "reason", type: "reasoning", text: "Hidden" },
+				],
+			},
+		],
+	});
+	await view.whenRendered();
+	t.mock.timers.tick(700);
+	assert.equal(indicator(), null);
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "text.append", messageId: "a", blockId: "text", delta: " continues" }],
+	});
+	await view.whenRendered();
+	t.mock.timers.tick(700);
+	assert.equal(indicator(), null);
+	view.apply({
+		conversationId: "c",
+		changes: [
+			{ type: "text.append", messageId: "a", blockId: "reason", delta: " thinking" },
+			{ type: "message.state", messageId: "a", updatedAt: 42, usage: { input: 1, output: 2, total: 3 } },
+		],
+	});
+	await view.whenRendered();
+	t.mock.timers.tick(301);
+	assert.ok(indicator());
+	assert.equal(indicator()!.classList.contains("mur-loading-activity"), false);
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", activity: "Searching" }] });
+	await view.whenRendered();
+	assert.equal(indicator()?.textContent, "Searching");
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", activity: "" }] });
+	await view.whenRendered();
+	assert.ok(indicator(), "clearing activity reveals the existing stalled state");
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "text.append", messageId: "a", blockId: "text", delta: " again" }],
+	});
+	await view.whenRendered();
+	assert.equal(indicator(), null);
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", activity: "Reading" }] });
+	await view.whenRendered();
+	assert.equal(indicator()?.textContent, "Reading", "explicit activity does not wait for a stall");
+});
+
+test("all chunks share a stall deadline and show one indicator after the final chunk", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const { view, host } = setup(t, { stallDelay: 1000 });
+	const indicators = () => host.querySelectorAll(".mur-message-loading[role=status]");
+	view.setConversation({
+		id: "c",
+		messages: [
+			{ ...message("u"), role: "user" },
+			{
+				id: "a",
+				role: "assistant",
+				status: "streaming",
+				blocks: [
+					{ id: "first", type: "text", text: "First" },
+					{ id: "tool", type: "tool_call", toolCallId: "call", name: "search", argsText: "", status: "streaming" },
+					{ id: "last", type: "text", text: "Last" },
+					{ id: "hidden", type: "reasoning", text: "Not rendered without a plugin" },
+				],
+			},
+		],
+	});
+	await view.whenRendered();
+	assert.ok(host.querySelector(".mur-agent-run"));
+	assert.equal(indicators().length, 0, "a trailing hidden chunk does not make the response look empty");
+	t.mock.timers.tick(700);
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "text.append", messageId: "a", blockId: "first", delta: " updated" }],
+	});
+	await view.whenRendered();
+	t.mock.timers.tick(700);
+	assert.equal(indicators().length, 0, "an earlier chunk resets the shared deadline");
+	t.mock.timers.tick(301);
+	assert.equal(indicators().length, 1);
+	assert.ok(
+		host.querySelector('[data-block-id="last"]')!.compareDocumentPosition(indicators()[0]) &
+			Node.DOCUMENT_POSITION_FOLLOWING,
+	);
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "tool.update", messageId: "a", blockId: "tool", argsDelta: "{}" }],
+	});
+	await view.whenRendered();
+	assert.equal(indicators().length, 1, "undisplayed tool arguments do not count as progress");
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "tool.update", messageId: "a", blockId: "tool", status: "running" }],
+	});
+	await view.whenRendered();
+	assert.equal(indicators().length, 0);
+	t.mock.timers.tick(1001);
+	assert.equal(indicators().length, 1);
+	view.apply({ conversationId: "c", changes: [{ type: "block.remove", messageId: "a", blockId: "last" }] });
+	await view.whenRendered();
+	assert.equal(indicators().length, 0);
+	t.mock.timers.tick(1001);
+	assert.equal(indicators().length, 1);
+	assert.ok(indicators()[0].parentElement?.querySelector('[data-block-id="tool"]'));
+});
+
+test("pending Markdown does not count as visible progress; its commit hides the stall indicator", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const parsed = Promise.withResolvers<string>();
+	const { view, host, flush } = setup(t, {
+		stallDelay: 1000,
+		markdown: { parse: (text) => (text === "First" ? text : parsed.promise) },
+	});
+	view.setConversation({ id: "c", messages: [{ ...message("a", "First"), status: "streaming" }] });
+	await view.whenRendered();
+	t.mock.timers.tick(700);
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "text.append", messageId: "a", blockId: "a-text", delta: " pending" }],
+	});
+	flush();
+	t.mock.timers.tick(301);
+	assert.ok(host.querySelector(".mur-message-loading[role=status]"));
+	assert.equal(host.querySelector(".mur-block-text")?.textContent, "First");
+	parsed.resolve("New content");
+	await view.whenRendered();
+	assert.equal(host.querySelector(".mur-message-loading[role=status]"), null);
+	assert.equal(host.querySelector(".mur-block-text")?.textContent, "New content");
+});
+
+test("stall timers are released on completion, errors, removal, conversation switches, loading and destruction", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const scheduled = t.mock.method(globalThis, "setTimeout");
+	const cancelled = t.mock.method(globalThis, "clearTimeout");
+	const { view, host, flush } = setup(t, { stallDelay: 1000 });
+	const stop = [
+		() => view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "complete" }] }),
+		() =>
+			view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", error: "Disconnected" }] }),
+		() => view.apply({ conversationId: "c", changes: [{ type: "message.remove", messageId: "a" }] }),
+		() => view.setConversation({ id: "other", messages: [] }),
+		() => view.setLoading(true),
+		() => view.destroy(),
+	];
+	for (const finish of stop) {
+		view.setLoading(false);
+		view.setConversation({ id: "c", messages: [{ ...message("a"), status: "streaming" }] });
+		await view.whenRendered();
+		const timer = scheduled.mock.calls.filter((call) => call.arguments[1] === 1000).at(-1)!.result;
+		assert.ok(timer);
+		finish();
+		flush();
+		assert.ok(
+			cancelled.mock.calls.some((call) => call.arguments[0] === timer),
+			"pending stall timeout was cancelled",
+		);
+		t.mock.timers.tick(2000);
+		assert.equal(host.querySelector(".mur-message-loading[role=status]"), null);
+	}
 });
 
 test("deltas coalesce into one update of the affected message, retaining other DOM", (t) => {

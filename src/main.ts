@@ -43,6 +43,8 @@ export interface ChatUIConfig {
 
 	highlighter?: CodeHighlighter;
 	markdown?: MarkdownOptions;
+	/** Milliseconds without displayed block changes before showing progress. Disabled when omitted. */
+	stallDelay?: number;
 	plugins?: (chatApi: ChatEngine) => ChatPlugin[];
 	agentRunCollapse?: AgentRunCollapse;
 	minAgentRunSteps?: number;
@@ -186,6 +188,7 @@ export class ChatUI {
 			labels: this.config.labels,
 			highlighter: this.config.highlighter,
 			markdown: this.config.markdown,
+			stallDelay: this.config.stallDelay,
 			plugins: this.plugins.map(({ name, renderers, getActionButtons }) => ({ name, renderers, getActionButtons })),
 			agentRunCollapse: this.config.agentRunCollapse,
 			minAgentRunSteps: this.config.minAgentRunSteps,

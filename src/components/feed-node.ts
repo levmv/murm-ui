@@ -2,7 +2,8 @@ import type { Message, RenderConfig } from "../core/types";
 import { defaultLabels } from "../labels";
 import { ICON_CHEVRON } from "../utils/icons";
 import { type FeedItem, isAgentRunItem, type RunItem, type RunSegment, type WorkSegment } from "./feed-items";
-import { MessageNode } from "./message-node";
+import { MessageNode, type MessageProgress } from "./message-node";
+import type { MessageStall } from "./message-stall";
 
 export interface FeedContext {
 	messages: readonly Message[];
@@ -10,6 +11,9 @@ export interface FeedContext {
 	streamingMessageIds?: ReadonlySet<string>;
 	/** Present only when grouping and node structure are unchanged. */
 	dirtyMessageIds?: ReadonlySet<string>;
+	/** Earlier chunks report content; the final chunk displays progress. */
+	progress?: ReadonlyMap<string, MessageProgress>;
+	getStall?: (message: Message) => MessageStall | undefined;
 	onToggleWorkSegment: (segmentId: string) => void;
 }
 
@@ -54,6 +58,7 @@ class RunNode implements FeedNode {
 	public readonly el = document.createElement("div");
 
 	private readonly segmentNodes = new Map<string, SegmentNode>();
+	private progress?: Map<string, MessageProgress>;
 
 	private userNode?: MessageNode;
 	private userMessageId?: string;
@@ -68,6 +73,19 @@ class RunNode implements FeedNode {
 
 	public update(item: FeedItem, ctx: FeedContext): void {
 		if (!isAgentRunItem(item)) return;
+		if (!ctx.dirtyMessageIds) {
+			this.progress = undefined;
+			if (ctx.streamingMessageIds?.size)
+				for (const segment of item.segments)
+					for (const message of segment.messages)
+						if (ctx.streamingMessageIds.has(message.id)) {
+							this.progress ??= new Map();
+							this.progress.set(message.id, { lastChunk: message, hasVisibleBlocks: false });
+						}
+		} else if (this.progress) {
+			for (const [id, progress] of this.progress) if (ctx.dirtyMessageIds.has(id)) progress.hasVisibleBlocks = false;
+		}
+		if (this.progress) ctx = { ...ctx, progress: this.progress };
 		if (ctx.dirtyMessageIds) {
 			if (this.userNode) updateMessageNode(this.userNode, item.userMessage, ctx);
 			for (const segment of item.segments) this.segmentNodes.get(segment.id)?.update(segment, ctx);
@@ -84,6 +102,7 @@ class RunNode implements FeedNode {
 			node.destroy();
 		}
 		this.segmentNodes.clear();
+		this.progress = undefined;
 		this.el.remove();
 	}
 
@@ -306,7 +325,13 @@ function updateMessageNode(node: MessageNode, message: Message, ctx: FeedContext
 	// canonical message in O(1), retaining only the projection's selected blocks.
 	const source = ctx.messagesById.get(message.id)!;
 	const current = source === message ? message : { ...source, blocks: message.blocks };
-	node.update(current, ctx.streamingMessageIds?.has(message.id) === true, current.error ?? null, ctx.messages);
+	node.update(
+		current,
+		ctx.streamingMessageIds?.has(message.id) === true,
+		ctx.messages,
+		ctx.progress?.get(message.id),
+		ctx.getStall?.(current),
+	);
 }
 
 function messageNodeKey(message: Message): string {

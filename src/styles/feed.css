@@ -207,12 +207,12 @@
 }
 
 .mur-message-loading {
-	order: 0;
+	order: 10;
 	display: flex;
 	align-items: center;
 	gap: 4px;
 	padding: 0.5rem 0;
-	height: 1.5rem;
+	min-height: 1.5rem;
 	color: var(--mur-text-muted);
 }
 
@@ -230,6 +230,36 @@
 
 .mur-message-loading .mur-loading-dot:nth-child(3) {
 	animation-delay: 400ms;
+}
+
+.mur-message-loading:where(:not(.mur-loading-activity)) .mur-loading-label {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+.mur-loading-activity .mur-loading-dot {
+	display: none;
+}
+
+.mur-loading-activity .mur-loading-label {
+	animation: mur-activity-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes mur-activity-pulse {
+	50% {
+		opacity: 0.5;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.mur-message-loading .mur-loading-dot,
+	.mur-loading-activity .mur-loading-label {
+		animation: none;
+	}
 }
 
 @keyframes mur-pulse {
@@ -342,7 +372,7 @@
 
 .mur-feed-older-status .mur-message-loading {
 	padding: 0;
-	height: auto;
+	min-height: 0;
 }
 
 .mur-agent-run {

@@ -15,6 +15,8 @@ export type ConversationChange =
 			messageId: string;
 			status?: NonNullable<Message["status"]>;
 			error?: string;
+			/** Empty string clears the activity; completion and error status clear it automatically. */
+			activity?: string;
 			usage?: TokenUsage;
 			updatedAt?: number;
 	  }

@@ -4,6 +4,7 @@ import { el, queryOrThrow } from "../utils/dom";
 import { ICON_CHECK, ICON_COPY } from "../utils/icons";
 import { buildFeedItems, type FeedItem, feedItemType, isAgentRunItem } from "./feed-items";
 import { createFeedNode, type FeedNode } from "./feed-node";
+import { MessageStall } from "./message-stall";
 
 const STICKY_THRESHOLD = 50;
 // Distance from the top (px) at which scrolling up triggers an older-messages load.
@@ -29,6 +30,7 @@ export class Feed {
 	private firstMessageId: string | null = null;
 
 	private nodes = new Map<string, FeedNode>();
+	private stalls?: Map<string, MessageStall>;
 	private itemsByMessageId = new Map<string, FeedItem>();
 	private messagesById = new Map<string, Message>();
 	private expandedSegments = new Set<string>();
@@ -50,6 +52,7 @@ export class Feed {
 	private config: RenderConfig;
 
 	constructor(container: HTMLElement, config: Omit<RenderConfig, "renderers">) {
+		if (config.stallDelay !== undefined) this.stalls = new Map();
 		// Resolve display extensions once, outside message and streaming updates.
 		this.config = {
 			...config,
@@ -118,22 +121,32 @@ export class Feed {
 			return;
 		}
 
+		const dirtyMessageIds = this.lastMessages === messages ? changes.dirtyMessageIds : undefined;
+		if (this.stalls)
+			for (const [id, stall] of this.stalls) {
+				if (!changes.streamingMessageIds?.has(id)) {
+					stall.destroy();
+					this.stalls.delete(id);
+				} else if (!dirtyMessageIds || dirtyMessageIds.has(id)) stall.begin();
+			}
 		const context = {
 			messages,
 			messagesById: this.messagesById,
 			streamingMessageIds: changes.streamingMessageIds,
+			getStall: this.stalls ? this.getStall : undefined,
 			onToggleWorkSegment: this.onToggleWorkSegment,
 		};
 		// Addressed updates visit only affected items; structural updates regroup.
-		if (changes.dirtyMessageIds && this.lastMessages === messages) {
+		if (dirtyMessageIds) {
 			const updated = new Set<string>();
-			const dirtyContext = { ...context, dirtyMessageIds: changes.dirtyMessageIds };
-			for (const id of changes.dirtyMessageIds) {
+			const dirtyContext = { ...context, dirtyMessageIds };
+			for (const id of dirtyMessageIds) {
 				const item = this.itemsByMessageId.get(id);
 				if (!item || updated.has(item.id)) continue;
 				updated.add(item.id);
 				this.nodes.get(item.id)?.update(item, dirtyContext);
 			}
+			this.finishStalls(dirtyMessageIds);
 			this.requestBottomScroll("auto");
 			return;
 		}
@@ -207,7 +220,36 @@ export class Feed {
 		}
 		this.firstMessageId = nextFirstMessageId;
 
+		this.finishStalls();
 		this.requestBottomScroll(changes.streamingMessageIds?.size ? "auto" : "smooth");
+	}
+
+	private readonly getStall = (message: Message): MessageStall | undefined => {
+		let stall = this.stalls!.get(message.id);
+		if (
+			message.role !== "assistant" ||
+			message.error ||
+			!this.lastUpdate?.changes.streamingMessageIds?.has(message.id)
+		) {
+			stall?.destroy();
+			this.stalls!.delete(message.id);
+			return undefined;
+		}
+		if (!stall) {
+			stall = new MessageStall(this.config.stallDelay!);
+			this.stalls!.set(message.id, stall);
+		}
+		return stall;
+	};
+
+	private finishStalls(dirtyMessageIds?: ReadonlySet<string>): void {
+		if (!this.stalls) return;
+		for (const [id, stall] of this.stalls) {
+			if (dirtyMessageIds && !dirtyMessageIds.has(id)) continue;
+			if (stall.finish()) continue;
+			stall.destroy();
+			this.stalls.delete(id);
+		}
 	}
 
 	private toggleWorkSegment(segmentId: string): void {
@@ -267,6 +309,10 @@ export class Feed {
 	}
 
 	private clearAllNodes(): void {
+		if (this.stalls) {
+			for (const stall of this.stalls.values()) stall.destroy();
+			this.stalls.clear();
+		}
 		for (const node of this.nodes.values()) {
 			node.destroy();
 		}

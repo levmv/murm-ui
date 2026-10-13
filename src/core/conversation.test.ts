@@ -254,6 +254,37 @@ test("card/tool replacements update locally and do not scan other messages or cl
 	assert.equal(metadataReads, 0);
 });
 
+test("activity updates stay local, survive metadata and text changes, and clear explicitly or on completion", () => {
+	const model = new ConversationModel();
+	model.setConversation({ id: "c", messages: [{ ...message("a", "Answer"), activity: "Searching" }] });
+	const messages = model.state.messages;
+	const block = messages[0].blocks[0];
+	const changes: ConversationInvalidation[] = [];
+	model.subscribe((change) => changes.push(change));
+	model.apply({
+		conversationId: "c",
+		changes: [
+			{ type: "message.state", messageId: "a", activity: "Reading" },
+			{ type: "text.append", messageId: "a", blockId: "text", delta: " continues" },
+			{ type: "message.state", messageId: "a", usage: { input: 1, output: 2, total: 3 }, updatedAt: 100 },
+		],
+	});
+	assert.equal(model.state.messages, messages);
+	assert.equal(messages[0].blocks[0], block);
+	assert.equal(messages[0].activity, "Reading");
+	assert.equal(changes[0].structural, false);
+	assert.deepEqual([...changes[0].messageIds], ["a"]);
+	model.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", activity: "" }] });
+	assert.equal(messages[0].activity, undefined);
+	for (const status of ["complete", "error"] as const) {
+		model.apply({
+			conversationId: "c",
+			changes: [{ type: "message.state", messageId: "a", status, activity: "Stale" }],
+		});
+		assert.equal(messages[0].activity, undefined);
+	}
+});
+
 test("overlapping older pages retain transcript identity; no-op updates do not notify", () => {
 	const model = new ConversationModel();
 	model.setConversation({ id: "c", messages: [message("a", "fresh")] });
