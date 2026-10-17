@@ -24,6 +24,8 @@ export interface SidebarLink {
 	/** Trusted SVG/HTML supplied by the application. */
 	iconHtml?: string;
 	onClick?: () => void | Promise<void>;
+	/** `"header"` shows an icon button in the expanded header; the desktop rail keeps the link in the actions column. */
+	placement?: "nav" | "header";
 }
 
 export interface SidebarLabels {
@@ -145,48 +147,62 @@ export class Sidebar<T extends SidebarSession = SidebarSession> {
 				innerHTML: ICON_SIDEBAR,
 			});
 			close.setAttribute("aria-label", this.labels.close);
+			const createLink = (item: SidebarLink, className: string, label = true) => {
+				const link: HTMLElement = el(
+					item.href ? "a" : "button",
+					className,
+					{
+						title: item.label,
+						innerHTML: item.iconHtml ?? ICON_LINK,
+					},
+					label ? [el("span", "", { textContent: item.label })] : undefined,
+				);
+				if (item.href) link.setAttribute("href", item.href);
+				else link.setAttribute("type", "button");
+				if (!label) link.setAttribute("aria-label", item.label);
+				return link;
+			};
+			const bindLink = (link: HTMLElement, item: SidebarLink) => {
+				const click = (event: MouseEvent) => {
+					if (item.href && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0))
+						return;
+					if (item.onClick) {
+						event.preventDefault();
+						this.invoke(item.onClick);
+					}
+					this.closeMobile();
+				};
+				link.addEventListener("click", click);
+				this.cleanup.push(() => link.removeEventListener("click", click));
+				return link;
+			};
 			const header = el("div", "mur-sidebar-header");
 			if (config.header !== undefined) {
 				const title = el("div", "mur-sidebar-logo");
-				if (typeof config.header === "string") title.textContent = config.header;
+				if (typeof config.header === "string")
+					title.appendChild(el("span", "mur-sidebar-logo-text", { textContent: config.header }));
 				else title.appendChild(config.header);
 				header.appendChild(title);
 			}
-			header.appendChild(close);
+			const headerLinks = (config.links ?? []).filter((item) => item.placement === "header");
+			if (headerLinks.length) {
+				const buttons = headerLinks.map((item) => bindLink(createLink(item, "mur-sidebar-header-btn", false), item));
+				header.style.setProperty("--mur-sidebar-header-buttons", String(buttons.length + 1));
+				header.appendChild(el("div", "mur-sidebar-header-actions", null, [...buttons, close]));
+			} else header.appendChild(close);
 			this.content = el("div", "mur-sidebar-content");
 			this.element = el("aside", "mur-sidebar", null, [header]);
 			if (config.onNew || config.links?.length) {
 				const nav = el("nav", "mur-sidebar-actions");
-				const addLink = (item: SidebarLink, newChat = false) => {
-					const link: HTMLElement = el(
-						item.href ? "a" : "button",
-						"mur-sidebar-nav-btn",
-						{
-							title: item.label,
-							innerHTML: item.iconHtml ?? ICON_LINK,
-						},
-						[el("span", "", { textContent: item.label })],
+				if (config.onNew)
+					nav.appendChild(
+						createLink({ label: this.labels.newChat, iconHtml: ICON_EDIT }, "mur-sidebar-nav-btn mur-new-chat-btn"),
 					);
-					if (item.href) link.setAttribute("href", item.href);
-					else link.setAttribute("type", "button");
-					if (newChat) link.classList.add("mur-new-chat-btn");
-					else {
-						const click = (event: MouseEvent) => {
-							if (item.href && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0))
-								return;
-							if (item.onClick) {
-								event.preventDefault();
-								this.invoke(item.onClick);
-							}
-							this.closeMobile();
-						};
-						link.addEventListener("click", click);
-						this.cleanup.push(() => link.removeEventListener("click", click));
-					}
-					nav.appendChild(link);
-				};
-				if (config.onNew) addLink({ label: this.labels.newChat, iconHtml: ICON_EDIT }, true);
-				for (const link of config.links ?? []) addLink(link);
+				for (const item of config.links ?? []) {
+					// Header links stay in the column for the desktop rail.
+					const rail = item.placement === "header" ? " mur-sidebar-rail-btn" : "";
+					nav.appendChild(bindLink(createLink(item, `mur-sidebar-nav-btn${rail}`), item));
+				}
 				this.element.appendChild(nav);
 			}
 			this.element.appendChild(this.content);

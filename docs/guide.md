@@ -153,6 +153,10 @@ Actions appear when their callbacks are supplied. `onPin` enables pinning; suppl
 
 Use `header`, `footer` and `links` for additional panel content. `open()`, `close()` and `setActive(id)` control the panel; `destroy()` removes it. `reuseMarkup: true` adopts an existing sidebar from the [HTML shell](chat-shell.html).
 
+A link with `placement: "header"` is shown as an icon in the header; the collapsed rail keeps it among the actions.
+
+Rail icons are centered within `--mur-sidebar-rail-width`. `.mur-sidebar-nav-btn` buttons in `footer` align with them; a header logo mark aligns when it is 2rem narrower than the rail (24px by default).
+
 ## Plugins
 
 Pass an array to `ChatView.plugins` or `Composer.plugins`, or an `(engine) => plugins` factory to `ChatUI.plugins`. Each plugin is imported from `murm-ui/plugins/<name>` and includes its own CSS.

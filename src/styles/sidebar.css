@@ -1,6 +1,7 @@
 .mur-sidebar {
-	--mur-sidebar-rail-gutter: 0.5rem;
 	--mur-sidebar-control-size: 2.5rem;
+	/* Centers the actions column and footer on the rail axis. */
+	--mur-sidebar-rail-gutter: calc((var(--mur-sidebar-rail-width) - var(--mur-sidebar-control-size)) / 2);
 
 	width: var(--mur-sidebar-width);
 	min-width: 0;
@@ -29,7 +30,8 @@
 	flex-shrink: 0;
 }
 
-.mur-close-sidebar-btn {
+.mur-close-sidebar-btn,
+.mur-sidebar-header-btn {
 	background: none;
 	border: none;
 	cursor: pointer;
@@ -37,30 +39,63 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	position: absolute;
-	top: 50%;
-	right: 1rem;
 	border-radius: 0.25rem;
 	padding: 0.25rem;
 	opacity: 1;
-	transform: translateY(-50%);
-	visibility: visible;
 	transition: background-color 0.2s;
 }
 
-.mur-close-sidebar-btn:hover {
+.mur-close-sidebar-btn,
+.mur-sidebar-header-actions {
+	position: absolute;
+	top: 50%;
+	right: 1rem;
+	transform: translateY(-50%);
+}
+
+.mur-sidebar-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+}
+
+.mur-sidebar-header-actions > .mur-close-sidebar-btn {
+	position: static;
+	transform: none;
+}
+
+.mur-close-sidebar-btn:hover,
+.mur-sidebar-header-btn:hover {
 	background-color: var(--mur-hover-bg);
 }
 
+.mur-sidebar-header-btn > svg {
+	width: 20px;
+	height: 20px;
+}
+
+/* Sized from the full sidebar width so the header does not reflow while the rail animates. */
 .mur-sidebar-logo {
+	--mur-sidebar-header-reserve: calc(var(--mur-sidebar-header-buttons, 1) * 2rem);
+
 	display: flex;
+	flex-shrink: 0;
 	align-items: center;
 	gap: 0.5rem;
 	font-weight: 600;
 	font-size: 1.1rem;
 	color: var(--mur-text);
 	min-width: 0;
-	padding-right: 2rem;
+	max-width: calc(var(--mur-sidebar-width) - 2rem - var(--mur-sidebar-header-reserve));
+	margin-right: var(--mur-sidebar-header-reserve);
+	overflow: hidden;
+}
+
+.mur-sidebar-logo-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .mur-sidebar-actions {
@@ -81,7 +116,7 @@
 	align-items: center;
 	justify-content: flex-start;
 	gap: 0.5rem;
-	padding: 0 10px;
+	padding: 0 calc((var(--mur-sidebar-control-size) - 20px) / 2);
 	background: transparent;
 	border: none;
 	border-radius: 0.5rem;
@@ -118,8 +153,14 @@
 }
 
 .mur-new-chat-btn.mur-sidebar-nav-btn {
-	padding: 0 11px;
 	color: var(--mur-text);
+}
+
+/* Header links take this place in the desktop rail. */
+.mur-sidebar-rail-btn.mur-sidebar-nav-btn {
+	height: 0;
+	opacity: 0;
+	visibility: hidden;
 }
 
 .mur-sidebar-animated .mur-sidebar-nav-btn > span {
@@ -326,28 +367,58 @@
 	}
 
 	.mur-sidebar-closed .mur-sidebar-logo {
-		max-width: var(--mur-sidebar-control-size);
-		padding-right: 0;
-		overflow: hidden;
+		max-width: calc(var(--mur-sidebar-rail-width) - 2rem);
+		margin-right: 0;
 		white-space: nowrap;
 	}
 
-	.mur-sidebar-closed .mur-close-sidebar-btn {
+	.mur-sidebar-closed .mur-sidebar-logo-text {
+		text-overflow: clip;
+	}
+
+	.mur-sidebar-closed .mur-close-sidebar-btn,
+	.mur-sidebar-closed .mur-sidebar-header-btn {
 		opacity: 0;
 		pointer-events: none;
 		visibility: hidden;
 	}
 
-	.mur-sidebar-animated:not(.mur-sidebar-closed) .mur-close-sidebar-btn {
+	.mur-sidebar-animated:not(.mur-sidebar-closed) .mur-close-sidebar-btn,
+	.mur-sidebar-animated:not(.mur-sidebar-closed) .mur-sidebar-header-btn {
 		transition:
 			background-color 0.2s,
 			opacity 0.12s ease 0.16s;
 	}
 
-	.mur-sidebar-animated.mur-sidebar-closed .mur-close-sidebar-btn {
+	.mur-sidebar-animated.mur-sidebar-closed .mur-close-sidebar-btn,
+	.mur-sidebar-animated.mur-sidebar-closed .mur-sidebar-header-btn {
 		transition:
 			background-color 0.2s,
 			opacity 0s linear,
+			visibility 0s linear;
+	}
+
+	.mur-sidebar-closed .mur-sidebar-rail-btn.mur-sidebar-nav-btn {
+		height: var(--mur-sidebar-control-size);
+		opacity: 1;
+		visibility: visible;
+	}
+
+	.mur-sidebar-animated .mur-sidebar-rail-btn.mur-sidebar-nav-btn {
+		transition:
+			background-color 0.2s,
+			color 0.2s,
+			height 0.3s ease,
+			opacity 0.08s ease,
+			visibility 0s linear 0.3s;
+	}
+
+	.mur-sidebar-animated.mur-sidebar-closed .mur-sidebar-rail-btn.mur-sidebar-nav-btn {
+		transition:
+			background-color 0.2s,
+			color 0.2s,
+			height 0.3s ease,
+			opacity 0.12s ease 0.16s,
 			visibility 0s linear;
 	}
 
@@ -390,6 +461,11 @@
 			transform 0.3s ease,
 			visibility 0.3s;
 		box-shadow: none;
+	}
+
+	/* The drawer can be narrower than --mur-sidebar-width and does not animate its width. */
+	.mur-sidebar-logo {
+		flex-shrink: 1;
 	}
 
 	.mur-sidebar.mur-mobile-open {

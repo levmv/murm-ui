@@ -76,6 +76,7 @@ test("creates a complete panel with app content, links and responsive controls",
 	footer.textContent = "Account";
 	let created = 0;
 	let settings = 0;
+	let searches = 0;
 	const collapsed: boolean[] = [];
 	const sidebar = mount({
 		container,
@@ -87,6 +88,13 @@ test("creates a complete panel with app content, links and responsive controls",
 				label: "Settings",
 				onClick: () => {
 					settings++;
+				},
+			},
+			{
+				label: "Search",
+				placement: "header",
+				onClick: () => {
+					searches++;
 				},
 			},
 		],
@@ -101,13 +109,21 @@ test("creates a complete panel with app content, links and responsive controls",
 	assert.equal(container.querySelector(".mur-sidebar-logo")?.firstChild, logo);
 	assert.equal(container.querySelector(".mur-sidebar-footer")?.firstChild, footer);
 	const links = container.querySelectorAll<HTMLElement>(".mur-sidebar-nav-btn");
-	assert.equal(links.length, 3);
+	assert.equal(links.length, 4);
 	assert.ok(links[0].querySelector("svg"));
 	assert.equal(links[1].getAttribute("href"), "/files");
 	links[0].click();
 	links[2].click();
 	assert.equal(created, 1);
 	assert.equal(settings, 1);
+	const search = container.querySelector<HTMLButtonElement>(".mur-sidebar-header-actions > .mur-sidebar-header-btn")!;
+	assert.equal(search.nextElementSibling, container.querySelector(".mur-close-sidebar-btn"));
+	assert.equal(search.getAttribute("aria-label"), "Search");
+	assert.equal(search.textContent, "");
+	assert.equal(links[3].classList.contains("mur-sidebar-rail-btn"), true);
+	search.click();
+	links[3].click();
+	assert.equal(searches, 2);
 	container.querySelector<HTMLButtonElement>(".mur-close-sidebar-btn")!.click();
 	assert.equal(container.classList.contains("mur-sidebar-closed"), true);
 	sidebar.element.click();
@@ -121,6 +137,9 @@ test("creates a complete panel with app content, links and responsive controls",
 	links[2].click();
 	assert.equal(sidebar.element.classList.contains("mur-mobile-open"), false);
 	sidebar.open();
+	search.click();
+	assert.equal(sidebar.element.classList.contains("mur-mobile-open"), false);
+	sidebar.open();
 	container.querySelector("main")!.click();
 	assert.equal(sidebar.element.classList.contains("mur-mobile-open"), false);
 	assert.deepEqual(collapsed, [true, false]);
@@ -128,8 +147,10 @@ test("creates a complete panel with app content, links and responsive controls",
 	assert.equal(container.querySelector(".mur-sidebar"), null);
 	links[0].click();
 	links[2].click();
+	search.click();
 	assert.equal(created, 1);
 	assert.equal(settings, 2);
+	assert.equal(searches, 3);
 });
 
 test("keeps row and open menu identity on polling, with no DOM writes for unchanged data", () => {
