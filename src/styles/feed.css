@@ -166,6 +166,12 @@
 	padding: 0;
 }
 
+/* A streaming link before its URL arrives. */
+.mur-message a[data-incomplete] {
+	color: LinkText;
+	text-decoration: underline;
+}
+
 .mur-message blockquote {
 	border-left: 4px solid var(--mur-border);
 	padding-left: 1rem;

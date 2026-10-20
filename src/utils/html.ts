@@ -1,5 +1,6 @@
 import type { CodeHighlighter } from "../core/types";
 import { type ChatLabels, defaultLabels } from "../labels";
+import { INCOMPLETE_LINK_HREF } from "../markdown-tail";
 import { ICON_COPY } from "./icons";
 
 export type Highlighter = CodeHighlighter;
@@ -68,6 +69,8 @@ export function renderSafeHTML(
 					const href = node.getAttribute(attr) || "";
 					if (!isSafeUrl(href, URL_PREFIXES)) {
 						node.removeAttribute(attr);
+						// A streaming link keeps its look until the URL arrives.
+						if (href === INCOMPLETE_LINK_HREF) node.setAttribute("data-incomplete", "");
 					}
 					continue;
 				}
@@ -130,6 +133,53 @@ export function renderSafeHTML(
 	}
 
 	commit();
+}
+
+/**
+ * Reuses highlighting of unchanged code between renders of one growing text. Results stay only
+ * while renders use them; a failed highlight is retried by the next render.
+ */
+export class HighlightCache {
+	private readonly entries = new Map<string, string | Promise<string>>();
+
+	constructor(private readonly highlighter: Highlighter) {}
+
+	/**
+	 * A highlighter for one render. Once the render is shown, `dropUnused()` removes entries it
+	 * did not use. `reused` tells whether the render received an earlier result.
+	 */
+	forRender(): { highlight: Highlighter; dropUnused: () => void; reused: boolean } {
+		const used = new Set<string>();
+		const highlight: Highlighter = (code, lang) => {
+			const key = `${lang}\n${code}`;
+			used.add(key);
+			let result = this.entries.get(key);
+			if (result !== undefined) {
+				run.reused = true;
+			} else {
+				const created = this.highlighter(code, lang);
+				this.entries.set(key, created);
+				if (isPromiseLike(created)) {
+					// Settled results keep later renders synchronous.
+					created.then(
+						(html) => {
+							if (this.entries.get(key) === created) this.entries.set(key, html);
+						},
+						() => {
+							if (this.entries.get(key) === created) this.entries.delete(key);
+						},
+					);
+				}
+				result = created;
+			}
+			return result;
+		};
+		const dropUnused = () => {
+			for (const key of this.entries.keys()) if (!used.has(key)) this.entries.delete(key);
+		};
+		const run = { highlight, dropUnused, reused: false };
+		return run;
+	}
 }
 
 function applyHighlightedHTML(el: Element, highlightedHTML: string): void {

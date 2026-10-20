@@ -71,3 +71,10 @@ test("failed parsing or partial decoration falls back to readable text without e
 	}
 	assert.equal(errors.mock.callCount(), 2);
 });
+
+test("offscreen streaming text adjusts its unfinished end unless disabled", async () => {
+	const streamed = await renderMarkdown("Answer: **bo", { message, streaming: true });
+	assert.equal(streamed.querySelector("strong")?.textContent, "bo");
+	const raw = await renderMarkdown("Answer: **bo", { message, streaming: true, markdown: { smoothStreaming: false } });
+	assert.equal(raw.querySelector("strong"), null);
+});

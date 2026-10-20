@@ -964,6 +964,104 @@ test("Markdown decoration follows whole-message streaming and waits for the fina
 	assert.equal(host.querySelector('[data-block-id="a-text"] p')?.getAttribute("data-phase"), "complete");
 });
 
+test("growing text hides its unfinished tail and renders unchanged once it stops", async (t) => {
+	const { view, host, flush } = setup(t);
+	const text = "See **the [docs](https://exa";
+	view.setConversation({ id: "c", messages: [{ ...message("a", text), status: "streaming" }] });
+	flush();
+	await view.whenRendered();
+	const block = host.querySelector('[data-block-id="a-text"]')!;
+	const link = block.querySelector("strong > a")!;
+	assert.equal(link.textContent, "docs");
+	assert.equal(link.hasAttribute("href"), false);
+	assert.equal(link.hasAttribute("data-incomplete"), true);
+	// Completion changes no text, yet the tail must render as received.
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "complete" }] });
+	flush();
+	await view.whenRendered();
+	assert.equal(block.querySelector("p")?.textContent, text);
+	assert.equal(block.querySelector("strong, [data-incomplete]"), null);
+});
+
+test("hidden syntax arriving in growing text does not rerun Markdown hooks", async (t) => {
+	const parsed: string[] = [];
+	const { view, flush } = setup(t, {
+		markdown: {
+			parse(text) {
+				parsed.push(text);
+				return `<p>${text}</p>`;
+			},
+		},
+	});
+	view.setConversation({ id: "c", messages: [{ ...message("a", "See ![chart](https://ex"), status: "streaming" }] });
+	flush();
+	await view.whenRendered();
+	for (const delta of ["ample.com/", "chart.png"]) {
+		view.apply({ conversationId: "c", changes: [{ type: "text.append", messageId: "a", blockId: "a-text", delta }] });
+		flush();
+		await view.whenRendered();
+	}
+	assert.deepEqual(parsed, ["See "]);
+});
+
+test("a failed render is retried even when the adjusted text is unchanged", async (t) => {
+	t.mock.method(console, "error", () => {});
+	let failures = 1;
+	const { view, host, flush } = setup(t, {
+		markdown: {
+			parse(text) {
+				if (failures-- > 0) throw new Error("parse failed");
+				return marked.parse(text);
+			},
+		},
+	});
+	view.setConversation({ id: "c", messages: [{ ...message("a", "Answer: **bold"), status: "streaming" }] });
+	flush();
+	await view.whenRendered();
+	assert.equal(host.querySelector('[data-block-id="a-text"]')?.textContent, "Answer: **bold");
+	// The closing marker leaves the adjusted text as it was.
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "text.append", messageId: "a", blockId: "a-text", delta: "**" }],
+	});
+	flush();
+	await view.whenRendered();
+	assert.equal(host.querySelector('[data-block-id="a-text"] strong')?.textContent, "bold");
+});
+
+test("growing text highlights unchanged code once and everything again once it stops", async (t) => {
+	for (const smoothStreaming of [true, false]) {
+		await t.test(`smoothStreaming: ${smoothStreaming}`, async (t) => {
+			const highlighted: string[] = [];
+			const { view, host, flush } = setup(t, {
+				highlighter: async (code, lang) => {
+					highlighted.push(`${lang}:${code.trim()}`);
+					return `<span class="hl">${code}</span>`;
+				},
+				markdown: { smoothStreaming },
+			});
+			view.setConversation({ id: "c", messages: [{ ...message("a", "```js\na\n```\n\nNext"), status: "streaming" }] });
+			flush();
+			await view.whenRendered();
+			for (const delta of [" step", "\n\n```py\nb", "c"]) {
+				view.apply({
+					conversationId: "c",
+					changes: [{ type: "text.append", messageId: "a", blockId: "a-text", delta }],
+				});
+				flush();
+				await view.whenRendered();
+			}
+			assert.deepEqual(highlighted, ["js:a", "py:b", "py:bc"]);
+			assert.equal(host.querySelectorAll("code .hl").length, 2);
+			view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "complete" }] });
+			flush();
+			await view.whenRendered();
+			assert.deepEqual(highlighted.slice(3), ["js:a", "py:bc"]);
+			assert.equal(host.querySelectorAll("code .hl").length, 2);
+		});
+	}
+});
+
 test("late Markdown hooks cannot revive replaced or removed content, or hold rendering waits", async (t) => {
 	for (const stage of ["parse", "decorate"] as const) {
 		await t.test(stage, async (t) => {

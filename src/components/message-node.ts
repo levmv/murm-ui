@@ -9,7 +9,9 @@ import type {
 } from "../core/types";
 import { defaultLabels } from "../labels";
 import { renderMarkdownContent } from "../markdown";
+import { stabilizeMarkdownTail } from "../markdown-tail";
 import { el, syncDOMChildren } from "../utils/dom";
+import { HighlightCache } from "../utils/html";
 import type { MessageStall } from "./message-stall";
 
 const MARKDOWN_THROTTLE_MS = 70;
@@ -18,9 +20,15 @@ interface MarkdownState {
 	latest: string;
 	role: Message["role"];
 	streaming: boolean;
+	/** The text still grows: unchanged code reuses highlighting, and the unfinished end may be adjusted. */
+	growing: boolean;
 	revision: number;
 	rendered?: number;
 	pending?: number;
+	/** Parsed input of the displayed content; hidden syntax can arrive without changing it. */
+	shown?: { source: string; role: Message["role"]; streaming: boolean; reusedHighlights: boolean };
+	/** Highlighting of finished code blocks, reused while the text grows. */
+	highlights?: HighlightCache;
 	timer?: ReturnType<typeof setTimeout>;
 	/** Allocated only by an explicit whenRendered request. */
 	waiting?: Promise<void>;
@@ -218,7 +226,7 @@ export class MessageNode {
 					case "artifact":
 						continue;
 					case "text":
-						this.renderTextBlock(block.text, state, msg, isGenerating);
+						progressValue = this.renderTextBlock(block.text, state, msg, isGenerating, isGeneratingBlock);
 						break;
 					case "file":
 						progressValue = this.renderFileBlock(block, container);
@@ -316,12 +324,20 @@ export class MessageNode {
 		}
 	}
 
-	private renderTextBlock(text: string, state: BlockState, message: Message, streaming: boolean): void {
-		state.markdown ??= { latest: text, role: message.role, streaming, revision: 0 };
+	/** Returns the displayed text, which stays the same while hidden syntax arrives. */
+	private renderTextBlock(
+		text: string,
+		state: BlockState,
+		message: Message,
+		streaming: boolean,
+		growing: boolean,
+	): string {
+		state.markdown ??= { latest: text, role: message.role, streaming, growing, revision: 0 };
 		const markdown = state.markdown;
 		if (
 			markdown.latest !== text ||
 			markdown.role !== message.role ||
+			markdown.growing !== growing ||
 			(this.config.markdown?.decorate && markdown.streaming !== streaming)
 		) {
 			markdown.latest = text;
@@ -330,43 +346,71 @@ export class MessageNode {
 		}
 		markdown.role = message.role;
 		markdown.streaming = streaming;
-		if (markdown.rendered === markdown.revision || markdown.pending === markdown.revision) return;
-		if (!streaming) {
-			void this.applyMarkdown(state, markdown);
-		} else if (markdown.timer === undefined) {
-			markdown.timer = setTimeout(() => void this.applyMarkdown(state, markdown), MARKDOWN_THROTTLE_MS);
+		markdown.growing = growing;
+		if (markdown.rendered !== markdown.revision && markdown.pending !== markdown.revision) {
+			if (!streaming) {
+				void this.applyMarkdown(state, markdown);
+			} else if (markdown.timer === undefined) {
+				markdown.timer = setTimeout(() => void this.applyMarkdown(state, markdown), MARKDOWN_THROTTLE_MS);
+			}
 		}
+		return markdown.shown?.source ?? text;
 	}
 
 	private async applyMarkdown(state: BlockState, markdown: MarkdownState): Promise<void> {
 		if (markdown.timer !== undefined) clearTimeout(markdown.timer);
 		markdown.timer = undefined;
 		const text = markdown.latest;
+		const { role, streaming } = markdown;
+		const smooth = markdown.growing && this.config.markdown?.smoothStreaming !== false;
+		const source = smooth ? stabilizeMarkdownTail(text) : text;
 		const revision = markdown.revision;
+		const shown = markdown.shown;
+		// Skip parsing, highlighting and hooks when their input is unchanged. Reused highlighting
+		// may be outdated, so the final render highlights everything again.
+		if (
+			shown?.source === source &&
+			shown.role === role &&
+			(!this.config.markdown?.decorate || shown.streaming === streaming) &&
+			(markdown.growing || !shown.reusedHighlights)
+		) {
+			markdown.rendered = revision;
+			this.resolveMarkdownWait(markdown);
+			return;
+		}
+		const { highlighter } = this.config;
+		if (!markdown.growing || !highlighter) markdown.highlights = undefined;
+		else markdown.highlights ??= new HighlightCache(highlighter);
+		const cache = markdown.highlights?.forRender();
 		const isCurrent = () => state.markdown === markdown && revision === markdown.revision;
 		markdown.pending = revision;
 		try {
 			const next = await renderMarkdownContent(
-				text,
+				source,
 				{
 					message: this.currentMessage!,
-					streaming: markdown.streaming,
+					streaming,
 					markdown: this.config.markdown,
-					highlighter: this.config.highlighter,
+					highlighter: cache?.highlight ?? highlighter,
 					labels: this.config.labels,
 				},
 				isCurrent,
 			);
 			if (!isCurrent()) return;
 			syncDOMChildren(state.container, next);
+			markdown.shown = { source, role, streaming, reusedHighlights: cache?.reused ?? false };
+			cache?.dropUnused();
 		} catch (error) {
 			console.error("Failed to render markdown", error);
-			if (isCurrent()) state.container.textContent = text;
+			if (isCurrent()) {
+				state.container.textContent = text;
+				markdown.shown = undefined;
+			}
 		} finally {
 			if (markdown.pending === revision) markdown.pending = undefined;
 			if (isCurrent()) {
 				markdown.rendered = revision;
-				this.stall?.rendered(state.container.dataset.blockId!, text);
+				this.stall?.rendered(state.container.dataset.blockId!, markdown.shown?.source ?? text);
 				this.resolveMarkdownWait(markdown);
 			}
 		}

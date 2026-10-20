@@ -248,7 +248,9 @@ Decoration output is **not sanitized again**; insert only trusted markup. Only t
 
 Hooks rerun on text or role changes and, with `decorate`, on streaming state changes. This includes a final pass when streaming ends. Errors fall back to source text.
 
-`await renderMarkdown(text, { message, markdown, highlighter, labels })` from `murm-ui/view` returns a detached `div` for copying or export. It requires a DOM and defaults to `streaming: false`.
+While text streams, its unfinished end is adjusted so raw syntax does not flash: for example, `**bold` closes early and `[text` shows as a link before its URL arrives. Unclosed math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) is left as is. `parse` receives the adjusted text; finished text renders unchanged. Set `markdown: { smoothStreaming: false }` to disable.
+
+`await renderMarkdown(text, { message, markdown, highlighter, labels })` from `murm-ui/view` returns a detached `div` for copying or export. It requires a DOM and defaults to `streaming: false`; with `streaming: true`, the unfinished end is adjusted as in the view.
 
 `await view.whenRendered()` waits for mounted Markdown to catch up with received updates, including highlighting and hooks. For printing, wait for generation to finish first; handle fonts, images and custom renderers separately.
 

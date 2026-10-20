@@ -215,6 +215,11 @@ export interface MarkdownOptions {
 	 * Runs again when streaming ends, even if the text is unchanged.
 	 */
 	decorate?(root: HTMLElement, context: MarkdownContext): void | Promise<void>;
+	/**
+	 * Hides unfinished syntax at the end of streaming text: closes inline markers early and
+	 * delays ambiguous block starts. Parsing receives the adjusted text. Defaults to true.
+	 */
+	smoothStreaming?: boolean;
 }
 
 export type AgentRunCollapse = "full" | "machinery";
