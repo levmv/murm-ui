@@ -106,7 +106,7 @@ view.apply({
 | `tool.update` | Append tool arguments with `argsDelta`, or update its name/status |
 | `message.state` | Set status, activity, error, usage or timestamp; use `status: "complete"` when a response ends |
 
-`stallDelay: 2000` in `ChatView` or `ChatUI` shows loading dots after a two-second pause in content updates; new content hides them. Disabled by default. `labels.responding` sets their accessible label.
+Loading dots appear after a two-second pause in content updates; new content hides them. Set `stallDelay` in `ChatView` or `ChatUI` to another number of milliseconds, or to `false` to disable the dots. `labels.responding` sets their accessible label.
 
 Send `message.state` with `activity: "Searching…"` to show a status instead of dots. Clear it with `activity: ""`; completion or error status also clears it.
 
@@ -248,7 +248,7 @@ Decoration output is **not sanitized again**; insert only trusted markup. Only t
 
 Hooks rerun on text or role changes and, with `decorate`, on streaming state changes. This includes a final pass when streaming ends. Errors fall back to source text.
 
-While text streams, its unfinished end is adjusted so raw syntax does not flash: for example, `**bold` closes early and `[text` shows as a link before its URL arrives. Unclosed math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) is left as is. `parse` receives the adjusted text; finished text renders unchanged. Set `markdown: { smoothStreaming: false }` to disable.
+While text streams, new words fade in, and its unfinished end is adjusted so raw syntax does not flash: for example, `**bold` closes early and `[text` shows as a link before its URL arrives. Unclosed math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) is left as is. `parse` receives the adjusted text; finished text renders unchanged. Fading wraps words of standard Markdown elements in spans after `decorate` runs, and is off when the user prefers reduced motion. Set `markdown: { smoothStreaming: false }` to disable both.
 
 `await renderMarkdown(text, { message, markdown, highlighter, labels })` from `murm-ui/view` returns a detached `div` for copying or export. It requires a DOM and defaults to `streaming: false`; with `streaming: true`, the unfinished end is adjusted as in the view.
 

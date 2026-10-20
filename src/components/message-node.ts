@@ -13,6 +13,7 @@ import { stabilizeMarkdownTail } from "../markdown-tail";
 import { el, syncDOMChildren } from "../utils/dom";
 import { HighlightCache } from "../utils/html";
 import type { MessageStall } from "./message-stall";
+import { TextFade, unwrapWords } from "./text-fade";
 
 const MARKDOWN_THROTTLE_MS = 70;
 
@@ -29,6 +30,10 @@ interface MarkdownState {
 	shown?: { source: string; role: Message["role"]; streaming: boolean; reusedHighlights: boolean };
 	/** Highlighting of finished code blocks, reused while the text grows. */
 	highlights?: HighlightCache;
+	/** Fades in words while the text grows. */
+	fade?: TextFade;
+	/** Removes word spans once the text stops growing and their animations end. */
+	unwrapTimer?: ReturnType<typeof setTimeout>;
 	timer?: ReturnType<typeof setTimeout>;
 	/** Allocated only by an explicit whenRendered request. */
 	waiting?: Promise<void>;
@@ -313,6 +318,7 @@ export class MessageNode {
 
 	private destroyBlock(state: BlockState): void {
 		if (state.markdown?.timer !== undefined) clearTimeout(state.markdown.timer);
+		if (state.markdown?.unwrapTimer !== undefined) clearTimeout(state.markdown.unwrapTimer);
 		if (state.markdown) this.resolveMarkdownWait(state.markdown);
 		state.markdown = undefined;
 		const renderer = state.renderer;
@@ -364,6 +370,10 @@ export class MessageNode {
 		const { role, streaming } = markdown;
 		const smooth = markdown.growing && this.config.markdown?.smoothStreaming !== false;
 		const source = smooth ? stabilizeMarkdownTail(text) : text;
+		if (smooth && !markdown.fade && !prefersReducedMotion()) {
+			clearTimeout(markdown.unwrapTimer);
+			markdown.fade = new TextFade();
+		}
 		const revision = markdown.revision;
 		const shown = markdown.shown;
 		// Skip parsing, highlighting and hooks when their input is unchanged. Reused highlighting
@@ -375,6 +385,7 @@ export class MessageNode {
 			(markdown.growing || !shown.reusedHighlights)
 		) {
 			markdown.rendered = revision;
+			if (!markdown.growing) this.finishFade(state, markdown);
 			this.resolveMarkdownWait(markdown);
 			return;
 		}
@@ -397,6 +408,7 @@ export class MessageNode {
 				isCurrent,
 			);
 			if (!isCurrent()) return;
+			markdown.fade?.apply(next, performance.now());
 			syncDOMChildren(state.container, next);
 			markdown.shown = { source, role, streaming, reusedHighlights: cache?.reused ?? false };
 			cache?.dropUnused();
@@ -410,10 +422,27 @@ export class MessageNode {
 			if (markdown.pending === revision) markdown.pending = undefined;
 			if (isCurrent()) {
 				markdown.rendered = revision;
+				if (!markdown.growing) this.finishFade(state, markdown);
 				this.stall?.rendered(state.container.dataset.blockId!, markdown.shown?.source ?? text);
 				this.resolveMarkdownWait(markdown);
 			}
 		}
+	}
+
+	/** Words that still animate keep their spans until the animations end. */
+	private finishFade(state: BlockState, markdown: MarkdownState): void {
+		const fade = markdown.fade;
+		if (!fade) return;
+		markdown.fade = undefined;
+		const remaining = fade.remaining(performance.now());
+		if (remaining === 0) {
+			unwrapWords(state.container);
+			return;
+		}
+		markdown.unwrapTimer = setTimeout(() => {
+			markdown.unwrapTimer = undefined;
+			unwrapWords(state.container);
+		}, remaining);
 	}
 
 	private resolveMarkdownWait(markdown: MarkdownState): void {
@@ -565,4 +594,8 @@ export class MessageNode {
 
 		return state;
 	}
+}
+
+function prefersReducedMotion(): boolean {
+	return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }

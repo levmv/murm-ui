@@ -43,8 +43,8 @@ export interface ChatUIConfig {
 
 	highlighter?: CodeHighlighter;
 	markdown?: MarkdownOptions;
-	/** Milliseconds without displayed block changes before showing progress. Disabled when omitted. */
-	stallDelay?: number;
+	/** Milliseconds without displayed block changes before showing progress. Defaults to 2000; `false` disables. */
+	stallDelay?: number | false;
 	plugins?: (chatApi: ChatEngine) => ChatPlugin[];
 	agentRunCollapse?: AgentRunCollapse;
 	minAgentRunSteps?: number;

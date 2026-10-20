@@ -261,9 +261,23 @@ test("streaming activity replaces accessible dots without changing content or re
 	assert.equal(host.querySelector("strong"), content);
 	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", activity: "" }] });
 	flush();
-	t.mock.timers.tick(60_000);
-	// Clearing activity during streaming must not enable stall detection by default.
+	// Without activity, visible content needs no dots until the stream stalls for two seconds.
 	assert.equal(host.querySelector(".mur-message-loading[role=status]"), null);
+	t.mock.timers.tick(1999);
+	assert.equal(host.querySelector(".mur-message-loading[role=status]"), null);
+	t.mock.timers.tick(1);
+	assert.equal(host.querySelector(".mur-message-loading[role=status]")?.textContent, "Ответ готовится");
+});
+
+test("stallDelay: false keeps stalled streams without dots, and invalid delays are rejected", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const { view, host } = setup(t, { stallDelay: false });
+	view.setConversation({ id: "c", messages: [{ ...message("a", "Partial"), status: "streaming" }] });
+	await view.whenRendered();
+	t.mock.timers.tick(60_000);
+	assert.equal(host.querySelector(".mur-message-loading[role=status]"), null);
+	for (const stallDelay of [-1, Number.NaN, Number.POSITIVE_INFINITY])
+		assert.throws(() => new ChatView({ container: document.createElement("div"), stallDelay }), RangeError);
 });
 
 test("grouped runs retain empty streaming replies and their errors", (t) => {
@@ -1002,6 +1016,47 @@ test("hidden syntax arriving in growing text does not rerun Markdown hooks", asy
 		await view.whenRendered();
 	}
 	assert.deepEqual(parsed, ["See "]);
+});
+
+test("growing text fades in new words, keeps running animations and ends as plain text", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const { view, host } = setup(t);
+	const block = () => host.querySelector('[data-block-id="a-text"]')!;
+	view.setConversation({ id: "c", messages: [{ ...message("a", "Hello"), status: "streaming" }] });
+	await view.whenRendered();
+	const hello = block().querySelector(".mur-fading")!;
+	assert.equal(hello.textContent, "Hello");
+	view.apply({
+		conversationId: "c",
+		changes: [{ type: "text.append", messageId: "a", blockId: "a-text", delta: " world" }],
+	});
+	await view.whenRendered();
+	assert.equal(block().querySelector(".mur-word"), hello);
+	assert.deepEqual(
+		Array.from(block().querySelectorAll(".mur-fading"), (span) => span.textContent),
+		["Hello", "world"],
+	);
+	view.apply({ conversationId: "c", changes: [{ type: "message.state", messageId: "a", status: "complete" }] });
+	await view.whenRendered();
+	assert.ok(block().querySelector(".mur-word"), "running animations finish first");
+	t.mock.timers.tick(1000);
+	assert.equal(block().innerHTML.trim(), "<p>Hello world</p>");
+});
+
+test("words appear at once with reduced motion or without smooth streaming", async (t) => {
+	for (const [name, config, reduced] of [
+		["reduced motion", {}, true],
+		["smoothStreaming: false", { markdown: { smoothStreaming: false } }, false],
+	] as const) {
+		await t.test(name, async (t) => {
+			const { view, host } = setup(t, config);
+			const matchMedia = window.matchMedia;
+			window.matchMedia = (query) => ({ ...matchMedia(query), matches: reduced && query.includes("reduced-motion") });
+			view.setConversation({ id: "c", messages: [{ ...message("a", "Hello world"), status: "streaming" }] });
+			await view.whenRendered();
+			assert.equal(host.querySelector('[data-block-id="a-text"]')!.innerHTML.trim(), "<p>Hello world</p>");
+		});
+	}
 });
 
 test("a failed render is retried even when the adjusted text is unchanged", async (t) => {

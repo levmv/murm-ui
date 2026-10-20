@@ -20,6 +20,7 @@ import { type ChatLabels, defaultLabels } from "../labels";
 import { el, queryOrThrow } from "../utils/dom";
 
 const PAGE_SCROLL_CLASS = "mur-chat-page-scroll";
+const STALL_DELAY_MS = 2000;
 let pageScrollAttachCount = 0;
 
 export interface ChatViewConfig {
@@ -27,8 +28,8 @@ export interface ChatViewConfig {
 	highlighter?: CodeHighlighter;
 	/** Customize parsing and trusted decoration of built-in Markdown text blocks. */
 	markdown?: MarkdownOptions;
-	/** Show progress after this many milliseconds without displayed block changes. Disabled when omitted. */
-	stallDelay?: number;
+	/** Show progress after this many milliseconds without displayed block changes. Defaults to 2000; `false` disables. */
+	stallDelay?: number | false;
 	labels?: Partial<ChatLabels>;
 	container: HTMLElement | string;
 	/** Share an existing conversation, e.g. engine.conversation. The view does not own its lifecycle. */
@@ -73,8 +74,9 @@ export class ChatView {
 	private readonly wasEmbedded: boolean;
 
 	constructor(private readonly config: ChatViewConfig) {
-		if (config.stallDelay !== undefined && (!Number.isFinite(config.stallDelay) || config.stallDelay < 0))
-			throw new RangeError("stallDelay must be a finite, non-negative number");
+		const stallDelay = config.stallDelay ?? STALL_DELAY_MS;
+		if (stallDelay !== false && (!Number.isFinite(stallDelay) || stallDelay < 0))
+			throw new RangeError("stallDelay must be false or a finite, non-negative number");
 		this.canAct = config.canAct ?? true;
 		this.model = config.conversation ?? new ConversationModel();
 		const host =
@@ -118,7 +120,7 @@ export class ChatView {
 		this.feed = new Feed(this.element, {
 			highlighter: config.highlighter,
 			markdown: config.markdown,
-			stallDelay: config.stallDelay,
+			stallDelay: stallDelay === false ? undefined : stallDelay,
 			plugins: config.plugins ?? [],
 			labels: this.labels,
 			fullscreen: config.fullscreen ?? false,

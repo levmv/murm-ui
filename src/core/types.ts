@@ -216,8 +216,9 @@ export interface MarkdownOptions {
 	 */
 	decorate?(root: HTMLElement, context: MarkdownContext): void | Promise<void>;
 	/**
-	 * Hides unfinished syntax at the end of streaming text: closes inline markers early and
-	 * delays ambiguous block starts. Parsing receives the adjusted text. Defaults to true.
+	 * Smooths streaming text: new words fade in, and unfinished syntax at the end is hidden by
+	 * closing inline markers early and delaying ambiguous block starts. Parsing receives the
+	 * adjusted text. Defaults to true.
 	 */
 	smoothStreaming?: boolean;
 }
